@@ -10,7 +10,6 @@ A self-hosted music platform that provides a Spotify-like experience by combinin
 - 📋 **Playlists** – Create and manage playlists synced with Jellyfin
 - 🎨 **Modern UI** – Dark-themed, Spotify-inspired interface
 - 🔐 **Jellyfin Auth** – Authenticate using your existing Jellyfin credentials
-- ☁️ **Cloud Native** – Fully containerized with Kubernetes support
 
 ## Architecture
 
@@ -99,26 +98,6 @@ npm run dev
 
 The frontend dev server runs at `http://localhost:5173` with API proxy to `http://localhost:5000`.
 
-## Kubernetes Deployment
-
-### Using kubectl
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/secret.yaml
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/ingress.yaml
-```
-
-### Using Helm
-```bash
-helm install musicarr helm/musicarr \
-  --set secrets.jellyfinApiKey=your_key \
-  --set secrets.lidarrApiKey=your_key \
-  --set config.jellyfinBaseUrl=http://jellyfin:8096
-```
-
 ## Configuration
 
 Configuration is managed through environment variables:
@@ -163,8 +142,6 @@ Musicarr/
 │   ├── Musicarr.Infrastructure/  # External service adapters, persistence
 │   ├── Musicarr.Api/             # REST API controllers, middleware
 │   └── Musicarr.Web/             # React frontend
-├── k8s/                          # Kubernetes manifests
-├── helm/                         # Helm chart
 ├── Dockerfile
 ├── docker-compose.yml
 └── Musicarr.sln
