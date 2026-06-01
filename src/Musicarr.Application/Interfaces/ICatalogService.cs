@@ -4,9 +4,9 @@ namespace Musicarr.Application.Interfaces;
 
 public interface ICatalogService
 {
-    Task<IEnumerable<ArtistDto>> GetArtistsAsync(string token);
-    Task<IEnumerable<AlbumDto>> GetAlbumsAsync(string token, Guid? artistId = null);
-    Task<IEnumerable<TrackDto>> GetTracksAsync(string token, Guid? albumId = null);
-    Task<AlbumDto?> GetAlbumByIdAsync(string token, Guid albumId);
-    Task<ArtistDto?> GetArtistByIdAsync(string token, Guid artistId);
+    Task<IEnumerable<ArtistDto>> GetArtistsAsync();
+    Task<IEnumerable<AlbumDto>> GetAlbumsAsync(Guid? artistId = null);
+    Task<IEnumerable<TrackDto>> GetTracksAsync(Guid? albumId = null);
+    Task<AlbumDto?> GetAlbumByIdAsync(Guid albumId);
+    Task<ArtistDto?> GetArtistByIdAsync(Guid artistId);
 }

@@ -22,7 +22,7 @@ public class SearchService : ISearchService
         _logger = logger;
     }
 
-    public async Task<SearchResultDto> SearchAsync(string query, string token)
+    public async Task<SearchResultDto> SearchAsync(string query)
     {
         _logger.LogInformation("Searching for: {Query}", query.Replace("\n", "").Replace("\r", ""));
 
@@ -33,7 +33,7 @@ public class SearchService : ISearchService
         // Search Jellyfin library
         try
         {
-            var jellyfinArtists = await _jellyfinService.GetArtistsAsync(token);
+            var jellyfinArtists = await _jellyfinService.GetArtistsAsync();
             var matchingArtists = jellyfinArtists
                 .Where(a => a.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
             artists.AddRange(matchingArtists.Select(a => new ArtistDto(
@@ -41,7 +41,7 @@ public class SearchService : ISearchService
                 a.Overview, a.Genres, MediaAvailability.Available
             )));
 
-            var jellyfinAlbums = await _jellyfinService.GetAlbumsAsync(token);
+            var jellyfinAlbums = await _jellyfinService.GetAlbumsAsync();
             var matchingAlbums = jellyfinAlbums
                 .Where(a => a.Title.Contains(query, StringComparison.OrdinalIgnoreCase));
             albums.AddRange(matchingAlbums.Select(a => new AlbumDto(
@@ -49,7 +49,7 @@ public class SearchService : ISearchService
                 a.ImageUrl, a.Year, a.Overview, a.Genres, MediaAvailability.Available
             )));
 
-            var jellyfinTracks = await _jellyfinService.GetTracksAsync(token);
+            var jellyfinTracks = await _jellyfinService.GetTracksAsync();
             var matchingTracks = jellyfinTracks
                 .Where(t => t.Title.Contains(query, StringComparison.OrdinalIgnoreCase));
             tracks.AddRange(matchingTracks.Select(t => new TrackDto(

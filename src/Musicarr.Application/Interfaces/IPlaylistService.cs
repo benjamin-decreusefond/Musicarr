@@ -4,11 +4,11 @@ namespace Musicarr.Application.Interfaces;
 
 public interface IPlaylistService
 {
-    Task<IEnumerable<PlaylistDto>> GetPlaylistsAsync(string token, string userId);
-    Task<PlaylistDto?> GetPlaylistAsync(string token, Guid playlistId);
-    Task<PlaylistDto?> CreatePlaylistAsync(string token, string userId, string name, string? description = null);
-    Task<bool> DeletePlaylistAsync(string token, Guid playlistId);
-    Task<bool> AddTrackAsync(string token, Guid playlistId, Guid trackId);
-    Task<bool> RemoveTrackAsync(string token, Guid playlistId, Guid trackId);
-    Task<bool> ReorderTracksAsync(string token, Guid playlistId, List<Guid> trackIds);
+    Task<IEnumerable<PlaylistDto>> GetPlaylistsAsync();
+    Task<PlaylistDto?> GetPlaylistAsync(Guid playlistId);
+    Task<PlaylistDto?> CreatePlaylistAsync(string name, string? description = null);
+    Task<bool> DeletePlaylistAsync(Guid playlistId);
+    Task<bool> AddTrackAsync(Guid playlistId, Guid trackId);
+    Task<bool> RemoveTrackAsync(Guid playlistId, Guid trackId);
+    Task<bool> ReorderTracksAsync(Guid playlistId, List<Guid> trackIds);
 }

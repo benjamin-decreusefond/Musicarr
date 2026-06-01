@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Musicarr.Application.Interfaces;
 using Musicarr.Domain.Interfaces;
+using Musicarr.Infrastructure.Auth;
 using Musicarr.Infrastructure.Configuration;
 using Musicarr.Infrastructure.Jellyfin;
 using Musicarr.Infrastructure.Lidarr;
@@ -42,6 +43,9 @@ public static class DependencyInjection
 
         // Repositories
         services.AddScoped<IPlaylistRepository, PlaylistRepository>();
+
+        // Admin user service
+        services.AddScoped<IAdminUserService, AdminUserService>();
 
         return services;
     }

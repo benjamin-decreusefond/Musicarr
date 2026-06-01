@@ -75,7 +75,8 @@ public class SettingsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetStatus()
     {
-        return Ok(new { IsConfigured = _configService.IsConfigured() });
+        // Jellyfin and Lidarr are optional integrations — the app is always considered configured
+        return Ok(new { IsConfigured = true });
     }
 
     private static string MaskApiKey(string? apiKey)

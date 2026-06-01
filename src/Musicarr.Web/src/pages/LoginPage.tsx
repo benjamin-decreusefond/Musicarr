@@ -21,12 +21,12 @@ export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  // Redirect to setup wizard if app is not yet configured
+  // Redirect to setup if no admin user exists
   useEffect(() => {
     const checkSetup = async () => {
       try {
-        const response = await api.get<{ isConfigured: boolean }>('/api/settings/status');
-        if (!response.data.isConfigured) {
+        const response = await api.get<{ hasAdminUser: boolean }>('/api/setup/status');
+        if (!response.data.hasAdminUser) {
           navigate('/setup');
         }
       } catch {
@@ -47,7 +47,7 @@ export default function LoginPage() {
     if (success) {
       navigate('/');
     } else {
-      setError('Invalid credentials. Please check your Jellyfin username and password.');
+      setError('Invalid username or password.');
     }
   };
 
@@ -67,7 +67,7 @@ export default function LoginPage() {
             Musicarr
           </Typography>
           <Typography variant="body2" align="center" color="text.secondary" sx={{ mb: 3 }}>
-            Sign in with your Jellyfin account
+            Sign in with your Musicarr account
           </Typography>
 
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -81,6 +81,7 @@ export default function LoginPage() {
               margin="normal"
               required
               autoFocus
+              autoComplete="username"
             />
             <TextField
               fullWidth
@@ -90,6 +91,7 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               margin="normal"
               required
+              autoComplete="current-password"
             />
             <Button
               fullWidth

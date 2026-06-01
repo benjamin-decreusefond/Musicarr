@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Musicarr.Api.Extensions;
 using Musicarr.Application.DTOs;
 using Musicarr.Application.Interfaces;
 
@@ -23,10 +22,7 @@ public class SearchController : ControllerBase
         if (string.IsNullOrWhiteSpace(q))
             return BadRequest(new { Message = "Search query is required" });
 
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var results = await _searchService.SearchAsync(q, token);
+        var results = await _searchService.SearchAsync(q);
         return Ok(results);
     }
 }

@@ -1,6 +1,12 @@
+using System.Security.Cryptography;
+using System.Text;
 using Musicarr.Application.Common;
 using Musicarr.Infrastructure;
 using Musicarr.Api.Middleware;
+using Musicarr.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,9 +20,36 @@ var configFilePath = Path.Combine(dataDir, "config.json");
 // Load config.json as an additional configuration source (overrides appsettings)
 builder.Configuration.AddJsonFile(configFilePath, optional: true, reloadOnChange: true);
 
+// Ensure a persistent JWT secret exists in the data directory
+var jwtSecretFile = Path.Combine(dataDir, "jwt-secret.key");
+string jwtSecret;
+if (File.Exists(jwtSecretFile))
+{
+    jwtSecret = File.ReadAllText(jwtSecretFile).Trim();
+}
+else
+{
+    jwtSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+    File.WriteAllText(jwtSecretFile, jwtSecret);
+}
+builder.Configuration["Jwt:Secret"] = jwtSecret;
+
 // Add services
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, configFilePath);
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ClockSkew = TimeSpan.Zero,
+        };
+    });
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -30,7 +63,7 @@ builder.Services.AddSwaggerGen(c =>
     });
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "Jellyfin authentication token",
+        Description = "Musicarr JWT authentication token",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
@@ -62,6 +95,13 @@ builder.Services.AddCors(options =>
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
+
+// Initialise the database (create tables if they don't exist)
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<MusicarrDbContext>();
+    db.Database.EnsureCreated();
+}
 
 // Configure pipeline
 if (app.Environment.IsDevelopment())

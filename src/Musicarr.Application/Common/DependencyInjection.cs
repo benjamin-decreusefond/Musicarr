@@ -8,7 +8,6 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
-        services.AddScoped<IAuthenticationService, AuthenticationService>();
         services.AddScoped<ICatalogService, CatalogService>();
         services.AddScoped<ISearchService, SearchService>();
         services.AddScoped<IAcquisitionService, AcquisitionService>();
