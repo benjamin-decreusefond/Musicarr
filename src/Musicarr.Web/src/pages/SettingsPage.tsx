@@ -34,7 +34,7 @@ interface AppSettings {
 const defaultSettings: AppSettings = {
   jellyfin: { baseUrl: '', apiKey: '' },
   lidarr: { baseUrl: '', apiKey: '', rootFolderPath: '/music', qualityProfileId: 1, metadataProfileId: 1 },
-  musicDiscovery: { provider: 'MusicBrainz' },
+  musicDiscovery: { provider: 'Deezer' },
 };
 
 export default function SettingsPage() {
@@ -291,6 +291,7 @@ export default function SettingsPage() {
             }
             fullWidth
           >
+            <MenuItem value="Deezer">Deezer</MenuItem>
             <MenuItem value="MusicBrainz">MusicBrainz</MenuItem>
           </TextField>
         </CardContent>

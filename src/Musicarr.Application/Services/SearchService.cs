@@ -11,6 +11,7 @@ public class SearchService : ISearchService
     private readonly IJellyfinService _jellyfinService;
     private readonly IEnumerable<IMusicDiscoveryProvider> _discoveryProviders;
     private readonly IDeezerImageService _deezerImageService;
+    private readonly IConfigService _configService;
     private readonly ILogger<SearchService> _logger;
 
     private const int MaxArtists = 5;
@@ -21,11 +22,13 @@ public class SearchService : ISearchService
         IJellyfinService jellyfinService,
         IEnumerable<IMusicDiscoveryProvider> discoveryProviders,
         IDeezerImageService deezerImageService,
+        IConfigService configService,
         ILogger<SearchService> logger)
     {
         _jellyfinService = jellyfinService;
         _discoveryProviders = discoveryProviders;
         _deezerImageService = deezerImageService;
+        _configService = configService;
         _logger = logger;
     }
 
@@ -77,12 +80,20 @@ public class SearchService : ISearchService
             _logger.LogWarning(ex, "Error searching Jellyfin library");
         }
 
-        // Search discovery providers
-        foreach (var provider in _discoveryProviders)
+        // Search configured discovery provider
+        var providerName = _configService.GetSettings().MusicDiscovery.Provider;
+        var configuredProvider = _discoveryProviders.FirstOrDefault(provider =>
+                                   provider.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase))
+                               ?? _discoveryProviders.FirstOrDefault(provider =>
+                                   provider.ProviderName.Equals("Deezer", StringComparison.OrdinalIgnoreCase))
+                               ?? _discoveryProviders.FirstOrDefault();
+        var useDeezerImageEnrichment = configuredProvider?.ProviderName.Equals("Deezer", StringComparison.OrdinalIgnoreCase) == true;
+
+        if (configuredProvider != null)
         {
             try
             {
-                var providerArtists = await provider.SearchArtistsAsync(query);
+                var providerArtists = await configuredProvider.SearchArtistsAsync(query);
                 artists.AddRange(providerArtists
                     .Where(a => !artists.Any(existing => existing.Name.Equals(a.Name, StringComparison.OrdinalIgnoreCase)))
                     .Select(a => new ArtistDto(
@@ -90,7 +101,7 @@ public class SearchService : ISearchService
                         a.Overview, a.Genres, MediaAvailability.NotAvailable
                     )));
 
-                var providerAlbums = await provider.SearchAlbumsAsync(query);
+                var providerAlbums = await configuredProvider.SearchAlbumsAsync(query);
                 albums.AddRange(providerAlbums
                     .Where(a => !albums.Any(existing => existing.Title.Equals(a.Title, StringComparison.OrdinalIgnoreCase)))
                     .Select(a => new AlbumDto(
@@ -98,18 +109,18 @@ public class SearchService : ISearchService
                         a.ImageUrl, a.Year, a.Overview, a.Genres, MediaAvailability.NotAvailable
                     )));
 
-                var providerTracks = await provider.SearchTracksAsync(query);
+                var providerTracks = await configuredProvider.SearchTracksAsync(query);
                 tracks.AddRange(providerTracks
                     .Where(t => !tracks.Any(existing => existing.Title.Equals(t.Title, StringComparison.OrdinalIgnoreCase)))
                     .Select(t => new TrackDto(
                         t.Id, t.Title, t.ArtistName, null, null, null,
-                        t.TrackNumber, t.DiscNumber, t.DurationTicks, null,
+                        t.TrackNumber, t.DiscNumber, t.DurationTicks, t.StreamUrl,
                         MediaAvailability.NotAvailable, t.ImageUrl
                     )));
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error searching provider {Provider}", provider.ProviderName);
+                _logger.LogWarning(ex, "Error searching provider {Provider}", configuredProvider.ProviderName);
             }
         }
 
@@ -121,41 +132,47 @@ public class SearchService : ISearchService
         var sortedTracks = SortByRelevance(tracks, query, t => t.Title, t => t.Availability)
             .Take(MaxTracks).ToList();
 
-        // Enrich artists without images using Deezer (in parallel)
-        var artistEnrichTasks = sortedArtists
-            .Where(a => string.IsNullOrEmpty(a.ImageUrl))
-            .Select(async a =>
-            {
-                var imageUrl = await _deezerImageService.GetArtistImageUrlAsync(a.Name);
-                return (a, imageUrl);
-            });
-
-        foreach (var (artist, imageUrl) in await Task.WhenAll(artistEnrichTasks))
+        // Enrich artists without images using Deezer when Deezer is the selected provider
+        if (useDeezerImageEnrichment)
         {
-            if (imageUrl != null)
+            var artistEnrichTasks = sortedArtists
+                .Where(a => string.IsNullOrEmpty(a.ImageUrl))
+                .Select(async a =>
+                {
+                    var imageUrl = await _deezerImageService.GetArtistImageUrlAsync(a.Name);
+                    return (a, imageUrl);
+                });
+
+            foreach (var (artist, imageUrl) in await Task.WhenAll(artistEnrichTasks))
             {
-                var idx = sortedArtists.IndexOf(artist);
-                if (idx >= 0)
-                    sortedArtists[idx] = artist with { ImageUrl = imageUrl };
+                if (imageUrl != null)
+                {
+                    var idx = sortedArtists.IndexOf(artist);
+                    if (idx >= 0)
+                        sortedArtists[idx] = artist with { ImageUrl = imageUrl };
+                }
             }
         }
 
-        // Enrich albums without images using Deezer (in parallel)
-        var albumEnrichTasks = sortedAlbums
-            .Where(a => string.IsNullOrEmpty(a.ImageUrl))
-            .Select(async a =>
-            {
-                var imageUrl = await _deezerImageService.GetAlbumImageUrlAsync(a.Title, a.ArtistName);
-                return (a, imageUrl);
-            });
-
-        foreach (var (album, imageUrl) in await Task.WhenAll(albumEnrichTasks))
+        // Enrich albums without images using Deezer when Deezer is the selected provider
+        if (useDeezerImageEnrichment)
         {
-            if (imageUrl != null)
+            var albumEnrichTasks = sortedAlbums
+                .Where(a => string.IsNullOrEmpty(a.ImageUrl))
+                .Select(async a =>
+                {
+                    var imageUrl = await _deezerImageService.GetAlbumImageUrlAsync(a.Title, a.ArtistName);
+                    return (a, imageUrl);
+                });
+
+            foreach (var (album, imageUrl) in await Task.WhenAll(albumEnrichTasks))
             {
-                var idx = sortedAlbums.IndexOf(album);
-                if (idx >= 0)
-                    sortedAlbums[idx] = album with { ImageUrl = imageUrl };
+                if (imageUrl != null)
+                {
+                    var idx = sortedAlbums.IndexOf(album);
+                    if (idx >= 0)
+                        sortedAlbums[idx] = album with { ImageUrl = imageUrl };
+                }
             }
         }
 
