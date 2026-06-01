@@ -77,7 +77,7 @@ export default function SearchPage() {
               <Typography variant="h6" sx={{ mb: 2 }} fontWeight={600}>Artists</Typography>
               <Grid container spacing={2} sx={{ mb: 4 }}>
                 {results.artists.map((artist) => (
-                  <Grid item xs={6} sm={4} md={3} lg={2} key={artist.id}>
+                  <Grid item xs={6} sm={4} md={3} lg={3} key={artist.id}>
                     <Card sx={{ textAlign: 'center', p: 2 }}>
                       <CardMedia
                         component="img"
@@ -101,7 +101,7 @@ export default function SearchPage() {
               <Typography variant="h6" sx={{ mb: 2 }} fontWeight={600}>Albums</Typography>
               <Grid container spacing={2} sx={{ mb: 4 }}>
                 {results.albums.map((album) => (
-                  <Grid item xs={6} sm={4} md={3} lg={2} key={album.id}>
+                  <Grid item xs={6} sm={4} md={3} lg={3} key={album.id}>
                     <Card>
                       <CardMedia
                         component="img"
@@ -110,7 +110,7 @@ export default function SearchPage() {
                         alt={album.title}
                       />
                       <CardContent>
-                        <Typography variant="body2" noWrap fontWeight={600}>{album.title}</Typography>
+                        <Typography variant="body2" fontWeight={600} sx={{ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{album.title}</Typography>
                         <Typography variant="caption" color="text.secondary">{album.artistName}</Typography>
                         <Box sx={{ mt: 1 }}>{getAvailabilityChip(album.availability)}</Box>
                       </CardContent>
