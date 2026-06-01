@@ -162,6 +162,8 @@ public class SearchService : ISearchService
         return new SearchResultDto(sortedArtists, sortedAlbums, sortedTracks);
     }
 
+    private const int MatchScoreWeight = 2;
+
     private static IEnumerable<T> SortByRelevance<T>(
         IEnumerable<T> items,
         string query,
@@ -177,7 +179,7 @@ public class SearchService : ISearchService
                 : 2;
             // Library items before discovery (Available=0, else 1)
             int availScore = availabilitySelector(item) == MediaAvailability.Available ? 0 : 1;
-            return (matchScore * 2) + availScore;
+            return (matchScore * MatchScoreWeight) + availScore;
         });
     }
 }

@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Musicarr.Application.Interfaces;
@@ -14,7 +15,8 @@ public class DeezerImageService : IDeezerImageService
     {
         _httpClient = httpClient;
         _httpClient.BaseAddress = new Uri("https://api.deezer.com/");
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Musicarr/1.0.0 (https://github.com/musicarr)");
+        var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0";
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", $"Musicarr/{version} (https://github.com/musicarr)");
         _logger = logger;
     }
 

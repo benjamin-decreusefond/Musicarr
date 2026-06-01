@@ -33,6 +33,8 @@ interface SearchResults {
 }
 
 const SHOW_MORE_STEP = 10;
+const SUGGESTION_DEBOUNCE_MS = 350;
+const SUGGESTION_BLUR_DELAY_MS = 150;
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -63,7 +65,7 @@ export default function SearchPage() {
       } catch {
         // ignore suggestion errors
       }
-    }, 350);
+    }, SUGGESTION_DEBOUNCE_MS);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query]);
 
@@ -126,7 +128,7 @@ export default function SearchPage() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
           onFocus={() => suggestions && setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), SUGGESTION_BLUR_DELAY_MS)}
           inputRef={inputRef}
           InputProps={{
             startAdornment: (
