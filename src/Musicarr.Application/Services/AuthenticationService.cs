@@ -18,17 +18,18 @@ public class AuthenticationService : IAuthenticationService
 
     public async Task<AuthResponseDto?> LoginAsync(AuthRequestDto request)
     {
-        _logger.LogInformation("Attempting authentication for user {Username}", request.Username);
+        var sanitizedUsername = SanitizeLogInput(request.Username);
+        _logger.LogInformation("Attempting authentication for user {Username}", sanitizedUsername);
         
         var (success, token, userId) = await _jellyfinService.AuthenticateAsync(request.Username, request.Password);
         
         if (!success || string.IsNullOrEmpty(token) || string.IsNullOrEmpty(userId))
         {
-            _logger.LogWarning("Authentication failed for user {Username}", request.Username);
+            _logger.LogWarning("Authentication failed for user {Username}", sanitizedUsername);
             return null;
         }
 
-        _logger.LogInformation("Authentication successful for user {Username}", request.Username);
+        _logger.LogInformation("Authentication successful for user {Username}", sanitizedUsername);
         
         return new AuthResponseDto(
             Token: token,
@@ -41,5 +42,10 @@ public class AuthenticationService : IAuthenticationService
     public Task<bool> ValidateTokenAsync(string token)
     {
         return Task.FromResult(!string.IsNullOrEmpty(token));
+    }
+
+    private static string SanitizeLogInput(string input)
+    {
+        return input.Replace("\n", "").Replace("\r", "").Replace("\t", "");
     }
 }

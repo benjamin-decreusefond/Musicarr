@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (state.token) {
-      api.defaults.headers.common['Authorization'] = `******;
+      api.defaults.headers.common['Authorization'] = 'Bearer ' + state.token;
       api.defaults.headers.common['X-User-Id'] = state.userId || '';
     }
   }, [state.token, state.userId]);
@@ -44,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('musicarr_userId', userId);
       localStorage.setItem('musicarr_username', username);
 
-      api.defaults.headers.common['Authorization'] = `******;
+      api.defaults.headers.common['Authorization'] = 'Bearer ' + token;
       api.defaults.headers.common['X-User-Id'] = userId;
 
       setState({ token, userId, username, isAuthenticated: true });

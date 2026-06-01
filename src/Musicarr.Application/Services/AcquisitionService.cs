@@ -19,13 +19,13 @@ public class AcquisitionService : IAcquisitionService
 
     public async Task<bool> RequestArtistAsync(AcquisitionRequestDto request)
     {
-        _logger.LogInformation("Requesting artist: {Name} ({MusicBrainzId})", request.Name, request.MusicBrainzId);
+        _logger.LogInformation("Requesting artist: {Name} ({MusicBrainzId})", Sanitize(request.Name), Sanitize(request.MusicBrainzId));
         return await _lidarrService.AddArtistAsync(request.MusicBrainzId, request.Name);
     }
 
     public async Task<bool> RequestAlbumAsync(AcquisitionRequestDto request)
     {
-        _logger.LogInformation("Requesting album: {Name} ({MusicBrainzId})", request.Name, request.MusicBrainzId);
+        _logger.LogInformation("Requesting album: {Name} ({MusicBrainzId})", Sanitize(request.Name), Sanitize(request.MusicBrainzId));
         return await _lidarrService.AddAlbumAsync(request.MusicBrainzId);
     }
 
@@ -37,5 +37,10 @@ public class AcquisitionService : IAcquisitionService
             "album" => await _lidarrService.GetAlbumStatusAsync(musicBrainzId),
             _ => AcquisitionStatus.None
         };
+    }
+
+    private static string Sanitize(string input)
+    {
+        return input.Replace("\n", "").Replace("\r", "").Replace("\t", "");
     }
 }

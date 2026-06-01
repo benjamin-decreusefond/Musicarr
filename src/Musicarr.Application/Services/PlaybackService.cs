@@ -17,7 +17,7 @@ public class PlaybackService : IPlaybackService
 
     public async Task<string?> GetStreamUrlAsync(string token, string jellyfinItemId)
     {
-        _logger.LogDebug("Getting stream URL for item {ItemId}", jellyfinItemId);
+        _logger.LogDebug("Getting stream URL for item {ItemId}", jellyfinItemId.Replace("\n", "").Replace("\r", ""));
         return await _jellyfinService.GetStreamUrlAsync(token, jellyfinItemId);
     }
 }

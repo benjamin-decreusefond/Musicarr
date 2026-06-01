@@ -24,7 +24,7 @@ public class SearchService : ISearchService
 
     public async Task<SearchResultDto> SearchAsync(string query, string token)
     {
-        _logger.LogInformation("Searching for: {Query}", query);
+        _logger.LogInformation("Searching for: {Query}", query.Replace("\n", "").Replace("\r", ""));
 
         var artists = new List<ArtistDto>();
         var albums = new List<AlbumDto>();
