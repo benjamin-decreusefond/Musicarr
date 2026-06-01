@@ -25,8 +25,8 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos "" appuser
-USER appuser
+RUN adduser --disabled-password --gecos "" musicarr
+USER musicarr
 
 COPY --from=build /app/publish .
 COPY --from=frontend-build /app/dist ./wwwroot
