@@ -40,6 +40,7 @@ public static class DependencyInjection
         services.AddHttpClient<IJellyfinService, JellyfinService>();
         services.AddHttpClient<ILidarrService, LidarrService>();
         services.AddHttpClient<IMusicDiscoveryProvider, MusicBrainzProvider>();
+        services.AddHttpClient<IDeezerImageService, DeezerImageService>();
 
         // Repositories
         services.AddScoped<IPlaylistRepository, PlaylistRepository>();

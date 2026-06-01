@@ -10,15 +10,22 @@ public class SearchService : ISearchService
 {
     private readonly IJellyfinService _jellyfinService;
     private readonly IEnumerable<IMusicDiscoveryProvider> _discoveryProviders;
+    private readonly IDeezerImageService _deezerImageService;
     private readonly ILogger<SearchService> _logger;
+
+    private const int MaxArtists = 5;
+    private const int MaxAlbums = 6;
+    private const int MaxTracks = 5;
 
     public SearchService(
         IJellyfinService jellyfinService,
         IEnumerable<IMusicDiscoveryProvider> discoveryProviders,
+        IDeezerImageService deezerImageService,
         ILogger<SearchService> logger)
     {
         _jellyfinService = jellyfinService;
         _discoveryProviders = discoveryProviders;
+        _deezerImageService = deezerImageService;
         _logger = logger;
     }
 
@@ -52,11 +59,18 @@ public class SearchService : ISearchService
             var jellyfinTracks = await _jellyfinService.GetTracksAsync();
             var matchingTracks = jellyfinTracks
                 .Where(t => t.Title.Contains(query, StringComparison.OrdinalIgnoreCase));
-            tracks.AddRange(matchingTracks.Select(t => new TrackDto(
-                t.Id, t.Title, t.ArtistName, null, t.AlbumId, t.JellyfinId,
-                t.TrackNumber, t.DiscNumber, t.DurationTicks, t.StreamUrl,
-                MediaAvailability.Available
-            )));
+            // Build a lookup of album imageUrl by albumId for track image enrichment
+            var albumImageById = albums.Where(a => a.ImageUrl != null)
+                .ToDictionary(a => a.Id, a => a.ImageUrl);
+            tracks.AddRange(matchingTracks.Select(t =>
+            {
+                albumImageById.TryGetValue(t.AlbumId, out var trackImageUrl);
+                return new TrackDto(
+                    t.Id, t.Title, t.ArtistName, null, t.AlbumId, t.JellyfinId,
+                    t.TrackNumber, t.DiscNumber, t.DurationTicks, t.StreamUrl,
+                    MediaAvailability.Available, trackImageUrl
+                );
+            }));
         }
         catch (Exception ex)
         {
@@ -83,6 +97,15 @@ public class SearchService : ISearchService
                         a.Id, a.Title, a.ArtistName, null, a.MusicBrainzId, null,
                         a.ImageUrl, a.Year, a.Overview, a.Genres, MediaAvailability.NotAvailable
                     )));
+
+                var providerTracks = await provider.SearchTracksAsync(query);
+                tracks.AddRange(providerTracks
+                    .Where(t => !tracks.Any(existing => existing.Title.Equals(t.Title, StringComparison.OrdinalIgnoreCase)))
+                    .Select(t => new TrackDto(
+                        t.Id, t.Title, t.ArtistName, null, null, null,
+                        t.TrackNumber, t.DiscNumber, t.DurationTicks, null,
+                        MediaAvailability.NotAvailable, t.ImageUrl
+                    )));
             }
             catch (Exception ex)
             {
@@ -90,6 +113,71 @@ public class SearchService : ISearchService
             }
         }
 
-        return new SearchResultDto(artists, albums, tracks);
+        // Sort by relevance: exact match first, then starts-with, then library items before discovery
+        var sortedArtists = SortByRelevance(artists, query, a => a.Name, a => a.Availability)
+            .Take(MaxArtists).ToList();
+        var sortedAlbums = SortByRelevance(albums, query, a => a.Title, a => a.Availability)
+            .Take(MaxAlbums).ToList();
+        var sortedTracks = SortByRelevance(tracks, query, t => t.Title, t => t.Availability)
+            .Take(MaxTracks).ToList();
+
+        // Enrich artists without images using Deezer (in parallel)
+        var artistEnrichTasks = sortedArtists
+            .Where(a => string.IsNullOrEmpty(a.ImageUrl))
+            .Select(async a =>
+            {
+                var imageUrl = await _deezerImageService.GetArtistImageUrlAsync(a.Name);
+                return (a, imageUrl);
+            });
+
+        foreach (var (artist, imageUrl) in await Task.WhenAll(artistEnrichTasks))
+        {
+            if (imageUrl != null)
+            {
+                var idx = sortedArtists.IndexOf(artist);
+                if (idx >= 0)
+                    sortedArtists[idx] = artist with { ImageUrl = imageUrl };
+            }
+        }
+
+        // Enrich albums without images using Deezer (in parallel)
+        var albumEnrichTasks = sortedAlbums
+            .Where(a => string.IsNullOrEmpty(a.ImageUrl))
+            .Select(async a =>
+            {
+                var imageUrl = await _deezerImageService.GetAlbumImageUrlAsync(a.Title, a.ArtistName);
+                return (a, imageUrl);
+            });
+
+        foreach (var (album, imageUrl) in await Task.WhenAll(albumEnrichTasks))
+        {
+            if (imageUrl != null)
+            {
+                var idx = sortedAlbums.IndexOf(album);
+                if (idx >= 0)
+                    sortedAlbums[idx] = album with { ImageUrl = imageUrl };
+            }
+        }
+
+        return new SearchResultDto(sortedArtists, sortedAlbums, sortedTracks);
+    }
+
+    private static IEnumerable<T> SortByRelevance<T>(
+        IEnumerable<T> items,
+        string query,
+        Func<T, string> nameSelector,
+        Func<T, MediaAvailability> availabilitySelector)
+    {
+        return items.OrderBy(item =>
+        {
+            var name = nameSelector(item);
+            // Exact match = 0, starts with = 1, contains = 2
+            int matchScore = name.Equals(query, StringComparison.OrdinalIgnoreCase) ? 0
+                : name.StartsWith(query, StringComparison.OrdinalIgnoreCase) ? 1
+                : 2;
+            // Library items before discovery (Available=0, else 1)
+            int availScore = availabilitySelector(item) == MediaAvailability.Available ? 0 : 1;
+            return (matchScore * 2) + availScore;
+        });
     }
 }

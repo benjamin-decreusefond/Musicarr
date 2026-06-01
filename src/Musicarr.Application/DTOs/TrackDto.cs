@@ -13,5 +13,6 @@ public record TrackDto(
     int DiscNumber,
     long? DurationTicks,
     string? StreamUrl,
-    MediaAvailability Availability
+    MediaAvailability Availability,
+    string? ImageUrl = null
 );

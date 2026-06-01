@@ -11,6 +11,7 @@ public class Track
     public int DiscNumber { get; set; } = 1;
     public long? DurationTicks { get; set; }
     public string? StreamUrl { get; set; }
+    public string? ImageUrl { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public Album? Album { get; set; }
 }
