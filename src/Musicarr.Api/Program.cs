@@ -5,9 +5,18 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Determine data directory and config file path
+var dataDir = Environment.GetEnvironmentVariable("MUSICARR_DATA_DIR")
+    ?? Path.Combine(AppContext.BaseDirectory, "data");
+Directory.CreateDirectory(dataDir);
+var configFilePath = Path.Combine(dataDir, "config.json");
+
+// Load config.json as an additional configuration source (overrides appsettings)
+builder.Configuration.AddJsonFile(configFilePath, optional: true, reloadOnChange: true);
+
 // Add services
 builder.Services.AddApplication();
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, configFilePath);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

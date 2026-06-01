@@ -8,6 +8,8 @@ import HomePage from './pages/HomePage';
 import SearchPage from './pages/SearchPage';
 import LibraryPage from './pages/LibraryPage';
 import PlaylistsPage from './pages/PlaylistsPage';
+import SettingsPage from './pages/SettingsPage';
+import SetupPage from './pages/SetupPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -21,6 +23,7 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/setup" element={<SetupPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route
               path="/*"
@@ -32,6 +35,7 @@ function App() {
                       <Route path="/search" element={<SearchPage />} />
                       <Route path="/library" element={<LibraryPage />} />
                       <Route path="/playlists" element={<PlaylistsPage />} />
+                      <Route path="/settings" element={<SettingsPage />} />
                     </Routes>
                   </Layout>
                 </ProtectedRoute>
