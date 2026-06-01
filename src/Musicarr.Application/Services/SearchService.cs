@@ -17,6 +17,7 @@ public class SearchService : ISearchService
     private const int MaxArtists = 5;
     private const int MaxAlbums = 6;
     private const int MaxTracks = 5;
+    private const string DefaultDiscoveryProvider = "Deezer";
 
     public SearchService(
         IJellyfinService jellyfinService,
@@ -85,9 +86,9 @@ public class SearchService : ISearchService
         var configuredProvider = _discoveryProviders.FirstOrDefault(provider =>
                                    provider.ProviderName.Equals(providerName, StringComparison.OrdinalIgnoreCase))
                                ?? _discoveryProviders.FirstOrDefault(provider =>
-                                   provider.ProviderName.Equals("Deezer", StringComparison.OrdinalIgnoreCase))
+                                   provider.ProviderName.Equals(DefaultDiscoveryProvider, StringComparison.OrdinalIgnoreCase))
                                ?? _discoveryProviders.FirstOrDefault();
-        var useDeezerImageEnrichment = configuredProvider?.ProviderName.Equals("Deezer", StringComparison.OrdinalIgnoreCase) == true;
+        var useDeezerImageEnrichment = configuredProvider?.ProviderName.Equals(DefaultDiscoveryProvider, StringComparison.OrdinalIgnoreCase) == true;
 
         if (configuredProvider != null)
         {

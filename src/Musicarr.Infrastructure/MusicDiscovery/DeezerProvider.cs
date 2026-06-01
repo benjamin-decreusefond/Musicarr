@@ -34,7 +34,6 @@ public class DeezerProvider : IMusicDiscoveryProvider
             {
                 Id = Guid.NewGuid(),
                 Name = GetString(item, "name") ?? "Unknown",
-                MusicBrainzId = GetString(item, "id"),
                 ImageUrl = GetString(item, "picture_medium") ?? GetString(item, "picture_xl"),
                 Overview = BuildArtistOverview(item),
             }).ToList();
@@ -57,7 +56,6 @@ public class DeezerProvider : IMusicDiscoveryProvider
             {
                 Id = Guid.NewGuid(),
                 Title = GetString(item, "title") ?? "Unknown",
-                MusicBrainzId = GetString(item, "id"),
                 ArtistName = TryGetNestedString(item, "artist", "name"),
                 ImageUrl = GetString(item, "cover_medium") ?? GetString(item, "cover_xl"),
                 Year = ParseYear(GetString(item, "release_date")),
@@ -117,7 +115,6 @@ public class DeezerProvider : IMusicDiscoveryProvider
             {
                 Id = Guid.NewGuid(),
                 Title = GetString(item, "title") ?? "Unknown",
-                MusicBrainzId = GetString(item, "id"),
                 ArtistName = TryGetNestedString(item, "artist", "name") ?? artistName,
                 ImageUrl = GetString(item, "cover_medium") ?? GetString(item, "cover_xl"),
                 Year = ParseYear(GetString(item, "release_date")),
