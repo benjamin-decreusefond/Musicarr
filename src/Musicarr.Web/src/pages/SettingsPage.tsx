@@ -11,7 +11,7 @@ import {
   Divider,
   MenuItem,
 } from '@mui/material';
-import { Save as SaveIcon } from '@mui/icons-material';
+import { Save as SaveIcon, NetworkCheck as NetworkCheckIcon } from '@mui/icons-material';
 import { api } from '../services/api';
 
 interface AppSettings {
@@ -43,6 +43,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [jellyfinTest, setJellyfinTest] = useState<{ success: boolean; message: string } | null>(null);
+  const [jellyfinTesting, setJellyfinTesting] = useState(false);
+  const [lidarrTest, setLidarrTest] = useState<{ success: boolean; message: string } | null>(null);
+  const [lidarrTesting, setLidarrTesting] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -69,6 +73,38 @@ export default function SettingsPage() {
       setError('Failed to save settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestJellyfin = async () => {
+    setJellyfinTesting(true);
+    setJellyfinTest(null);
+    try {
+      const response = await api.post<{ success: boolean; message: string }>('/api/settings/test-jellyfin', {
+        baseUrl: settings.jellyfin.baseUrl,
+        apiKey: settings.jellyfin.apiKey,
+      });
+      setJellyfinTest(response.data);
+    } catch {
+      setJellyfinTest({ success: false, message: 'Request failed. Check the server URL and try again.' });
+    } finally {
+      setJellyfinTesting(false);
+    }
+  };
+
+  const handleTestLidarr = async () => {
+    setLidarrTesting(true);
+    setLidarrTest(null);
+    try {
+      const response = await api.post<{ success: boolean; message: string }>('/api/settings/test-lidarr', {
+        baseUrl: settings.lidarr.baseUrl,
+        apiKey: settings.lidarr.apiKey,
+      });
+      setLidarrTest(response.data);
+    } catch {
+      setLidarrTest({ success: false, message: 'Request failed. Check the server URL and try again.' });
+    } finally {
+      setLidarrTesting(false);
     }
   };
 
@@ -132,6 +168,20 @@ export default function SettingsPage() {
               fullWidth
               helperText="Find your API key in Jellyfin → Dashboard → Advanced → API Keys"
             />
+            {jellyfinTest && (
+              <Alert severity={jellyfinTest.success ? 'success' : 'error'} onClose={() => setJellyfinTest(null)}>
+                {jellyfinTest.message}
+              </Alert>
+            )}
+            <Button
+              variant="outlined"
+              startIcon={jellyfinTesting ? <CircularProgress size={16} color="inherit" /> : <NetworkCheckIcon />}
+              onClick={handleTestJellyfin}
+              disabled={jellyfinTesting}
+              sx={{ alignSelf: 'flex-start' }}
+            >
+              Test Connection
+            </Button>
           </Box>
         </CardContent>
       </Card>
@@ -168,6 +218,20 @@ export default function SettingsPage() {
               fullWidth
               helperText="Find your API key in Lidarr → Settings → General → Security"
             />
+            {lidarrTest && (
+              <Alert severity={lidarrTest.success ? 'success' : 'error'} onClose={() => setLidarrTest(null)}>
+                {lidarrTest.message}
+              </Alert>
+            )}
+            <Button
+              variant="outlined"
+              startIcon={lidarrTesting ? <CircularProgress size={16} color="inherit" /> : <NetworkCheckIcon />}
+              onClick={handleTestLidarr}
+              disabled={lidarrTesting}
+              sx={{ alignSelf: 'flex-start' }}
+            >
+              Test Connection
+            </Button>
             <TextField
               label="Root Folder Path"
               placeholder="/music"

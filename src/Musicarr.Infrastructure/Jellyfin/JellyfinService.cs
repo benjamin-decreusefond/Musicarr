@@ -267,8 +267,8 @@ public class JellyfinService : IJellyfinService
         _httpClient.DefaultRequestHeaders.Add("X-Emby-Token", _optionsSnapshot.Value.ApiKey);
     }
 
-    private string GetImageUrl(string itemId)
+    private static string GetImageUrl(string itemId)
     {
-        return $"{_optionsSnapshot.Value.BaseUrl}/Items/{itemId}/Images/Primary";
+        return $"/api/images/jellyfin/{itemId}";
     }
 }

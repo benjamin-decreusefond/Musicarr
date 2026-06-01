@@ -62,17 +62,22 @@ public class MusicBrainzProvider : IMusicDiscoveryProvider
             if (!response.TryGetProperty("release-groups", out var releases))
                 return Enumerable.Empty<Album>();
 
-            return releases.EnumerateArray().Select(item => new Album
+            return releases.EnumerateArray().Select(item =>
             {
-                Id = Guid.NewGuid(),
-                Title = item.GetProperty("title").GetString() ?? "Unknown",
-                MusicBrainzId = item.GetProperty("id").GetString(),
-                ArtistName = item.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0
-                    ? credits[0].TryGetProperty("name", out var name) ? name.GetString() : null
-                    : null,
-                Year = item.TryGetProperty("first-release-date", out var date) && date.GetString()?.Length >= 4
-                    ? int.TryParse(date.GetString()![..4], out var y) ? y : null
-                    : null
+                var mbid = item.GetProperty("id").GetString();
+                return new Album
+                {
+                    Id = Guid.NewGuid(),
+                    Title = item.GetProperty("title").GetString() ?? "Unknown",
+                    MusicBrainzId = mbid,
+                    ArtistName = item.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0
+                        ? credits[0].TryGetProperty("name", out var name) ? name.GetString() : null
+                        : null,
+                    Year = item.TryGetProperty("first-release-date", out var date) && date.GetString()?.Length >= 4
+                        ? int.TryParse(date.GetString()![..4], out var y) ? y : null
+                        : null,
+                    ImageUrl = mbid != null ? $"https://coverartarchive.org/release-group/{mbid}/front-250" : null
+                };
             }).ToList();
         }
         catch (Exception ex)
