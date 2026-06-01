@@ -25,7 +25,9 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos "" musicarr
+RUN adduser --disabled-password --gecos "" musicarr && \
+    mkdir -p /config && \
+    chown musicarr:musicarr /config
 USER musicarr
 
 COPY --from=build /app/publish .

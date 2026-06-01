@@ -9,7 +9,7 @@ A self-hosted music platform that provides a Spotify-like experience by combinin
 - 📥 **Request Music** – Request new music downloads through Lidarr
 - 📋 **Playlists** – Create and manage playlists synced with Jellyfin
 - 🎨 **Modern UI** – Dark-themed, Spotify-inspired interface
-- 🔐 **Jellyfin Auth** – Authenticate using your existing Jellyfin credentials
+- 🔐 **Local Auth** – Authenticate using your Musicarr admin account
 
 ## Architecture
 
@@ -71,7 +71,7 @@ cd Musicarr
 docker-compose up -d
 ```
 
-The application will be available at `http://localhost:5000`. On first launch, you will be redirected to the **Setup Wizard** to configure your Jellyfin and Lidarr connections.
+The application will be available at `http://localhost:5000`. On first launch, you will be prompted to **create an admin account**. After logging in, you can configure Jellyfin and Lidarr connections from the **Settings** page.
 
 ### Development Setup
 
@@ -96,7 +96,13 @@ The frontend dev server runs at `http://localhost:5173` with API proxy to `http:
 
 ## Configuration
 
-Musicarr uses a **config file** stored in a data directory, similar to how Sonarr and Radarr manage their settings. On first launch, Musicarr will show a **Setup Wizard** in the browser where you can enter your API keys and service URLs. These are saved to `config.json` in the data directory.
+Musicarr uses a **config file** stored in a data directory, similar to how Sonarr and Radarr manage their settings. On first launch, Musicarr prompts you to create an admin account. Jellyfin and Lidarr connections can be configured later from the **Settings** page in the web UI.
+
+### First Launch
+
+1. Navigate to `http://localhost:5000` (or your configured URL)
+2. Create your admin account (username + password)
+3. Log in and optionally configure Jellyfin/Lidarr from **Settings**
 
 ### Data Directory
 
@@ -106,10 +112,10 @@ The data directory defaults to `<app>/data/` and can be overridden with the `MUS
 export MUSICARR_DATA_DIR=/path/to/your/config
 ```
 
-The config file at `$MUSICARR_DATA_DIR/config.json` stores:
-- Jellyfin server URL and API key
-- Lidarr server URL and API key
-- Music discovery provider
+The data directory stores:
+- `config.json` – Jellyfin, Lidarr, and MusicDiscovery settings
+- `jwt-secret.key` – Auto-generated JWT signing secret (do not share)
+- `musicarr.db` – SQLite database (unless a custom connection string is set)
 
 ### Updating Settings
 

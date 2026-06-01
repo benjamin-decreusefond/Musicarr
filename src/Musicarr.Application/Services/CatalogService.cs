@@ -17,27 +17,27 @@ public class CatalogService : ICatalogService
         _logger = logger;
     }
 
-    public async Task<IEnumerable<ArtistDto>> GetArtistsAsync(string token)
+    public async Task<IEnumerable<ArtistDto>> GetArtistsAsync()
     {
-        var artists = await _jellyfinService.GetArtistsAsync(token);
+        var artists = await _jellyfinService.GetArtistsAsync();
         return artists.Select(a => new ArtistDto(
             a.Id, a.Name, a.MusicBrainzId, a.JellyfinId, a.ImageUrl,
             a.Overview, a.Genres, MediaAvailability.Available
         ));
     }
 
-    public async Task<IEnumerable<AlbumDto>> GetAlbumsAsync(string token, Guid? artistId = null)
+    public async Task<IEnumerable<AlbumDto>> GetAlbumsAsync(Guid? artistId = null)
     {
-        var albums = await _jellyfinService.GetAlbumsAsync(token, artistId?.ToString());
+        var albums = await _jellyfinService.GetAlbumsAsync(artistId?.ToString());
         return albums.Select(a => new AlbumDto(
             a.Id, a.Title, a.ArtistName, a.ArtistId, a.MusicBrainzId, a.JellyfinId,
             a.ImageUrl, a.Year, a.Overview, a.Genres, MediaAvailability.Available
         ));
     }
 
-    public async Task<IEnumerable<TrackDto>> GetTracksAsync(string token, Guid? albumId = null)
+    public async Task<IEnumerable<TrackDto>> GetTracksAsync(Guid? albumId = null)
     {
-        var tracks = await _jellyfinService.GetTracksAsync(token, albumId?.ToString());
+        var tracks = await _jellyfinService.GetTracksAsync(albumId?.ToString());
         return tracks.Select(t => new TrackDto(
             t.Id, t.Title, t.ArtistName, null, t.AlbumId, t.JellyfinId,
             t.TrackNumber, t.DiscNumber, t.DurationTicks, t.StreamUrl,
@@ -45,13 +45,13 @@ public class CatalogService : ICatalogService
         ));
     }
 
-    public async Task<AlbumDto?> GetAlbumByIdAsync(string token, Guid albumId)
+    public async Task<AlbumDto?> GetAlbumByIdAsync(Guid albumId)
     {
-        var albums = await _jellyfinService.GetAlbumsAsync(token);
+        var albums = await _jellyfinService.GetAlbumsAsync();
         var album = albums.FirstOrDefault(a => a.Id == albumId || a.JellyfinId == albumId.ToString());
         if (album == null) return null;
 
-        var tracks = await _jellyfinService.GetTracksAsync(token, album.JellyfinId);
+        var tracks = await _jellyfinService.GetTracksAsync(album.JellyfinId);
         var trackDtos = tracks.Select(t => new TrackDto(
             t.Id, t.Title, t.ArtistName, album.Title, t.AlbumId, t.JellyfinId,
             t.TrackNumber, t.DiscNumber, t.DurationTicks, t.StreamUrl,
@@ -65,9 +65,9 @@ public class CatalogService : ICatalogService
         );
     }
 
-    public async Task<ArtistDto?> GetArtistByIdAsync(string token, Guid artistId)
+    public async Task<ArtistDto?> GetArtistByIdAsync(Guid artistId)
     {
-        var artists = await _jellyfinService.GetArtistsAsync(token);
+        var artists = await _jellyfinService.GetArtistsAsync();
         var artist = artists.FirstOrDefault(a => a.Id == artistId || a.JellyfinId == artistId.ToString());
         if (artist == null) return null;
 

@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Musicarr.Api.Extensions;
 using Musicarr.Application.Interfaces;
 
 namespace Musicarr.Api.Controllers;
@@ -20,10 +19,7 @@ public class PlaybackController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetStreamUrl(string itemId)
     {
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var url = await _playbackService.GetStreamUrlAsync(token, itemId);
+        var url = await _playbackService.GetStreamUrlAsync(itemId);
         if (string.IsNullOrEmpty(url)) return NotFound();
 
         return Ok(new { StreamUrl = url });

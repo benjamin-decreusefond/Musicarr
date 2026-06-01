@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Musicarr.Api.Extensions;
 using Musicarr.Application.DTOs;
 using Musicarr.Application.Interfaces;
 
@@ -20,10 +19,7 @@ public class CatalogController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<ArtistDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetArtists()
     {
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var artists = await _catalogService.GetArtistsAsync(token);
+        var artists = await _catalogService.GetArtistsAsync();
         return Ok(artists);
     }
 
@@ -32,10 +28,7 @@ public class CatalogController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetArtist(Guid id)
     {
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var artist = await _catalogService.GetArtistByIdAsync(token, id);
+        var artist = await _catalogService.GetArtistByIdAsync(id);
         return artist != null ? Ok(artist) : NotFound();
     }
 
@@ -43,10 +36,7 @@ public class CatalogController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<AlbumDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAlbums([FromQuery] Guid? artistId = null)
     {
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var albums = await _catalogService.GetAlbumsAsync(token, artistId);
+        var albums = await _catalogService.GetAlbumsAsync(artistId);
         return Ok(albums);
     }
 
@@ -55,10 +45,7 @@ public class CatalogController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetAlbum(Guid id)
     {
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var album = await _catalogService.GetAlbumByIdAsync(token, id);
+        var album = await _catalogService.GetAlbumByIdAsync(id);
         return album != null ? Ok(album) : NotFound();
     }
 
@@ -66,10 +53,7 @@ public class CatalogController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<TrackDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetTracks([FromQuery] Guid? albumId = null)
     {
-        var token = HttpContext.GetToken();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
-
-        var tracks = await _catalogService.GetTracksAsync(token, albumId);
+        var tracks = await _catalogService.GetTracksAsync(albumId);
         return Ok(tracks);
     }
 }

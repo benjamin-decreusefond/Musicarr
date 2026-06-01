@@ -12,7 +12,7 @@ namespace Musicarr.Infrastructure.Jellyfin;
 public class JellyfinService : IJellyfinService
 {
     private readonly HttpClient _httpClient;
-    private readonly JellyfinOptions _options;
+    private readonly IOptionsSnapshot<JellyfinOptions> _optionsSnapshot;
     private readonly ILogger<JellyfinService> _logger;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -23,47 +23,23 @@ public class JellyfinService : IJellyfinService
     public JellyfinService(HttpClient httpClient, IOptionsSnapshot<JellyfinOptions> options, ILogger<JellyfinService> logger)
     {
         _httpClient = httpClient;
-        _options = options.Value;
+        _optionsSnapshot = options;
         _logger = logger;
-        if (!string.IsNullOrWhiteSpace(_options.BaseUrl))
-            _httpClient.BaseAddress = new Uri(_options.BaseUrl);
+
+        if (!string.IsNullOrWhiteSpace(options.Value.BaseUrl))
+            _httpClient.BaseAddress = new Uri(options.Value.BaseUrl);
     }
 
-    public async Task<(bool Success, string? Token, string? UserId)> AuthenticateAsync(string username, string password)
+    public async Task<IEnumerable<Artist>> GetArtistsAsync()
     {
+        if (!IsConfigured()) return Enumerable.Empty<Artist>();
+
         try
         {
-            var request = new
-            {
-                Username = username,
-                Pw = password
-            };
-
-            var response = await _httpClient.PostAsJsonAsync("/Users/AuthenticateByName", request);
-            if (!response.IsSuccessStatusCode)
-                return (false, null, null);
-
-            var result = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var token = result.GetProperty("AccessToken").GetString();
-            var userId = result.GetProperty("User").GetProperty("Id").GetString();
-
-            return (true, token, userId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to authenticate with Jellyfin");
-            return (false, null, null);
-        }
-    }
-
-    public async Task<IEnumerable<Artist>> GetArtistsAsync(string token)
-    {
-        try
-        {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var response = await _httpClient.GetFromJsonAsync<JsonElement>("/Artists?Recursive=true");
             var items = response.GetProperty("Items");
-            
+
             return items.EnumerateArray().Select(item => new Artist
             {
                 Id = Guid.NewGuid(),
@@ -80,11 +56,13 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<IEnumerable<Album>> GetAlbumsAsync(string token, string? artistId = null)
+    public async Task<IEnumerable<Album>> GetAlbumsAsync(string? artistId = null)
     {
+        if (!IsConfigured()) return Enumerable.Empty<Album>();
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var url = "/Items?IncludeItemTypes=MusicAlbum&Recursive=true";
             if (!string.IsNullOrEmpty(artistId))
                 url += $"&ArtistIds={artistId}";
@@ -109,11 +87,13 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<IEnumerable<Track>> GetTracksAsync(string token, string? albumId = null)
+    public async Task<IEnumerable<Track>> GetTracksAsync(string? albumId = null)
     {
+        if (!IsConfigured()) return Enumerable.Empty<Track>();
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var url = "/Items?IncludeItemTypes=Audio&Recursive=true";
             if (!string.IsNullOrEmpty(albumId))
                 url += $"&ParentId={albumId}";
@@ -130,7 +110,7 @@ public class JellyfinService : IJellyfinService
                 TrackNumber = item.TryGetProperty("IndexNumber", out var index) ? index.GetInt32() : 0,
                 DiscNumber = item.TryGetProperty("ParentIndexNumber", out var disc) ? disc.GetInt32() : 1,
                 DurationTicks = item.TryGetProperty("RunTimeTicks", out var ticks) ? ticks.GetInt64() : null,
-                StreamUrl = $"{_options.BaseUrl}/Audio/{item.GetProperty("Id").GetString()}/universal"
+                StreamUrl = $"{_optionsSnapshot.Value.BaseUrl}/Audio/{item.GetProperty("Id").GetString()}/universal"
             }).ToList();
         }
         catch (Exception ex)
@@ -140,9 +120,10 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public Task<string?> GetStreamUrlAsync(string token, string itemId)
+    public Task<string?> GetStreamUrlAsync(string itemId)
     {
-        var url = $"{_options.BaseUrl}/Audio/{itemId}/universal?api_key={token}";
+        if (!IsConfigured()) return Task.FromResult<string?>(null);
+        var url = $"{_optionsSnapshot.Value.BaseUrl}/Audio/{itemId}/universal?api_key={_optionsSnapshot.Value.ApiKey}";
         return Task.FromResult<string?>(url);
     }
 
@@ -151,11 +132,13 @@ public class JellyfinService : IJellyfinService
         return Task.FromResult<string?>(GetImageUrl(itemId));
     }
 
-    public async Task<bool> RefreshLibraryAsync(string token)
+    public async Task<bool> RefreshLibraryAsync()
     {
+        if (!IsConfigured()) return false;
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var response = await _httpClient.PostAsync("/Library/Refresh", null);
             return response.IsSuccessStatusCode;
         }
@@ -166,13 +149,15 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<IEnumerable<Playlist>> GetPlaylistsAsync(string token, string userId)
+    public async Task<IEnumerable<Playlist>> GetPlaylistsAsync()
     {
+        if (!IsConfigured()) return Enumerable.Empty<Playlist>();
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var response = await _httpClient.GetFromJsonAsync<JsonElement>(
-                $"/Users/{userId}/Items?IncludeItemTypes=Playlist&Recursive=true");
+                "/Items?IncludeItemTypes=Playlist&Recursive=true");
             var items = response.GetProperty("Items");
 
             return items.EnumerateArray().Select(item => new Playlist
@@ -190,14 +175,16 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<Playlist?> CreatePlaylistAsync(string token, string userId, string name, IEnumerable<string> trackIds)
+    public async Task<Playlist?> CreatePlaylistAsync(string name, IEnumerable<string> trackIds)
     {
+        if (!IsConfigured()) return null;
+
         try
         {
-            SetAuthHeader(token);
-            var request = new { Name = name, UserId = userId, Ids = trackIds.ToArray(), MediaType = "Audio" };
+            SetAuthHeader();
+            var request = new { Name = name, Ids = trackIds.ToArray(), MediaType = "Audio" };
             var response = await _httpClient.PostAsJsonAsync("/Playlists", request);
-            
+
             if (!response.IsSuccessStatusCode) return null;
 
             var result = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -215,11 +202,13 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<bool> DeletePlaylistAsync(string token, string playlistId)
+    public async Task<bool> DeletePlaylistAsync(string playlistId)
     {
+        if (!IsConfigured()) return false;
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var response = await _httpClient.DeleteAsync($"/Items/{playlistId}");
             return response.IsSuccessStatusCode;
         }
@@ -230,11 +219,13 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<bool> AddToPlaylistAsync(string token, string playlistId, IEnumerable<string> trackIds)
+    public async Task<bool> AddToPlaylistAsync(string playlistId, IEnumerable<string> trackIds)
     {
+        if (!IsConfigured()) return false;
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var ids = string.Join(",", trackIds);
             var response = await _httpClient.PostAsync($"/Playlists/{playlistId}/Items?Ids={ids}", null);
             return response.IsSuccessStatusCode;
@@ -246,11 +237,13 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    public async Task<bool> RemoveFromPlaylistAsync(string token, string playlistId, IEnumerable<string> trackIds)
+    public async Task<bool> RemoveFromPlaylistAsync(string playlistId, IEnumerable<string> trackIds)
     {
+        if (!IsConfigured()) return false;
+
         try
         {
-            SetAuthHeader(token);
+            SetAuthHeader();
             var ids = string.Join(",", trackIds);
             var response = await _httpClient.DeleteAsync($"/Playlists/{playlistId}/Items?EntryIds={ids}");
             return response.IsSuccessStatusCode;
@@ -262,14 +255,20 @@ public class JellyfinService : IJellyfinService
         }
     }
 
-    private void SetAuthHeader(string token)
+    private bool IsConfigured()
+    {
+        return !string.IsNullOrWhiteSpace(_optionsSnapshot.Value.BaseUrl)
+            && !string.IsNullOrWhiteSpace(_optionsSnapshot.Value.ApiKey);
+    }
+
+    private void SetAuthHeader()
     {
         _httpClient.DefaultRequestHeaders.Remove("X-Emby-Token");
-        _httpClient.DefaultRequestHeaders.Add("X-Emby-Token", token);
+        _httpClient.DefaultRequestHeaders.Add("X-Emby-Token", _optionsSnapshot.Value.ApiKey);
     }
 
     private string GetImageUrl(string itemId)
     {
-        return $"{_options.BaseUrl}/Items/{itemId}/Images/Primary";
+        return $"{_optionsSnapshot.Value.BaseUrl}/Items/{itemId}/Images/Primary";
     }
 }

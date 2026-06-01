@@ -86,7 +86,9 @@ export default function SettingsPage() {
         Settings
       </Typography>
       <Typography variant="body2" color="text.secondary" mb={3}>
-        Configure your external service connections. Changes take effect immediately.
+        Configure your external service connections. These are optional — you can use Musicarr
+        without Jellyfin or Lidarr, but connecting them enables library browsing and music
+        acquisition. Changes take effect immediately.
       </Typography>
 
       {success && (

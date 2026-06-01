@@ -9,6 +9,7 @@ public class MusicarrDbContext : DbContext
 
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistTrack> PlaylistTracks => Set<PlaylistTrack>();
+    public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +25,14 @@ public class MusicarrDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.PlaylistId, e.TrackId }).IsUnique();
+        });
+
+        modelBuilder.Entity<AdminUser>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Username).IsRequired().HasMaxLength(100);
+            entity.HasIndex(e => e.Username).IsUnique();
+            entity.Property(e => e.PasswordHash).IsRequired();
         });
     }
 }
