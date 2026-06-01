@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Box, Typography, Grid, Card, CardContent, CardMedia, Tabs, Tab, Skeleton } from '@mui/material';
 import { api } from '../services/api';
 
@@ -17,6 +18,7 @@ interface Album {
 }
 
 export default function LibraryPage() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState(0);
   const [artists, setArtists] = useState<Artist[]>([]);
   const [albums, setAlbums] = useState<Album[]>([]);
@@ -61,7 +63,10 @@ export default function LibraryPage() {
           : tab === 0
           ? artists.map((artist) => (
               <Grid item xs={6} sm={4} md={3} lg={2} key={artist.id}>
-                <Card sx={{ textAlign: 'center', p: 2 }}>
+                <Card
+                  sx={{ textAlign: 'center', p: 2, cursor: 'pointer' }}
+                  onClick={() => navigate(`/artist/${artist.id}`)}
+                >
                   <CardMedia
                     component="img"
                     sx={{ width: 120, height: 120, borderRadius: '50%', mx: 'auto' }}
@@ -76,7 +81,10 @@ export default function LibraryPage() {
             ))
           : albums.map((album) => (
               <Grid item xs={6} sm={4} md={3} lg={2} key={album.id}>
-                <Card>
+                <Card
+                  sx={{ cursor: 'pointer', height: '100%' }}
+                  onClick={() => navigate(`/album/${album.id}`)}
+                >
                   <CardMedia
                     component="img"
                     height="160"

@@ -89,7 +89,10 @@ export default function HomePage() {
                 ))
               : recentAlbums.map((album) => (
                   <Grid item xs={6} sm={4} md={3} lg={2} key={album.id}>
-                    <Card sx={{ cursor: 'pointer', height: '100%' }}>
+                    <Card
+                      sx={{ cursor: 'pointer', height: '100%' }}
+                      onClick={() => navigate(`/album/${album.id}`)}
+                    >
                       <CardMedia
                         component="img"
                         height="160"

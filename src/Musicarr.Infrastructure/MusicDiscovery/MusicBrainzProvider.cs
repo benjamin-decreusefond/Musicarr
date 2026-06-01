@@ -27,7 +27,7 @@ public class MusicBrainzProvider : IMusicDiscoveryProvider
         try
         {
             var response = await _httpClient.GetFromJsonAsync<JsonElement>(
-                $"artist?query={Uri.EscapeDataString(query)}&limit=20&fmt=json");
+                $"artist?query={Uri.EscapeDataString(query)}&limit=10&fmt=json");
 
             if (!response.TryGetProperty("artists", out var artists))
                 return Enumerable.Empty<Artist>();
@@ -57,7 +57,7 @@ public class MusicBrainzProvider : IMusicDiscoveryProvider
         try
         {
             var response = await _httpClient.GetFromJsonAsync<JsonElement>(
-                $"release-group?query={Uri.EscapeDataString(query)}&limit=20&fmt=json");
+                $"release-group?query={Uri.EscapeDataString(query)}&limit=10&fmt=json");
 
             if (!response.TryGetProperty("release-groups", out var releases))
                 return Enumerable.Empty<Album>();
@@ -92,19 +92,37 @@ public class MusicBrainzProvider : IMusicDiscoveryProvider
         try
         {
             var response = await _httpClient.GetFromJsonAsync<JsonElement>(
-                $"recording?query={Uri.EscapeDataString(query)}&limit=20&fmt=json");
+                $"recording?query={Uri.EscapeDataString(query)}&limit=10&inc=releases+release-groups&fmt=json");
 
             if (!response.TryGetProperty("recordings", out var recordings))
                 return Enumerable.Empty<Track>();
 
-            return recordings.EnumerateArray().Select(item => new Track
+            return recordings.EnumerateArray().Select(item =>
             {
-                Id = Guid.NewGuid(),
-                Title = item.GetProperty("title").GetString() ?? "Unknown",
-                ArtistName = item.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0
-                    ? credits[0].TryGetProperty("name", out var name) ? name.GetString() : null
-                    : null,
-                DurationTicks = item.TryGetProperty("length", out var length) ? length.GetInt64() * 10000 : null
+                // Extract release-group MBID from first release for cover art
+                string? releaseGroupMbid = null;
+                if (item.TryGetProperty("releases", out var releases) && releases.GetArrayLength() > 0)
+                {
+                    var firstRelease = releases[0];
+                    if (firstRelease.TryGetProperty("release-group", out var rg) &&
+                        rg.TryGetProperty("id", out var rgId))
+                    {
+                        releaseGroupMbid = rgId.GetString();
+                    }
+                }
+
+                return new Track
+                {
+                    Id = Guid.NewGuid(),
+                    Title = item.GetProperty("title").GetString() ?? "Unknown",
+                    ArtistName = item.TryGetProperty("artist-credit", out var credits) && credits.GetArrayLength() > 0
+                        ? credits[0].TryGetProperty("name", out var name) ? name.GetString() : null
+                        : null,
+                    DurationTicks = item.TryGetProperty("length", out var length) ? length.GetInt64() * 10000 : null,
+                    ImageUrl = releaseGroupMbid != null
+                        ? $"https://coverartarchive.org/release-group/{releaseGroupMbid}/front-250"
+                        : null
+                };
             }).ToList();
         }
         catch (Exception ex)

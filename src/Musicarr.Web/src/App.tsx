@@ -10,6 +10,8 @@ import LibraryPage from './pages/LibraryPage';
 import PlaylistsPage from './pages/PlaylistsPage';
 import SettingsPage from './pages/SettingsPage';
 import SetupPage from './pages/SetupPage';
+import ArtistDetailPage from './pages/ArtistDetailPage';
+import AlbumDetailPage from './pages/AlbumDetailPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -34,6 +36,8 @@ function App() {
                       <Route path="/" element={<HomePage />} />
                       <Route path="/search" element={<SearchPage />} />
                       <Route path="/library" element={<LibraryPage />} />
+                      <Route path="/artist/:id" element={<ArtistDetailPage />} />
+                      <Route path="/album/:id" element={<AlbumDetailPage />} />
                       <Route path="/playlists" element={<PlaylistsPage />} />
                       <Route path="/settings" element={<SettingsPage />} />
                     </Routes>
