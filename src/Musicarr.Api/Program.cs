@@ -78,5 +78,7 @@ app.MapControllers();
 app.MapHealthChecks("/health");
 app.MapGet("/health/ready", () => Results.Ok(new { Status = "Ready" }));
 app.MapGet("/health/live", () => Results.Ok(new { Status = "Alive" }));
+app.UseStaticFiles();
+app.MapFallbackToFile("index.html");
 
 app.Run();
