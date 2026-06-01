@@ -39,7 +39,7 @@ A self-hosted music platform that provides a Spotify-like experience by combinin
 ### Backend
 - ASP.NET Core 9 / C#
 - Clean Architecture
-- Entity Framework Core + PostgreSQL
+- Entity Framework Core + SQLite
 - REST API with OpenAPI/Swagger
 
 ### Frontend
@@ -104,7 +104,7 @@ Configuration is managed through environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ConnectionStrings__DefaultConnection` | PostgreSQL connection string | `Host=localhost;Database=musicarr;...` |
+| `ConnectionStrings__DefaultConnection` | SQLite connection string | `Data Source=musicarr.db` |
 | `Jellyfin__BaseUrl` | Jellyfin server URL | `http://localhost:8096` |
 | `Jellyfin__ApiKey` | Jellyfin API key | - |
 | `Lidarr__BaseUrl` | Lidarr server URL | `http://localhost:8686` |
