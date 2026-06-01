@@ -67,15 +67,11 @@ A self-hosted music platform that provides a Spotify-like experience by combinin
 git clone https://github.com/BenjaminDecreusefond/Musicarr.git
 cd Musicarr
 
-# Configure environment variables
-export JELLYFIN_API_KEY=your_jellyfin_api_key
-export LIDARR_API_KEY=your_lidarr_api_key
-
 # Start all services
 docker-compose up -d
 ```
 
-The application will be available at `http://localhost:5000`.
+The application will be available at `http://localhost:5000`. On first launch, you will be redirected to the **Setup Wizard** to configure your Jellyfin and Lidarr connections.
 
 ### Development Setup
 
@@ -100,7 +96,28 @@ The frontend dev server runs at `http://localhost:5173` with API proxy to `http:
 
 ## Configuration
 
-Configuration is managed through environment variables:
+Musicarr uses a **config file** stored in a data directory, similar to how Sonarr and Radarr manage their settings. On first launch, Musicarr will show a **Setup Wizard** in the browser where you can enter your API keys and service URLs. These are saved to `config.json` in the data directory.
+
+### Data Directory
+
+The data directory defaults to `<app>/data/` and can be overridden with the `MUSICARR_DATA_DIR` environment variable:
+
+```bash
+export MUSICARR_DATA_DIR=/path/to/your/config
+```
+
+The config file at `$MUSICARR_DATA_DIR/config.json` stores:
+- Jellyfin server URL and API key
+- Lidarr server URL and API key
+- Music discovery provider
+
+### Updating Settings
+
+Settings can be updated at any time via **Settings** in the sidebar of the web UI. Changes take effect immediately.
+
+### Environment Variables (Optional Overrides)
+
+You can still use environment variables to pre-seed the configuration (they take lower priority than `config.json`):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -110,6 +127,7 @@ Configuration is managed through environment variables:
 | `Lidarr__BaseUrl` | Lidarr server URL | `http://localhost:8686` |
 | `Lidarr__ApiKey` | Lidarr API key | - |
 | `MusicDiscovery__Provider` | Discovery provider | `MusicBrainz` |
+| `MUSICARR_DATA_DIR` | Path to data/config directory | `<app>/data/` |
 
 ## API Documentation
 
@@ -120,6 +138,9 @@ When running in development mode, Swagger UI is available at `/swagger`.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/auth/login` | Authenticate with Jellyfin |
+| GET | `/api/settings` | Get current settings (API keys masked) |
+| PUT | `/api/settings` | Update settings and save to config file |
+| GET | `/api/settings/status` | Returns `{ isConfigured: bool }` |
 | GET | `/api/catalog/artists` | List artists from library |
 | GET | `/api/catalog/albums` | List albums from library |
 | GET | `/api/catalog/tracks` | List tracks from library |

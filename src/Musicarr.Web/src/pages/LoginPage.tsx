@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -11,6 +11,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -19,6 +20,21 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect to setup wizard if app is not yet configured
+  useEffect(() => {
+    const checkSetup = async () => {
+      try {
+        const response = await api.get<{ isConfigured: boolean }>('/api/settings/status');
+        if (!response.data.isConfigured) {
+          navigate('/setup');
+        }
+      } catch {
+        // If the API is unreachable, stay on the login page
+      }
+    };
+    checkSetup();
+  }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

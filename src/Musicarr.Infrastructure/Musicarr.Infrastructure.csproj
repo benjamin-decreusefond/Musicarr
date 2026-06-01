@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Musicarr.Domain\Musicarr.Domain.csproj" />
+    <ProjectReference Include="..\Musicarr.Application\Musicarr.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />

@@ -20,6 +20,7 @@ import {
   Search as SearchIcon,
   LibraryMusic as LibraryIcon,
   QueueMusic as PlaylistIcon,
+  Settings as SettingsIcon,
   Logout as LogoutIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -32,6 +33,7 @@ const navItems = [
   { path: '/search', label: 'Search', icon: <SearchIcon /> },
   { path: '/library', label: 'Library', icon: <LibraryIcon /> },
   { path: '/playlists', label: 'Playlists', icon: <PlaylistIcon /> },
+  { path: '/settings', label: 'Settings', icon: <SettingsIcon /> },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {

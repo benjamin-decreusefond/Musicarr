@@ -20,12 +20,13 @@ public class JellyfinService : IJellyfinService
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public JellyfinService(HttpClient httpClient, IOptions<JellyfinOptions> options, ILogger<JellyfinService> logger)
+    public JellyfinService(HttpClient httpClient, IOptionsSnapshot<JellyfinOptions> options, ILogger<JellyfinService> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
-        _httpClient.BaseAddress = new Uri(_options.BaseUrl);
+        if (!string.IsNullOrWhiteSpace(_options.BaseUrl))
+            _httpClient.BaseAddress = new Uri(_options.BaseUrl);
     }
 
     public async Task<(bool Success, string? Token, string? UserId)> AuthenticateAsync(string username, string password)

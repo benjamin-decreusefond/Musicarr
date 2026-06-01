@@ -15,13 +15,18 @@ public class LidarrService : ILidarrService
     private readonly LidarrOptions _options;
     private readonly ILogger<LidarrService> _logger;
 
-    public LidarrService(HttpClient httpClient, IOptions<LidarrOptions> options, ILogger<LidarrService> logger)
+    public LidarrService(HttpClient httpClient, IOptionsSnapshot<LidarrOptions> options, ILogger<LidarrService> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
-        _httpClient.BaseAddress = new Uri(_options.BaseUrl);
-        _httpClient.DefaultRequestHeaders.Add("X-Api-Key", _options.ApiKey);
+        // The typed HTTP client is transient: IHttpClientFactory creates a new HttpClient
+        // per injection, so DefaultRequestHeaders starts empty and is safe to set here.
+        if (!string.IsNullOrWhiteSpace(_options.BaseUrl))
+        {
+            _httpClient.BaseAddress = new Uri(_options.BaseUrl);
+            _httpClient.DefaultRequestHeaders.Add("X-Api-Key", _options.ApiKey);
+        }
     }
 
     public async Task<IEnumerable<Artist>> SearchArtistsAsync(string query)
