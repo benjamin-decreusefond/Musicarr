@@ -21,11 +21,13 @@ public static class DependencyInjection
 
         // Database
         var connectionString = configuration.GetConnectionString("DefaultConnection");
-        if (!string.IsNullOrEmpty(connectionString))
+        if (string.IsNullOrWhiteSpace(connectionString))
         {
-            services.AddDbContext<MusicarrDbContext>(options =>
-                options.UseNpgsql(connectionString));
+            connectionString = "Data Source=musicarr.db";
         }
+
+        services.AddDbContext<MusicarrDbContext>(options =>
+            options.UseSqlite(connectionString));
 
         // HTTP Clients
         services.AddHttpClient<IJellyfinService, JellyfinService>();
