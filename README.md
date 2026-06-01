@@ -15,7 +15,7 @@ A self-hosted music platform that provides a Spotify-like experience by combinin
 
 ```
 ┌─────────────────────────────────────────────┐
-│              React Frontend                  │
+│              React Frontend                 │
 │         (TypeScript + MUI + Vite)           │
 └─────────────────┬───────────────────────────┘
                   │ REST API
@@ -27,10 +27,10 @@ A self-hosted music platform that provides a Spotify-like experience by combinin
 │  Domain Layer (Entities, Interfaces)        │
 ├─────────────────────────────────────────────┤
 │  Infrastructure Layer (Adapters)            │
-│  ┌──────────┐ ┌──────────┐ ┌────────────┐  │
-│  │ Jellyfin │ │  Lidarr  │ │MusicBrainz │  │
-│  │ Adapter  │ │ Adapter  │ │  Adapter   │  │
-│  └──────────┘ └──────────┘ └────────────┘  │
+│  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
+│  │ Jellyfin │ │  Lidarr  │ │MusicBrainz │   │
+│  │ Adapter  │ │ Adapter  │ │  Adapter   │   │
+│  └──────────┘ └──────────┘ └────────────┘   │
 └─────────────────────────────────────────────┘
 ```
 
