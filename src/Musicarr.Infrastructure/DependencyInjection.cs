@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,8 @@ public static class DependencyInjection
         services.AddDbContext<MusicarrDbContext>(options =>
             options.UseSqlite(connectionString));
 
+        services.AddMemoryCache();
+
         services.AddHttpClient<IJellyfinService, JellyfinService>();
         services.AddHttpClient<ILidarrService, LidarrService>();
         services.AddHttpClient<MusicBrainzProvider>();
@@ -46,6 +49,7 @@ public static class DependencyInjection
         services.AddHttpClient<IDeezerImageService, DeezerImageService>();
 
         services.AddScoped<IPlaylistRepository, PlaylistRepository>();
+        services.AddScoped<IRequestRepository, RequestRepository>();
         services.AddScoped<IAdminUserService, AdminUserService>();
 
         return services;

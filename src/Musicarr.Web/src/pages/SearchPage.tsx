@@ -31,6 +31,7 @@ import {
 } from '@mui/icons-material';
 import { api } from '../services/api';
 import { getPlaybackStreamUrl, requestMusic } from '../services/mediaActions';
+import HorizontalCarousel from '../components/HorizontalCarousel';
 
 type Availability = 'Available' | 'Requested' | 'Downloading' | 'NotAvailable';
 
@@ -71,6 +72,14 @@ interface SearchResults {
   tracks: SearchTrack[];
 }
 
+interface DiscoverSection {
+  id: string;
+  title: string;
+  contentType: string;
+  albums?: SearchAlbum[];
+  artists?: SearchArtist[];
+}
+
 const SHOW_MORE_STEP = 10;
 const SUGGESTION_DEBOUNCE_MS = 350;
 const SUGGESTION_BLUR_DELAY_MS = 150;
@@ -79,7 +88,7 @@ export default function SearchPage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResults | null>(null);
-  const [discover, setDiscover] = useState<SearchResults | null>(null);
+  const [discoverSections, setDiscoverSections] = useState<DiscoverSection[]>([]);
   const [suggestions, setSuggestions] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -93,10 +102,10 @@ export default function SearchPage() {
   const fetchDiscover = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await api.get<SearchResults>('/api/search/suggestions');
-      setDiscover(response.data);
+      const response = await api.get<DiscoverSection[]>('/api/discover');
+      setDiscoverSections(response.data);
     } catch (error) {
-      console.error('Failed to fetch suggestions:', error);
+      console.error('Failed to fetch discover sections:', error);
     } finally {
       setLoading(false);
     }
@@ -193,22 +202,6 @@ export default function SearchPage() {
     else runFullSearch(query);
   };
 
-  const handleRequestArtist = async (artist: SearchArtist, event?: React.MouseEvent) => {
-    event?.stopPropagation();
-    try {
-      await requestMusic({
-        musicBrainzId: artist.musicBrainzId,
-        name: artist.name,
-        type: 'artist',
-      });
-      setRequestOverrides((current) => ({ ...current, [`artist:${artist.id}`]: 'Requested' }));
-      setSnackbar({ message: `${artist.name} added to Lidarr`, severity: 'success' });
-    } catch (error) {
-      console.error('Artist request failed:', error);
-      setSnackbar({ message: `Failed to request ${artist.name}`, severity: 'error' });
-    }
-  };
-
   const handleRequestAlbum = async (album: SearchAlbum, event?: React.MouseEvent) => {
     event?.stopPropagation();
     try {
@@ -254,16 +247,6 @@ export default function SearchPage() {
               <CardContent>
                 <Typography variant="body2" fontWeight={600}>{artist.name}</Typography>
                 <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center' }}>{getAvailabilityChip(availability)}</Box>
-                {availability !== 'Available' && (
-                  <Button
-                    size="small"
-                    startIcon={<DownloadIcon />}
-                    sx={{ mt: 1 }}
-                    onClick={(event) => handleRequestArtist(artist, event)}
-                  >
-                    {availability === 'Requested' ? 'Requested' : 'Add to Library'}
-                  </Button>
-                )}
               </CardContent>
             </Card>
           </Grid>
@@ -386,7 +369,67 @@ export default function SearchPage() {
     </>
   );
 
-  const activeResults = query.trim() ? results : discover;
+  const renderArtistCarouselCard = (artist: SearchArtist) => {
+    const availability = getAvailability(`artist:${artist.id}`, artist.availability);
+    return (
+      <Box
+        key={artist.id}
+        sx={{ minWidth: 140, maxWidth: 140, cursor: 'pointer', flexShrink: 0 }}
+        onClick={() => navigate(`/artist/${artist.id}`)}
+      >
+        <Box
+          component="img"
+          src={artist.imageUrl || '/placeholder-artist.svg'}
+          alt={artist.name}
+          sx={{ width: 140, height: 140, borderRadius: '50%', objectFit: 'cover', display: 'block' }}
+        />
+        <Box sx={{ mt: 1, textAlign: 'center' }}>
+          <Typography variant="caption" fontWeight={600} noWrap display="block">{artist.name}</Typography>
+          {getAvailabilityChip(availability)}
+        </Box>
+      </Box>
+    );
+  };
+
+  const renderAlbumCarouselCard = (album: SearchAlbum) => {
+    const availability = getAvailability(`album:${album.id}`, album.availability);
+    return (
+      <Box
+        key={album.id}
+        sx={{ minWidth: 150, maxWidth: 150, cursor: 'pointer', flexShrink: 0 }}
+        onClick={() => navigate(`/album/${album.id}`)}
+      >
+        <Box
+          component="img"
+          src={album.imageUrl || '/placeholder-album.svg'}
+          alt={album.title}
+          sx={{ width: 150, height: 150, borderRadius: 2, objectFit: 'cover', display: 'block' }}
+        />
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="caption" fontWeight={600} noWrap display="block">{album.title}</Typography>
+          {album.artistName && (
+            <Typography variant="caption" color="text.secondary" noWrap display="block"
+              component="span"
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); if (album.artistId) navigate(`/artist/${album.artistId}`); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); if (album.artistId) navigate(`/artist/${album.artistId}`); } }}
+              sx={{ cursor: 'pointer' }}>
+              {album.artistName}
+            </Typography>
+          )}
+          <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            {getAvailabilityChip(availability)}
+            {availability !== 'Available' && (
+              <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleRequestAlbum(album, e); }}>
+                <DownloadIcon fontSize="small" />
+              </IconButton>
+            )}
+          </Box>
+        </Box>
+      </Box>
+    );
+  };
 
   return (
     <Box>
@@ -450,16 +493,17 @@ export default function SearchPage() {
 
       {loading && <CircularProgress sx={{ display: 'block', mx: 'auto', mb: 3 }} />}
 
-      {!query.trim() && activeResults && (
+      {!query.trim() && discoverSections.length > 0 && (
         <>
-          <Typography variant="h6" sx={{ mb: 2 }} fontWeight={600}>Popular Artists</Typography>
-          {renderArtistCards(activeResults.artists)}
-
-          <Typography variant="h6" sx={{ mb: 2 }} fontWeight={600}>Trending Albums</Typography>
-          {renderAlbumCards(activeResults.albums)}
-
-          <Typography variant="h6" sx={{ mb: 2 }} fontWeight={600}>Popular Tracks</Typography>
-          {renderTracks(activeResults.tracks)}
+          {discoverSections.map((section) => (
+            <HorizontalCarousel key={section.id} title={section.title} itemCount={
+              section.contentType === 'albums' ? (section.albums?.length ?? 0) : (section.artists?.length ?? 0)
+            }>
+              {section.contentType === 'albums'
+                ? section.albums?.map(renderAlbumCarouselCard)
+                : section.artists?.map(renderArtistCarouselCard)}
+            </HorizontalCarousel>
+          ))}
         </>
       )}
 

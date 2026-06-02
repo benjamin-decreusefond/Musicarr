@@ -4,7 +4,6 @@ import {
   Alert,
   Avatar,
   Box,
-  Button,
   Card,
   CardContent,
   CardMedia,
@@ -25,6 +24,7 @@ import {
 } from '@mui/icons-material';
 import { api } from '../services/api';
 import { getPlaybackStreamUrl, requestMusic } from '../services/mediaActions';
+import HorizontalCarousel from '../components/HorizontalCarousel';
 
 type Availability = 'Available' | 'Requested' | 'Downloading' | 'NotAvailable';
 
@@ -56,6 +56,14 @@ interface Album {
   artistId?: string;
   imageUrl?: string;
   year?: number;
+  musicBrainzId?: string;
+  availability: Availability;
+}
+
+interface RelatedArtist {
+  id: string;
+  name: string;
+  imageUrl?: string;
   availability: Availability;
 }
 
@@ -65,8 +73,9 @@ export default function ArtistDetailPage() {
   const [artist, setArtist] = useState<ArtistDetail | null>(null);
   const [albums, setAlbums] = useState<Album[]>([]);
   const [topTracks, setTopTracks] = useState<Track[]>([]);
+  const [relatedArtists, setRelatedArtists] = useState<RelatedArtist[]>([]);
   const [loading, setLoading] = useState(true);
-  const [requestState, setRequestState] = useState<Availability | null>(null);
+  const [albumRequestOverrides, setAlbumRequestOverrides] = useState<Record<string, Availability>>({});
   const [snackbar, setSnackbar] = useState<{ message: string; severity: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -80,7 +89,6 @@ export default function ArtistDetailPage() {
           api.get<Track[]>(`/api/catalog/tracks?artistId=${id}`),
         ]);
         setArtist(artistRes.data);
-        setRequestState(artistRes.data.availability);
         setAlbums(albumsRes.data);
         setTopTracks(tracksRes.data);
       } catch (error) {
@@ -92,19 +100,28 @@ export default function ArtistDetailPage() {
     fetchData();
   }, [id]);
 
-  const handleRequestArtist = async () => {
-    if (!artist) return;
+  useEffect(() => {
+    if (!id) return;
+    api.get<RelatedArtist[]>(`/api/discover/related/${id}`)
+      .then((res) => setRelatedArtists(res.data))
+      .catch(() => {});
+  }, [id]);
+
+  const handleRequestAlbum = async (album: Album, event?: React.MouseEvent) => {
+    event?.stopPropagation();
     try {
       await requestMusic({
-        musicBrainzId: artist.musicBrainzId,
-        name: artist.name,
-        type: 'artist',
+        musicBrainzId: album.musicBrainzId,
+        name: album.title,
+        albumTitle: album.title,
+        artistName: album.artistName,
+        type: 'album',
       });
-      setRequestState('Requested');
-      setSnackbar({ message: `${artist.name} added to Lidarr`, severity: 'success' });
+      setAlbumRequestOverrides((prev) => ({ ...prev, [album.id]: 'Requested' }));
+      setSnackbar({ message: `${album.title} requested`, severity: 'success' });
     } catch (error) {
-      console.error('Artist request failed:', error);
-      setSnackbar({ message: `Failed to request ${artist.name}`, severity: 'error' });
+      console.error('Album request failed:', error);
+      setSnackbar({ message: `Failed to request ${album.title}`, severity: 'error' });
     }
   };
 
@@ -143,12 +160,11 @@ export default function ArtistDetailPage() {
           <Avatar src={artist.imageUrl || '/placeholder-artist.svg'} alt={artist.name} sx={{ width: 120, height: 120 }} />
           <Box>
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
-              <Chip label={requestState === 'Available' ? 'In Library' : requestState === 'Requested' ? 'Requested' : 'Not in Library'} color={requestState === 'Available' ? 'success' : requestState === 'Requested' ? 'info' : 'default'} size="small" />
-              {requestState !== 'Available' && (
-                <Button startIcon={<DownloadIcon />} variant="contained" size="small" onClick={handleRequestArtist}>
-                  {requestState === 'Requested' ? 'Requested' : 'Add Artist'}
-                </Button>
-              )}
+              <Chip
+                label={artist.availability === 'Available' ? 'In Library' : 'Not in Library'}
+                color={artist.availability === 'Available' ? 'success' : 'default'}
+                size="small"
+              />
             </Box>
             {artist.overview && (
               <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600 }}>
@@ -168,21 +184,40 @@ export default function ArtistDetailPage() {
         <>
           <Typography variant="h5" fontWeight={600} sx={{ mb: 2 }}>Albums</Typography>
           <Grid container spacing={2} sx={{ mb: 4 }}>
-            {albums.map((album) => (
-              <Grid item xs={6} sm={4} md={3} lg={2} key={album.id}>
-                <Card sx={{ cursor: 'pointer', height: '100%' }} onClick={() => navigate(`/album/${album.id}`)}>
-                  <CardMedia component="img" height="160" image={album.imageUrl || '/placeholder-album.svg'} alt={album.title} sx={{ objectFit: 'cover' }} />
-                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                    <Typography variant="body2" fontWeight={600} sx={{ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                      {album.title}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {album.year}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-            ))}
+            {albums.map((album) => {
+              const availability = albumRequestOverrides[album.id] ?? album.availability;
+              return (
+                <Grid item xs={6} sm={4} md={3} lg={2} key={album.id}>
+                  <Card sx={{ cursor: 'pointer', height: '100%' }} onClick={() => navigate(`/album/${album.id}`)}>
+                    <CardMedia component="img" height="160" image={album.imageUrl || '/placeholder-album.svg'} alt={album.title} sx={{ objectFit: 'cover' }} />
+                    <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                      <Typography variant="body2" fontWeight={600} sx={{ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                        {album.title}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {album.year}
+                      </Typography>
+                      <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Chip
+                          label={availability === 'Available' ? 'In Library' : availability === 'Requested' ? 'Requested' : 'Download'}
+                          color={availability === 'Available' ? 'success' : availability === 'Requested' ? 'info' : 'default'}
+                          size="small"
+                        />
+                        {availability !== 'Available' && availability !== 'Requested' && (
+                          <IconButton
+                            size="small"
+                            onClick={(e) => { e.stopPropagation(); handleRequestAlbum(album, e); }}
+                            aria-label={`Download ${album.title}`}
+                          >
+                            <DownloadIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              );
+            })}
           </Grid>
         </>
       )}
@@ -211,6 +246,35 @@ export default function ArtistDetailPage() {
             ))}
           </List>
         </>
+      )}
+
+      {relatedArtists.length > 0 && (
+        <Box sx={{ mt: 4 }}>
+          <HorizontalCarousel title="Similar Artists" itemCount={relatedArtists.length}>
+            {relatedArtists.map((related) => (
+              <Box
+                key={related.id}
+                sx={{ minWidth: 130, maxWidth: 130, cursor: 'pointer', flexShrink: 0, textAlign: 'center' }}
+                onClick={() => navigate(`/artist/${related.id}`)}
+              >
+                <Box
+                  component="img"
+                  src={related.imageUrl || '/placeholder-artist.svg'}
+                  alt={related.name}
+                  sx={{ width: 100, height: 100, borderRadius: '50%', objectFit: 'cover', display: 'block', mx: 'auto' }}
+                />
+                <Typography variant="caption" fontWeight={600} noWrap display="block" sx={{ mt: 1 }}>
+                  {related.name}
+                </Typography>
+                <Chip
+                  label={related.availability === 'Available' ? 'In Library' : 'Not in Library'}
+                  color={related.availability === 'Available' ? 'success' : 'default'}
+                  size="small"
+                />
+              </Box>
+            ))}
+          </HorizontalCarousel>
+        </Box>
       )}
 
       {!loading && albums.length === 0 && (

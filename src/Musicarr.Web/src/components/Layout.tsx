@@ -22,6 +22,7 @@ import {
   QueueMusic as PlaylistIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
+  FormatListBulleted as RequestsIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -32,6 +33,7 @@ const navItems = [
   { path: '/', label: 'Home', icon: <HomeIcon /> },
   { path: '/search', label: 'Search', icon: <SearchIcon /> },
   { path: '/library', label: 'Library', icon: <LibraryIcon /> },
+  { path: '/requests', label: 'Requests', icon: <RequestsIcon /> },
   { path: '/playlists', label: 'Playlists', icon: <PlaylistIcon /> },
   { path: '/settings', label: 'Settings', icon: <SettingsIcon /> },
 ];

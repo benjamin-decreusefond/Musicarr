@@ -23,9 +23,11 @@ public class AcquisitionController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new { Message = "Name is required" });
 
+        if (request.Type.ToLowerInvariant() == "artist")
+            return BadRequest(new { Message = "Artist-level downloads are not allowed. Please request individual albums." });
+
         var result = request.Type.ToLowerInvariant() switch
         {
-            "artist" => await _acquisitionService.RequestArtistAsync(request),
             "album" => await _acquisitionService.RequestAlbumAsync(request),
             _ => false
         };
