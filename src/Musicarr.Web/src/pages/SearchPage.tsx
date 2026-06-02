@@ -370,7 +370,7 @@ export default function SearchPage() {
               <IconButton
                 size="small"
                 onClick={() => handleRequestAlbum({
-                  id: track.albumId ?? track.id,
+                  id: track.albumId!,
                   title: track.albumTitle || track.title,
                   artistName: track.artistName,
                   artistId: track.artistId,

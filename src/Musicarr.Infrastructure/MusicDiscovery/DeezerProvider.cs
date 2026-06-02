@@ -47,7 +47,7 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get Deezer artist {ArtistId}", artistId);
+            _logger.LogError(ex, "Failed to get Deezer artist {ArtistId}", SanitizeForLog(artistId));
             return null;
         }
     }
@@ -78,7 +78,7 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get Deezer album {AlbumId}", albumId);
+            _logger.LogError(ex, "Failed to get Deezer album {AlbumId}", SanitizeForLog(albumId));
             return null;
         }
     }
@@ -120,7 +120,7 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed Deezer artist request {Endpoint}", endpoint);
+            _logger.LogError(ex, "Failed Deezer artist request {Endpoint}", SanitizeForLog(endpoint));
             return Enumerable.Empty<Artist>();
         }
     }
@@ -134,7 +134,7 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed Deezer album request {Endpoint}", endpoint);
+            _logger.LogError(ex, "Failed Deezer album request {Endpoint}", SanitizeForLog(endpoint));
             return Enumerable.Empty<Album>();
         }
     }
@@ -148,7 +148,7 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed Deezer track request {Endpoint}", endpoint);
+            _logger.LogError(ex, "Failed Deezer track request {Endpoint}", SanitizeForLog(endpoint));
             return Enumerable.Empty<Track>();
         }
     }
@@ -311,5 +311,10 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
             parts.Add($"{trackCount.Value} track{(trackCount.Value == 1 ? string.Empty : "s")}");
 
         return parts.Count > 0 ? string.Join(" • ", parts) : null;
+    }
+
+    private static string SanitizeForLog(string value)
+    {
+        return value.Replace("\n", string.Empty).Replace("\r", string.Empty).Replace("\t", string.Empty);
     }
 }

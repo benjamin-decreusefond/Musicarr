@@ -185,7 +185,7 @@ export default function AlbumDetailPage() {
                     </IconButton>
                   ) : (
                     <Button size="small" startIcon={<DownloadIcon />} onClick={handleRequestAlbum}>
-                      Request
+                      Request Album
                     </Button>
                   )}
                 >

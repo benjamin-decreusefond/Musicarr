@@ -240,6 +240,6 @@ public class SearchService : ISearchService
 
     private static string Sanitize(string value)
     {
-        return value.Replace("\n", string.Empty).Replace("\r", string.Empty);
+        return value.Replace("\n", string.Empty).Replace("\r", string.Empty).Replace("\t", string.Empty);
     }
 }
