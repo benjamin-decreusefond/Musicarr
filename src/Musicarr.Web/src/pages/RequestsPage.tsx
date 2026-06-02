@@ -170,7 +170,7 @@ export default function RequestsPage() {
       )}
 
       <Snackbar open={!!snackbar} autoHideDuration={4000} onClose={() => setSnackbar(null)}>
-        {snackbar ? <Alert severity={snackbar.severity} onClose={() => setSnackbar(null)}>{snackbar.message}</Alert> : <span />}
+        {snackbar ? <Alert severity={snackbar.severity} onClose={() => setSnackbar(null)}>{snackbar.message}</Alert> : undefined}
       </Snackbar>
     </Box>
   );

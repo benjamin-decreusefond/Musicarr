@@ -68,7 +68,7 @@ public class RequestService : IRequestService
         musicRequest = await _repository.UpdateAsync(musicRequest);
 
         _logger.LogInformation("Created music request {Id} for {Type} '{Title}', status: {Status}",
-            musicRequest.Id, musicRequest.Type, Sanitize(musicRequest.Title), musicRequest.Status);
+            musicRequest.Id, Sanitize(musicRequest.Type), Sanitize(musicRequest.Title), musicRequest.Status);
 
         return ToDto(musicRequest);
     }

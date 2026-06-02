@@ -409,7 +409,12 @@ export default function SearchPage() {
           <Typography variant="caption" fontWeight={600} noWrap display="block">{album.title}</Typography>
           {album.artistName && (
             <Typography variant="caption" color="text.secondary" noWrap display="block"
-              onClick={(e) => { e.stopPropagation(); if (album.artistId) navigate(`/artist/${album.artistId}`); }}>
+              component="span"
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); if (album.artistId) navigate(`/artist/${album.artistId}`); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); if (album.artistId) navigate(`/artist/${album.artistId}`); } }}
+              sx={{ cursor: 'pointer' }}>
               {album.artistName}
             </Typography>
           )}

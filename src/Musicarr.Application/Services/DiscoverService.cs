@@ -108,7 +108,7 @@ public class DiscoverService : IDiscoverService
             var albums = await _jellyfinService.GetAlbumsAsync();
             return albums
                 .GroupBy(a => BuildKey(a.Title, a.ArtistName))
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         }
         catch { return new Dictionary<string, Album>(); }
     }
@@ -119,7 +119,7 @@ public class DiscoverService : IDiscoverService
         {
             var artists = await _jellyfinService.GetArtistsAsync();
             return artists
-                .ToDictionary(a => Normalize(a.Name), a => a, StringComparer.Ordinal);
+                .ToDictionary(a => Normalize(a.Name), a => a, StringComparer.OrdinalIgnoreCase);
         }
         catch { return new Dictionary<string, Artist>(); }
     }
