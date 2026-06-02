@@ -60,6 +60,7 @@ public class LidarrService : ILidarrService
                 Id = Guid.NewGuid(),
                 Title = item.GetProperty("title").GetString() ?? "Unknown",
                 ArtistName = item.TryGetProperty("artist", out var artist) && artist.TryGetProperty("artistName", out var name) ? name.GetString() : null,
+                ArtistMusicBrainzId = item.TryGetProperty("artist", out artist) && artist.TryGetProperty("foreignArtistId", out var artistMbId) ? artistMbId.GetString() : null,
                 MusicBrainzId = item.TryGetProperty("foreignAlbumId", out var mbId) ? mbId.GetString() : null
             }).ToList();
         }
@@ -95,16 +96,28 @@ public class LidarrService : ILidarrService
         }
     }
 
-    public async Task<bool> AddAlbumAsync(string musicBrainzId)
+    public async Task<bool> AddAlbumAsync(string musicBrainzId, string artistMusicBrainzId, string artistName)
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("/api/v1/album", new
+            var request = new
             {
                 foreignAlbumId = musicBrainzId,
                 monitored = true,
-                addOptions = new { searchForNewAlbum = true }
-            });
+                addOptions = new { searchForNewAlbum = true },
+                artist = new
+                {
+                    foreignArtistId = artistMusicBrainzId,
+                    artistName,
+                    qualityProfileId = _options.QualityProfileId,
+                    metadataProfileId = _options.MetadataProfileId,
+                    rootFolderPath = _options.RootFolderPath,
+                    monitored = true,
+                    addOptions = new { monitor = "all", searchForMissingAlbums = false }
+                }
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("/api/v1/album", request);
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)

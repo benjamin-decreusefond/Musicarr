@@ -44,18 +44,26 @@ public class AcquisitionService : IAcquisitionService
     {
         var albumTitle = request.AlbumTitle ?? request.Name;
         var musicBrainzId = request.MusicBrainzId;
+        var artistName = request.ArtistName;
+        string? artistMusicBrainzId = null;
 
-        if (string.IsNullOrWhiteSpace(musicBrainzId))
+        if (string.IsNullOrWhiteSpace(musicBrainzId) || string.IsNullOrWhiteSpace(artistMusicBrainzId))
         {
             var lookupQuery = string.IsNullOrWhiteSpace(request.ArtistName)
                 ? albumTitle
                 : $"{request.ArtistName} {albumTitle}";
             var matches = await _lidarrService.SearchAlbumsAsync(lookupQuery);
-            musicBrainzId = matches
+            var match = matches
                 .OrderByDescending(album => IsExactAlbumMatch(album.Title, albumTitle, album.ArtistName, request.ArtistName))
                 .ThenBy(album => album.Title)
-                .Select(album => album.MusicBrainzId)
-                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+                .FirstOrDefault(album => !string.IsNullOrWhiteSpace(album.MusicBrainzId));
+
+            if (match is not null)
+            {
+                musicBrainzId ??= match.MusicBrainzId;
+                artistName ??= match.ArtistName;
+                artistMusicBrainzId ??= match.ArtistMusicBrainzId;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(musicBrainzId))
@@ -64,8 +72,24 @@ public class AcquisitionService : IAcquisitionService
             return false;
         }
 
+        if (string.IsNullOrWhiteSpace(artistMusicBrainzId) && !string.IsNullOrWhiteSpace(artistName))
+        {
+            var artistMatches = await _lidarrService.SearchArtistsAsync(artistName);
+            artistMusicBrainzId = artistMatches
+                .OrderByDescending(artist => IsExactArtistMatch(artist.Name, artistName))
+                .ThenBy(artist => artist.Name)
+                .Select(artist => artist.MusicBrainzId)
+                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        }
+
+        if (string.IsNullOrWhiteSpace(artistMusicBrainzId) || string.IsNullOrWhiteSpace(artistName))
+        {
+            _logger.LogWarning("Unable to resolve Lidarr artist lookup for album {Artist} - {Album}", Sanitize(request.ArtistName ?? string.Empty), Sanitize(albumTitle));
+            return false;
+        }
+
         _logger.LogInformation("Requesting album: {Name} ({MusicBrainzId})", Sanitize(albumTitle), Sanitize(musicBrainzId));
-        return await _lidarrService.AddAlbumAsync(musicBrainzId);
+        return await _lidarrService.AddAlbumAsync(musicBrainzId, artistMusicBrainzId, artistName);
     }
 
     public async Task<AcquisitionStatus> GetStatusAsync(string musicBrainzId, string type)
