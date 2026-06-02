@@ -87,8 +87,8 @@ public class LidarrService : ILidarrService
                 qualityProfileId = _options.QualityProfileId,
                 metadataProfileId = _options.MetadataProfileId,
                 rootFolderPath = _options.RootFolderPath,
-                monitored = true,
-                addOptions = new { monitor = "all", searchForMissingAlbums = true }
+                monitored = false,
+                addOptions = new { monitor = "none", searchForMissingAlbums = false }
             };
 
             var response = await _httpClient.PostAsJsonAsync("/api/v1/artist", request);
@@ -117,8 +117,8 @@ public class LidarrService : ILidarrService
                     qualityProfileId = _options.QualityProfileId,
                     metadataProfileId = _options.MetadataProfileId,
                     rootFolderPath = _options.RootFolderPath,
-                    monitored = true,
-                    addOptions = new { monitor = "all", searchForMissingAlbums = false }
+                    monitored = false,
+                    addOptions = new { monitor = "none", searchForMissingAlbums = false }
                 }
             };
 

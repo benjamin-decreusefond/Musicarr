@@ -8,6 +8,7 @@ import HomePage from './pages/HomePage';
 import SearchPage from './pages/SearchPage';
 import LibraryPage from './pages/LibraryPage';
 import PlaylistsPage from './pages/PlaylistsPage';
+import RequestsPage from './pages/RequestsPage';
 import SettingsPage from './pages/SettingsPage';
 import SetupPage from './pages/SetupPage';
 import ArtistDetailPage from './pages/ArtistDetailPage';
@@ -39,6 +40,7 @@ function App() {
                       <Route path="/artist/:id" element={<ArtistDetailPage />} />
                       <Route path="/album/:id" element={<AlbumDetailPage />} />
                       <Route path="/playlists" element={<PlaylistsPage />} />
+                      <Route path="/requests" element={<RequestsPage />} />
                       <Route path="/settings" element={<SettingsPage />} />
                     </Routes>
                   </Layout>

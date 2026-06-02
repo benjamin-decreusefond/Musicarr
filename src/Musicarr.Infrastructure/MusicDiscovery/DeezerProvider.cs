@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Musicarr.Domain.Entities;
 using Musicarr.Domain.Interfaces;
@@ -10,13 +11,20 @@ namespace Musicarr.Infrastructure.MusicDiscovery;
 public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
 {
     private readonly HttpClient _httpClient;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<DeezerProvider> _logger;
+
+    private static readonly TimeSpan ChartCacheDuration = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan SearchCacheDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan ArtistCacheDuration = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan RelatedCacheDuration = TimeSpan.FromMinutes(30);
 
     public string ProviderName => "Deezer";
 
-    public DeezerProvider(HttpClient httpClient, ILogger<DeezerProvider> logger)
+    public DeezerProvider(HttpClient httpClient, IMemoryCache cache, ILogger<DeezerProvider> logger)
     {
         _httpClient = httpClient;
+        _cache = cache;
         _logger = logger;
 
         var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0";
@@ -25,82 +33,170 @@ public class DeezerProvider : IMusicDiscoveryProvider, IDeezerProvider
 
     public async Task<IEnumerable<Artist>> SearchArtistsAsync(string query)
     {
-        return await GetArtistsFromListEndpointAsync($"search/artist?q={Uri.EscapeDataString(query)}&limit=10");
+        var key = $"search:artists:{query}";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = SearchCacheDuration;
+            return await GetArtistsFromListEndpointAsync($"search/artist?q={Uri.EscapeDataString(query)}&limit=10");
+        }) ?? Enumerable.Empty<Artist>();
     }
 
     public async Task<IEnumerable<Album>> SearchAlbumsAsync(string query)
     {
-        return await GetAlbumsFromListEndpointAsync($"search/album?q={Uri.EscapeDataString(query)}&limit=10");
+        var key = $"search:albums:{query}";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = SearchCacheDuration;
+            return await GetAlbumsFromListEndpointAsync($"search/album?q={Uri.EscapeDataString(query)}&limit=10");
+        }) ?? Enumerable.Empty<Album>();
     }
 
     public async Task<IEnumerable<Track>> SearchTracksAsync(string query)
     {
-        return await GetTracksFromListEndpointAsync($"search/track?q={Uri.EscapeDataString(query)}&limit=10");
+        var key = $"search:tracks:{query}";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = SearchCacheDuration;
+            return await GetTracksFromListEndpointAsync($"search/track?q={Uri.EscapeDataString(query)}&limit=10");
+        }) ?? Enumerable.Empty<Track>();
     }
 
     public async Task<Artist?> GetArtistAsync(string artistId)
     {
-        try
+        var key = $"artist:{artistId}";
+        return await _cache.GetOrCreateAsync(key, async entry =>
         {
-            var response = await _httpClient.GetFromJsonAsync<JsonElement>($"artist/{Uri.EscapeDataString(artistId)}");
-            return HasError(response) ? null : MapArtist(response);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Deezer artist {ArtistId}", SanitizeForLog(artistId));
-            return null;
-        }
+            entry.AbsoluteExpirationRelativeToNow = ArtistCacheDuration;
+            try
+            {
+                var response = await _httpClient.GetFromJsonAsync<JsonElement>($"artist/{Uri.EscapeDataString(artistId)}");
+                return HasError(response) ? null : MapArtist(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get Deezer artist {ArtistId}", SanitizeForLog(artistId));
+                return null;
+            }
+        });
     }
 
     public async Task<IEnumerable<Album>> GetArtistAlbumsAsync(string artistId)
     {
-        return await GetAlbumsFromListEndpointAsync($"artist/{Uri.EscapeDataString(artistId)}/albums?limit=50");
+        var key = $"artist:{artistId}:albums";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ArtistCacheDuration;
+            return await GetAlbumsFromListEndpointAsync($"artist/{Uri.EscapeDataString(artistId)}/albums?limit=50");
+        }) ?? Enumerable.Empty<Album>();
     }
 
     public async Task<IEnumerable<Track>> GetArtistTopTracksAsync(string artistId)
     {
-        return await GetTracksFromListEndpointAsync($"artist/{Uri.EscapeDataString(artistId)}/top?limit=20");
+        var key = $"artist:{artistId}:toptracks";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ArtistCacheDuration;
+            return await GetTracksFromListEndpointAsync($"artist/{Uri.EscapeDataString(artistId)}/top?limit=20");
+        }) ?? Enumerable.Empty<Track>();
     }
 
     public async Task<Album?> GetAlbumAsync(string albumId)
     {
-        try
+        var key = $"album:{albumId}";
+        return await _cache.GetOrCreateAsync(key, async entry =>
         {
-            var response = await _httpClient.GetFromJsonAsync<JsonElement>($"album/{Uri.EscapeDataString(albumId)}");
-            if (HasError(response))
-                return null;
+            entry.AbsoluteExpirationRelativeToNow = ArtistCacheDuration;
+            try
+            {
+                var response = await _httpClient.GetFromJsonAsync<JsonElement>($"album/{Uri.EscapeDataString(albumId)}");
+                if (HasError(response))
+                    return null;
 
-            var album = MapAlbum(response);
-            album.Tracks = GetTrackData(response)
-                .Select(track => MapTrack(track, album.Title, album.DeezerId, album.ImageUrl, album.ArtistName, album.DeezerArtistId))
-                .ToList();
-            return album;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Deezer album {AlbumId}", SanitizeForLog(albumId));
-            return null;
-        }
+                var album = MapAlbum(response);
+                album.Tracks = GetTrackData(response)
+                    .Select(track => MapTrack(track, album.Title, album.DeezerId, album.ImageUrl, album.ArtistName, album.DeezerArtistId))
+                    .ToList();
+                return album;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get Deezer album {AlbumId}", SanitizeForLog(albumId));
+                return null;
+            }
+        });
     }
 
     public async Task<IEnumerable<Artist>> GetChartArtistsAsync()
     {
-        return await GetArtistsFromListEndpointAsync("chart/0/artists?limit=12");
+        var key = "chart:artists";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ChartCacheDuration;
+            return await GetArtistsFromListEndpointAsync("chart/0/artists?limit=12");
+        }) ?? Enumerable.Empty<Artist>();
     }
 
     public async Task<IEnumerable<Album>> GetChartAlbumsAsync()
     {
-        return await GetAlbumsFromListEndpointAsync("chart/0/albums?limit=12");
+        var key = "chart:albums";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ChartCacheDuration;
+            return await GetAlbumsFromListEndpointAsync("chart/0/albums?limit=12");
+        }) ?? Enumerable.Empty<Album>();
     }
 
     public async Task<IEnumerable<Track>> GetChartTracksAsync()
     {
-        return await GetTracksFromListEndpointAsync("chart/0/tracks?limit=12");
+        var key = "chart:tracks";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ChartCacheDuration;
+            return await GetTracksFromListEndpointAsync("chart/0/tracks?limit=12");
+        }) ?? Enumerable.Empty<Track>();
+    }
+
+    public async Task<IEnumerable<Artist>> GetRelatedArtistsAsync(string artistId)
+    {
+        var key = $"artist:{artistId}:related";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = RelatedCacheDuration;
+            return await GetArtistsFromListEndpointAsync($"artist/{Uri.EscapeDataString(artistId)}/related?limit=10");
+        }) ?? Enumerable.Empty<Artist>();
     }
 
     public Task<IEnumerable<Artist>> GetSimilarArtistsAsync(string artistId)
+        => GetRelatedArtistsAsync(artistId);
+
+    public async Task<IEnumerable<Album>> GetNewReleasesAsync()
     {
-        return Task.FromResult(Enumerable.Empty<Artist>());
+        var key = "editorial:releases";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ChartCacheDuration;
+            return await GetAlbumsFromListEndpointAsync("editorial/0/releases?limit=20");
+        }) ?? Enumerable.Empty<Album>();
+    }
+
+    public async Task<IEnumerable<Album>> GetGenreAlbumsAsync(int genreId)
+    {
+        var key = $"genre:{genreId}:albums";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ChartCacheDuration;
+            return await GetAlbumsFromListEndpointAsync($"chart/{genreId}/albums?limit=12");
+        }) ?? Enumerable.Empty<Album>();
+    }
+
+    public async Task<IEnumerable<Artist>> GetGenreArtistsAsync(int genreId)
+    {
+        var key = $"genre:{genreId}:artists";
+        return await _cache.GetOrCreateAsync(key, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = ChartCacheDuration;
+            return await GetArtistsFromListEndpointAsync($"genre/{genreId}/artists?limit=12");
+        }) ?? Enumerable.Empty<Artist>();
     }
 
     public async Task<IEnumerable<Album>> GetRecommendationsAsync(string? artistId = null, string? genre = null)
