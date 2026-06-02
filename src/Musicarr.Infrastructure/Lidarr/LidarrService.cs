@@ -60,7 +60,7 @@ public class LidarrService : ILidarrService
                 Id = Guid.NewGuid(),
                 Title = item.GetProperty("title").GetString() ?? "Unknown",
                 ArtistName = item.TryGetProperty("artist", out var artist) && artist.TryGetProperty("artistName", out var name) ? name.GetString() : null,
-                ArtistMusicBrainzId = item.TryGetProperty("artist", out artist) && artist.TryGetProperty("foreignArtistId", out var artistMbId) ? artistMbId.GetString() : null,
+                ArtistMusicBrainzId = item.TryGetProperty("artist", out var artistForMbId) && artistForMbId.TryGetProperty("foreignArtistId", out var artistMbId) ? artistMbId.GetString() : null,
                 MusicBrainzId = item.TryGetProperty("foreignAlbumId", out var mbId) ? mbId.GetString() : null
             }).ToList();
         }

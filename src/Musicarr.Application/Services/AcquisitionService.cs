@@ -47,7 +47,7 @@ public class AcquisitionService : IAcquisitionService
         var artistName = request.ArtistName;
         string? artistMusicBrainzId = null;
 
-        if (string.IsNullOrWhiteSpace(musicBrainzId) || string.IsNullOrWhiteSpace(artistMusicBrainzId))
+        if (string.IsNullOrWhiteSpace(musicBrainzId) || !string.IsNullOrWhiteSpace(artistName))
         {
             var lookupQuery = string.IsNullOrWhiteSpace(request.ArtistName)
                 ? albumTitle
