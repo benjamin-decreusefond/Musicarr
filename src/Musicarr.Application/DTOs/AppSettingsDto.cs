@@ -24,5 +24,5 @@ public class LidarrSettingsDto
 
 public class MusicDiscoverySettingsDto
 {
-    public string Provider { get; set; } = "MusicBrainz";
+    public string Provider { get; set; } = "Deezer";
 }

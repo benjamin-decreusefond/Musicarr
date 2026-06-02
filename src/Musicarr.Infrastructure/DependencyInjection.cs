@@ -39,7 +39,12 @@ public static class DependencyInjection
         // HTTP Clients
         services.AddHttpClient<IJellyfinService, JellyfinService>();
         services.AddHttpClient<ILidarrService, LidarrService>();
-        services.AddHttpClient<IMusicDiscoveryProvider, MusicBrainzProvider>();
+        services.AddHttpClient<MusicBrainzProvider>();
+        services.AddTransient<IMusicDiscoveryProvider>(sp => sp.GetRequiredService<MusicBrainzProvider>());
+        services.AddHttpClient<IMusicDiscoveryProvider, DeezerProvider>(client =>
+        {
+            client.BaseAddress = new Uri("https://api.deezer.com/");
+        });
         services.AddHttpClient<IDeezerImageService, DeezerImageService>();
 
         // Repositories
