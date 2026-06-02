@@ -19,14 +19,53 @@ public class AcquisitionService : IAcquisitionService
 
     public async Task<bool> RequestArtistAsync(AcquisitionRequestDto request)
     {
-        _logger.LogInformation("Requesting artist: {Name} ({MusicBrainzId})", Sanitize(request.Name), Sanitize(request.MusicBrainzId));
-        return await _lidarrService.AddArtistAsync(request.MusicBrainzId, request.Name);
+        var musicBrainzId = request.MusicBrainzId;
+        if (string.IsNullOrWhiteSpace(musicBrainzId))
+        {
+            var matches = await _lidarrService.SearchArtistsAsync(request.Name);
+            musicBrainzId = matches
+                .OrderByDescending(artist => IsExactArtistMatch(artist.Name, request.Name))
+                .ThenBy(artist => artist.Name)
+                .Select(artist => artist.MusicBrainzId)
+                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        }
+
+        if (string.IsNullOrWhiteSpace(musicBrainzId))
+        {
+            _logger.LogWarning("Unable to resolve Lidarr artist lookup for {Name}", Sanitize(request.Name));
+            return false;
+        }
+
+        _logger.LogInformation("Requesting artist: {Name} ({MusicBrainzId})", Sanitize(request.Name), Sanitize(musicBrainzId));
+        return await _lidarrService.AddArtistAsync(musicBrainzId, request.Name);
     }
 
     public async Task<bool> RequestAlbumAsync(AcquisitionRequestDto request)
     {
-        _logger.LogInformation("Requesting album: {Name} ({MusicBrainzId})", Sanitize(request.Name), Sanitize(request.MusicBrainzId));
-        return await _lidarrService.AddAlbumAsync(request.MusicBrainzId);
+        var albumTitle = request.AlbumTitle ?? request.Name;
+        var musicBrainzId = request.MusicBrainzId;
+
+        if (string.IsNullOrWhiteSpace(musicBrainzId))
+        {
+            var lookupQuery = string.IsNullOrWhiteSpace(request.ArtistName)
+                ? albumTitle
+                : $"{request.ArtistName} {albumTitle}";
+            var matches = await _lidarrService.SearchAlbumsAsync(lookupQuery);
+            musicBrainzId = matches
+                .OrderByDescending(album => IsExactAlbumMatch(album.Title, albumTitle, album.ArtistName, request.ArtistName))
+                .ThenBy(album => album.Title)
+                .Select(album => album.MusicBrainzId)
+                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        }
+
+        if (string.IsNullOrWhiteSpace(musicBrainzId))
+        {
+            _logger.LogWarning("Unable to resolve Lidarr album lookup for {Artist} - {Album}", Sanitize(request.ArtistName ?? string.Empty), Sanitize(albumTitle));
+            return false;
+        }
+
+        _logger.LogInformation("Requesting album: {Name} ({MusicBrainzId})", Sanitize(albumTitle), Sanitize(musicBrainzId));
+        return await _lidarrService.AddAlbumAsync(musicBrainzId);
     }
 
     public async Task<AcquisitionStatus> GetStatusAsync(string musicBrainzId, string type)
@@ -39,8 +78,30 @@ public class AcquisitionService : IAcquisitionService
         };
     }
 
+    private static bool IsExactArtistMatch(string artistName, string query)
+    {
+        return Normalize(artistName) == Normalize(query);
+    }
+
+    private static bool IsExactAlbumMatch(string albumTitle, string expectedAlbumTitle, string? artistName, string? expectedArtistName)
+    {
+        if (Normalize(albumTitle) != Normalize(expectedAlbumTitle))
+            return false;
+
+        return string.IsNullOrWhiteSpace(expectedArtistName)
+            || Normalize(artistName) == Normalize(expectedArtistName);
+    }
+
+    private static string Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        return new string(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+    }
+
     private static string Sanitize(string input)
     {
-        return input.Replace("\n", "").Replace("\r", "").Replace("\t", "");
+        return input.Replace("\n", string.Empty).Replace("\r", string.Empty).Replace("\t", string.Empty);
     }
 }

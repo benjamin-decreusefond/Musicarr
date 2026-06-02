@@ -26,7 +26,7 @@ public class CatalogController : ControllerBase
     [HttpGet("artists/{id}")]
     [ProducesResponseType(typeof(ArtistDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetArtist(Guid id)
+    public async Task<IActionResult> GetArtist(string id)
     {
         var artist = await _catalogService.GetArtistByIdAsync(id);
         return artist != null ? Ok(artist) : NotFound();
@@ -34,7 +34,7 @@ public class CatalogController : ControllerBase
 
     [HttpGet("albums")]
     [ProducesResponseType(typeof(IEnumerable<AlbumDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetAlbums([FromQuery] Guid? artistId = null)
+    public async Task<IActionResult> GetAlbums([FromQuery] string? artistId = null)
     {
         var albums = await _catalogService.GetAlbumsAsync(artistId);
         return Ok(albums);
@@ -43,7 +43,7 @@ public class CatalogController : ControllerBase
     [HttpGet("albums/{id}")]
     [ProducesResponseType(typeof(AlbumDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetAlbum(Guid id)
+    public async Task<IActionResult> GetAlbum(string id)
     {
         var album = await _catalogService.GetAlbumByIdAsync(id);
         return album != null ? Ok(album) : NotFound();
@@ -51,9 +51,9 @@ public class CatalogController : ControllerBase
 
     [HttpGet("tracks")]
     [ProducesResponseType(typeof(IEnumerable<TrackDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetTracks([FromQuery] Guid? albumId = null)
+    public async Task<IActionResult> GetTracks([FromQuery] string? albumId = null, [FromQuery] string? artistId = null)
     {
-        var tracks = await _catalogService.GetTracksAsync(albumId);
+        var tracks = await _catalogService.GetTracksAsync(albumId, artistId);
         return Ok(tracks);
     }
 }

@@ -6,6 +6,10 @@ public class Track
     public string Title { get; set; } = string.Empty;
     public Guid AlbumId { get; set; }
     public string? ArtistName { get; set; }
+    public string? ArtistDeezerId { get; set; }
+    public string? AlbumTitle { get; set; }
+    public string? AlbumDeezerId { get; set; }
+    public string? DeezerId { get; set; }
     public string? JellyfinId { get; set; }
     public int TrackNumber { get; set; }
     public int DiscNumber { get; set; } = 1;

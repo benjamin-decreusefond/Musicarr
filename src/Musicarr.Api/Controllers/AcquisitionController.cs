@@ -20,8 +20,8 @@ public class AcquisitionController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> RequestMusic([FromBody] AcquisitionRequestDto request)
     {
-        if (string.IsNullOrWhiteSpace(request.MusicBrainzId))
-            return BadRequest(new { Message = "MusicBrainzId is required" });
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(new { Message = "Name is required" });
 
         var result = request.Type.ToLowerInvariant() switch
         {
