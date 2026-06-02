@@ -3,10 +3,10 @@ using Musicarr.Domain.Enums;
 namespace Musicarr.Application.DTOs;
 
 public record AlbumDto(
-    Guid Id,
+    string Id,
     string Title,
     string? ArtistName,
-    Guid? ArtistId,
+    string? ArtistId,
     string? MusicBrainzId,
     string? JellyfinId,
     string? ImageUrl,

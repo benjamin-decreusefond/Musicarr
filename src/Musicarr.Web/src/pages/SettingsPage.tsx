@@ -9,7 +9,6 @@ import {
   Alert,
   CircularProgress,
   Divider,
-  MenuItem,
 } from '@mui/material';
 import { Save as SaveIcon, NetworkCheck as NetworkCheckIcon } from '@mui/icons-material';
 import { api } from '../services/api';
@@ -280,20 +279,15 @@ export default function SettingsPage() {
             Music Discovery
           </Typography>
           <Typography variant="body2" color="text.secondary" mb={2}>
-            Configure the metadata provider used for music search and discovery.
+            Deezer is always used for artist, album, and track metadata. Jellyfin is only used for library availability and playback.
           </Typography>
           <TextField
-            select
             label="Provider"
-            value={settings.musicDiscovery.provider}
-            onChange={(e) =>
-              setSettings((s) => ({ ...s, musicDiscovery: { provider: e.target.value } }))
-            }
+            value="Deezer"
             fullWidth
-          >
-            <MenuItem value="Deezer">Deezer</MenuItem>
-            <MenuItem value="MusicBrainz">MusicBrainz</MenuItem>
-          </TextField>
+            disabled
+            helperText="Musicarr now uses Deezer as the single metadata source."
+          />
         </CardContent>
       </Card>
 

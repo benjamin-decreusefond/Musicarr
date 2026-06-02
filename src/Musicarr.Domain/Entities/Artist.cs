@@ -4,6 +4,7 @@ public class Artist
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string? DeezerId { get; set; }
     public string? MusicBrainzId { get; set; }
     public string? JellyfinId { get; set; }
     public string? LidarrId { get; set; }

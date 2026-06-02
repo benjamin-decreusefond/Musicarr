@@ -17,16 +17,13 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, string configFilePath)
     {
-        // Configuration
         services.Configure<JellyfinOptions>(configuration.GetSection(JellyfinOptions.Section));
         services.Configure<LidarrOptions>(configuration.GetSection(LidarrOptions.Section));
         services.Configure<MusicDiscoveryOptions>(configuration.GetSection(MusicDiscoveryOptions.Section));
 
-        // Config file service
         services.AddSingleton<IConfigService>(sp =>
             new ConfigFileService(configFilePath, sp.GetRequiredService<ILogger<ConfigFileService>>()));
 
-        // Database
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (string.IsNullOrWhiteSpace(connectionString))
         {
@@ -36,21 +33,19 @@ public static class DependencyInjection
         services.AddDbContext<MusicarrDbContext>(options =>
             options.UseSqlite(connectionString));
 
-        // HTTP Clients
         services.AddHttpClient<IJellyfinService, JellyfinService>();
         services.AddHttpClient<ILidarrService, LidarrService>();
         services.AddHttpClient<MusicBrainzProvider>();
         services.AddTransient<IMusicDiscoveryProvider>(sp => sp.GetRequiredService<MusicBrainzProvider>());
-        services.AddHttpClient<IMusicDiscoveryProvider, DeezerProvider>(client =>
+        services.AddHttpClient<DeezerProvider>(client =>
         {
             client.BaseAddress = new Uri("https://api.deezer.com/");
         });
+        services.AddTransient<IDeezerProvider>(sp => sp.GetRequiredService<DeezerProvider>());
+        services.AddTransient<IMusicDiscoveryProvider>(sp => sp.GetRequiredService<DeezerProvider>());
         services.AddHttpClient<IDeezerImageService, DeezerImageService>();
 
-        // Repositories
         services.AddScoped<IPlaylistRepository, PlaylistRepository>();
-
-        // Admin user service
         services.AddScoped<IAdminUserService, AdminUserService>();
 
         return services;

@@ -25,4 +25,12 @@ public class SearchController : ControllerBase
         var results = await _searchService.SearchAsync(q);
         return Ok(results);
     }
+
+    [HttpGet("suggestions")]
+    [ProducesResponseType(typeof(SearchResultDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetSuggestions()
+    {
+        var results = await _searchService.GetSuggestionsAsync();
+        return Ok(results);
+    }
 }

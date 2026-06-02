@@ -1,18 +1,43 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
+  Alert,
+  Avatar,
   Box,
-  Typography,
-  Grid,
+  Button,
   Card,
   CardContent,
   CardMedia,
-  Skeleton,
+  Chip,
+  Grid,
   IconButton,
-  Avatar,
+  List,
+  ListItem,
+  ListItemText,
+  Skeleton,
+  Snackbar,
+  Typography,
 } from '@mui/material';
-import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
+import {
+  ArrowBack as ArrowBackIcon,
+  Download as DownloadIcon,
+  PlayArrow as PlayArrowIcon,
+} from '@mui/icons-material';
 import { api } from '../services/api';
+import { getPlaybackStreamUrl, requestMusic } from '../services/mediaActions';
+
+type Availability = 'Available' | 'Requested' | 'Downloading' | 'NotAvailable';
+
+interface Track {
+  id: string;
+  title: string;
+  artistName?: string;
+  artistId?: string;
+  albumTitle?: string;
+  albumId?: string;
+  jellyfinId?: string;
+  availability: Availability;
+}
 
 interface ArtistDetail {
   id: string;
@@ -20,14 +45,18 @@ interface ArtistDetail {
   imageUrl?: string;
   overview?: string;
   genres?: string[];
+  musicBrainzId?: string;
+  availability: Availability;
 }
 
 interface Album {
   id: string;
   title: string;
   artistName?: string;
+  artistId?: string;
   imageUrl?: string;
   year?: number;
+  availability: Availability;
 }
 
 export default function ArtistDetailPage() {
@@ -35,19 +64,25 @@ export default function ArtistDetailPage() {
   const navigate = useNavigate();
   const [artist, setArtist] = useState<ArtistDetail | null>(null);
   const [albums, setAlbums] = useState<Album[]>([]);
+  const [topTracks, setTopTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
+  const [requestState, setRequestState] = useState<Availability | null>(null);
+  const [snackbar, setSnackbar] = useState<{ message: string; severity: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     if (!id) return;
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [artistRes, albumsRes] = await Promise.all([
-          api.get(`/api/catalog/artists/${id}`),
-          api.get(`/api/catalog/albums?artistId=${id}`),
+        const [artistRes, albumsRes, tracksRes] = await Promise.all([
+          api.get<ArtistDetail>(`/api/catalog/artists/${id}`),
+          api.get<Album[]>(`/api/catalog/albums?artistId=${id}`),
+          api.get<Track[]>(`/api/catalog/tracks?artistId=${id}`),
         ]);
         setArtist(artistRes.data);
+        setRequestState(artistRes.data.availability);
         setAlbums(albumsRes.data);
+        setTopTracks(tracksRes.data);
       } catch (error) {
         console.error('Failed to fetch artist:', error);
       } finally {
@@ -56,6 +91,33 @@ export default function ArtistDetailPage() {
     };
     fetchData();
   }, [id]);
+
+  const handleRequestArtist = async () => {
+    if (!artist) return;
+    try {
+      await requestMusic({
+        musicBrainzId: artist.musicBrainzId,
+        name: artist.name,
+        type: 'artist',
+      });
+      setRequestState('Requested');
+      setSnackbar({ message: `${artist.name} added to Lidarr`, severity: 'success' });
+    } catch (error) {
+      console.error('Artist request failed:', error);
+      setSnackbar({ message: `Failed to request ${artist.name}`, severity: 'error' });
+    }
+  };
+
+  const handlePlayTrack = async (track: Track) => {
+    if (!track.jellyfinId) return;
+    try {
+      const streamUrl = await getPlaybackStreamUrl(track.jellyfinId);
+      window.open(streamUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      console.error('Playback failed:', error);
+      setSnackbar({ message: `Unable to start ${track.title}`, severity: 'error' });
+    }
+  };
 
   return (
     <Box>
@@ -78,12 +140,16 @@ export default function ArtistDetailPage() {
         </Box>
       ) : artist && (
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 4, gap: 3, flexWrap: 'wrap' }}>
-          <Avatar
-            src={artist.imageUrl || '/placeholder-artist.svg'}
-            alt={artist.name}
-            sx={{ width: 120, height: 120 }}
-          />
+          <Avatar src={artist.imageUrl || '/placeholder-artist.svg'} alt={artist.name} sx={{ width: 120, height: 120 }} />
           <Box>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
+              <Chip label={requestState === 'Available' ? 'In Library' : requestState === 'Requested' ? 'Requested' : 'Not in Library'} color={requestState === 'Available' ? 'success' : requestState === 'Requested' ? 'info' : 'default'} size="small" />
+              {requestState !== 'Available' && (
+                <Button startIcon={<DownloadIcon />} variant="contained" size="small" onClick={handleRequestArtist}>
+                  {requestState === 'Requested' ? 'Requested' : 'Add Artist'}
+                </Button>
+              )}
+            </Box>
             {artist.overview && (
               <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600 }}>
                 {artist.overview}
@@ -101,26 +167,13 @@ export default function ArtistDetailPage() {
       {albums.length > 0 && (
         <>
           <Typography variant="h5" fontWeight={600} sx={{ mb: 2 }}>Albums</Typography>
-          <Grid container spacing={2}>
+          <Grid container spacing={2} sx={{ mb: 4 }}>
             {albums.map((album) => (
               <Grid item xs={6} sm={4} md={3} lg={2} key={album.id}>
-                <Card
-                  sx={{ cursor: 'pointer', height: '100%' }}
-                  onClick={() => navigate(`/album/${album.id}`)}
-                >
-                  <CardMedia
-                    component="img"
-                    height="160"
-                    image={album.imageUrl || '/placeholder-album.svg'}
-                    alt={album.title}
-                    sx={{ objectFit: 'cover' }}
-                  />
+                <Card sx={{ cursor: 'pointer', height: '100%' }} onClick={() => navigate(`/album/${album.id}`)}>
+                  <CardMedia component="img" height="160" image={album.imageUrl || '/placeholder-album.svg'} alt={album.title} sx={{ objectFit: 'cover' }} />
                   <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
-                    <Typography
-                      variant="body2"
-                      fontWeight={600}
-                      sx={{ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
-                    >
+                    <Typography variant="body2" fontWeight={600} sx={{ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                       {album.title}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
@@ -134,9 +187,39 @@ export default function ArtistDetailPage() {
         </>
       )}
 
+      {topTracks.length > 0 && (
+        <>
+          <Typography variant="h5" fontWeight={600} sx={{ mb: 1 }}>Top Tracks</Typography>
+          <List disablePadding>
+            {topTracks.map((track) => (
+              <ListItem key={track.id} sx={{ px: 1, borderRadius: 1, '&:hover': { bgcolor: 'action.hover' } }} secondaryAction={track.availability === 'Available' && track.jellyfinId ? (
+                <IconButton edge="end" onClick={() => handlePlayTrack(track)}>
+                  <PlayArrowIcon />
+                </IconButton>
+              ) : undefined}>
+                <ListItemText
+                  primary={track.title}
+                  secondary={track.albumTitle}
+                  primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }}
+                  secondaryTypographyProps={{
+                    variant: 'caption',
+                    sx: { cursor: track.albumId ? 'pointer' : 'default' },
+                    onClick: () => track.albumId && navigate(`/album/${track.albumId}`),
+                  }}
+                />
+              </ListItem>
+            ))}
+          </List>
+        </>
+      )}
+
       {!loading && albums.length === 0 && (
         <Typography color="text.secondary">No albums found for this artist.</Typography>
       )}
+
+      <Snackbar open={!!snackbar} autoHideDuration={4000} onClose={() => setSnackbar(null)}>
+        {snackbar ? <Alert severity={snackbar.severity} onClose={() => setSnackbar(null)}>{snackbar.message}</Alert> : <span />}
+      </Snackbar>
     </Box>
   );
 }

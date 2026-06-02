@@ -3,11 +3,12 @@ using Musicarr.Domain.Enums;
 namespace Musicarr.Application.DTOs;
 
 public record TrackDto(
-    Guid Id,
+    string Id,
     string Title,
     string? ArtistName,
+    string? ArtistId,
     string? AlbumTitle,
-    Guid? AlbumId,
+    string? AlbumId,
     string? JellyfinId,
     int TrackNumber,
     int DiscNumber,
