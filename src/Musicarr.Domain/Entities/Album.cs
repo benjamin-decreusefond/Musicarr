@@ -6,6 +6,7 @@ public class Album
     public string Title { get; set; } = string.Empty;
     public Guid ArtistId { get; set; }
     public string? ArtistName { get; set; }
+    public string? ArtistMusicBrainzId { get; set; }
     public string? DeezerId { get; set; }
     public string? DeezerArtistId { get; set; }
     public string? MusicBrainzId { get; set; }

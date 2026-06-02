@@ -55,12 +55,18 @@ public class LidarrService : ILidarrService
         try
         {
             var response = await _httpClient.GetFromJsonAsync<JsonElement>($"/api/v1/album/lookup?term={Uri.EscapeDataString(query)}");
-            return response.EnumerateArray().Select(item => new Album
+            return response.EnumerateArray().Select(item =>
             {
-                Id = Guid.NewGuid(),
-                Title = item.GetProperty("title").GetString() ?? "Unknown",
-                ArtistName = item.TryGetProperty("artist", out var artist) && artist.TryGetProperty("artistName", out var name) ? name.GetString() : null,
-                MusicBrainzId = item.TryGetProperty("foreignAlbumId", out var mbId) ? mbId.GetString() : null
+                item.TryGetProperty("artist", out var artist);
+
+                return new Album
+                {
+                    Id = Guid.NewGuid(),
+                    Title = item.GetProperty("title").GetString() ?? "Unknown",
+                    ArtistName = artist.TryGetProperty("artistName", out var name) ? name.GetString() : null,
+                    ArtistMusicBrainzId = artist.TryGetProperty("foreignArtistId", out var artistMbId) ? artistMbId.GetString() : null,
+                    MusicBrainzId = item.TryGetProperty("foreignAlbumId", out var mbId) ? mbId.GetString() : null
+                };
             }).ToList();
         }
         catch (Exception ex)
@@ -95,16 +101,28 @@ public class LidarrService : ILidarrService
         }
     }
 
-    public async Task<bool> AddAlbumAsync(string musicBrainzId)
+    public async Task<bool> AddAlbumAsync(string musicBrainzId, string artistMusicBrainzId, string artistName)
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("/api/v1/album", new
+            var request = new
             {
                 foreignAlbumId = musicBrainzId,
                 monitored = true,
-                addOptions = new { searchForNewAlbum = true }
-            });
+                addOptions = new { searchForNewAlbum = true },
+                artist = new
+                {
+                    foreignArtistId = artistMusicBrainzId,
+                    artistName,
+                    qualityProfileId = _options.QualityProfileId,
+                    metadataProfileId = _options.MetadataProfileId,
+                    rootFolderPath = _options.RootFolderPath,
+                    monitored = true,
+                    addOptions = new { monitor = "all", searchForMissingAlbums = false }
+                }
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("/api/v1/album", request);
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
