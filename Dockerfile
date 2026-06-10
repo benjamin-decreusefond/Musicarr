@@ -36,8 +36,4 @@ EXPOSE 8686
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD node -e "fetch('http://localhost:'+(process.env.PORT||8686)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# Run as the built-in non-root node user; ensure mounted volumes are writable
-# by UID 1000 (or override the user in your deployment).
-USER node
-
 CMD ["node", "server/index.js"]
