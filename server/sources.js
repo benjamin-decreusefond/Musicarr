@@ -56,14 +56,22 @@ export async function jackettSearch(query) {
   return data.Results || [];
 }
 
-/** Verify Jackett credentials by issuing a trivial search. Throws on failure. */
+/** Verify Jackett URL/key/indexer via the Torznab caps endpoint, which
+ *  answers instantly without querying any trackers (a real search against the
+ *  "all" aggregate can take minutes and made the test time out). */
 export async function testJackett({ url, apiKey, indexer }) {
   const base = (url || '').replace(/\/$/, '');
   if (!base || !apiKey) throw new Error('URL and API key are required');
-  const params = new URLSearchParams({ apikey: apiKey, Query: 'test' });
-  const r = await fetch(`${base}/api/v2.0/indexers/${indexer || 'all'}/results?${params}`, { signal: AbortSignal.timeout(15000) });
+  const params = new URLSearchParams({ apikey: apiKey, t: 'caps' });
+  const r = await fetch(`${base}/api/v2.0/indexers/${indexer || 'all'}/results/torznab/api?${params}`, { signal: AbortSignal.timeout(15000) });
   if (r.status === 401 || r.status === 403) throw new Error('Jackett rejected the API key');
+  if (r.status === 404) throw new Error('Indexer not found — check the URL (no /api suffix) and the indexer id');
   if (!r.ok) throw new Error(`Jackett returned ${r.status}`);
+  const text = await r.text();
+  if (/<error\b/i.test(text)) {
+    const desc = text.match(/description="([^"]*)"/)?.[1];
+    throw new Error(desc || 'Jackett returned an error');
+  }
   return true;
 }
 
@@ -149,7 +157,7 @@ export async function testTransmission({ url, username, password }) {
 export async function tmAdd(magnetOrUrl, subdir) {
   const args = {
     filename: magnetOrUrl,
-    'download-dir': `${config.transmissionDownloadDir}/${subdir}`,
+    'download-dir': `${config.downloadDir}/${subdir}`,
   };
   const out = await tmCall('torrent-add', args);
   const t = out['torrent-added'] || out['torrent-duplicate'];

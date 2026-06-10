@@ -7,9 +7,11 @@ import path from 'node:path';
 // table); these env vars only seed the first-run defaults.
 const envDefaults = {
   musicDir: process.env.MUSIC_DIR || '/music',
-  // Path of the download dir *as seen by Transmission*. Defaults to the same
-  // path: mount the shared volume at the same mount point in both pods.
-  transmissionDownloadDir: process.env.TRANSMISSION_DOWNLOAD_DIR || process.env.DOWNLOAD_DIR || '/downloads',
+  // Single download path, Radarr/Sonarr-style: Transmission saves completed
+  // downloads here and Musicarr reads them back from the same path, then
+  // hardlinks into the root folder. Mount the shared volume at the same
+  // mount point in both containers.
+  downloadDir: process.env.TRANSMISSION_DOWNLOAD_DIR || process.env.DOWNLOAD_DIR || '/downloads',
   jackettUrl: (process.env.JACKETT_URL || '').replace(/\/$/, ''),
   jackettApiKey: process.env.JACKETT_API_KEY || '',
   jackettIndexer: process.env.JACKETT_INDEXER || 'all',
@@ -26,14 +28,13 @@ const stored = (key, dflt) => { const v = getSetting(key); return v === null ? d
 export const config = {
   port: parseInt(process.env.PORT || '8686', 10),
   dataDir: process.env.DATA_DIR || '/data',
-  downloadDir: process.env.DOWNLOAD_DIR || '/downloads',
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin',
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
   envDefaults,
 
   get musicDir() { return getSetting('root_folder') || envDefaults.musicDir; },
-  get transmissionDownloadDir() { return getSetting('transmission_download_dir') || envDefaults.transmissionDownloadDir; },
+  get downloadDir() { return getSetting('transmission_download_dir') || envDefaults.downloadDir; },
   get jackettUrl() { return stored('jackett_url', envDefaults.jackettUrl).replace(/\/$/, ''); },
   get jackettApiKey() { return stored('jackett_api_key', envDefaults.jackettApiKey); },
   get jackettIndexer() { return getSetting('jackett_indexer') || envDefaults.jackettIndexer; },
@@ -46,7 +47,6 @@ export const config = {
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });
-fs.mkdirSync(config.downloadDir, { recursive: true });
 
 // Migrate a pre-rename database (tonearr.db) to the new name in place so
 // existing deployments keep their data. Includes the WAL/SHM sidecar files.
@@ -151,6 +151,7 @@ export function setSetting(key, value) {
 }
 
 fs.mkdirSync(config.musicDir, { recursive: true });
+fs.mkdirSync(config.downloadDir, { recursive: true });
 
 /** Insert or refresh a track's catalog metadata without touching file_path. */
 export function upsertTrack(t) {

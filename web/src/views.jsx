@@ -381,12 +381,17 @@ export function Settings() {
       <section className="page-block settings-section">
         <h2 className="row-title">Media management</h2>
         <p className="settings-hint">
-          Root folder where downloaded music is imported (organized as Artist/Album/Track).
-          Existing files are not moved when you change it.
+          Works like Radarr/Sonarr: Transmission downloads into the download directory; when a
+          download finishes, Musicarr hardlinks the files into the root folder (Artist/Album/Track)
+          and the library plays everything from the root folder. Keep both paths on the same volume
+          so hardlinks work — instant, no extra disk space, and torrents keep seeding. On different
+          volumes, files are copied instead.
         </p>
-        <Field label="Root folder" hint="Absolute path, e.g. /music" value={s.root_folder} onChange={v => set('root_folder', v)} />
+        <Field label="Root folder"
+          hint="The library: files are hardlinked here and streamed from here, e.g. /data/media/music."
+          value={s.root_folder} onChange={v => set('root_folder', v)} />
         <Field label="Transmission download directory"
-          hint="Where Transmission saves completed downloads, as Transmission sees the path."
+          hint="Where Transmission saves downloads, e.g. /data/downloads/music. Only scanned when importing finished downloads; mount the shared volume at the same path in both containers."
           value={s.transmission_download_dir} onChange={v => set('transmission_download_dir', v)} />
       </section>
 
