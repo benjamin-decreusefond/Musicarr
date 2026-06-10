@@ -31,6 +31,8 @@ export const config = {
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin',
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
+  // How often to re-scan the download dir for completed-but-unimported files.
+  sweepIntervalMs: parseInt(process.env.SWEEP_INTERVAL_MS || '600000', 10),
   envDefaults,
 
   get musicDir() { return getSetting('root_folder') || envDefaults.musicDir; },

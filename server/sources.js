@@ -52,6 +52,12 @@ deezerRouter.get(/^\/(.*)$/, async (req, res) => {
 // or several users grabbing the same release) won't re-hit the trackers.
 const jackettCache = createCache({ ttlMs: 10 * 60 * 1000, max: 300 });
 
+// Searching the "all" aggregate fans out to every configured indexer and
+// waits for the slowest one — that routinely takes 1-2 minutes, so the
+// timeout must be generous ("Test connection" uses the instant caps endpoint,
+// which is why it can say OK while a real search times out).
+const JACKETT_TIMEOUT_MS = parseInt(process.env.JACKETT_TIMEOUT_MS || '120000', 10);
+
 export async function jackettSearch(query) {
   if (!config.jackettUrl || !config.jackettApiKey) {
     log.warn('Jackett is not configured (URL / API key missing) — set it under Settings → Jackett');
@@ -64,15 +70,21 @@ export async function jackettSearch(query) {
   const cacheKey = `${config.jackettUrl}|${config.jackettIndexer}|${config.searchCategories.join(',')}|${query}`;
   return jackettCache.wrap(cacheKey, async () => {
     log.debug(`Jackett query "${query}" via indexer ${config.jackettIndexer}`);
+    const started = Date.now();
     let r;
     try {
-      r = await fetch(url, { signal: AbortSignal.timeout(45000) });
+      r = await fetch(url, { signal: AbortSignal.timeout(JACKETT_TIMEOUT_MS) });
     } catch (e) {
-      log.error(`Jackett request failed for "${query}": ${e.message}`);
-      throw new Error(`Could not reach Jackett: ${e.message}`);
+      const secs = Math.round((Date.now() - started) / 1000);
+      const reason = e.name === 'TimeoutError' || /abort/i.test(String(e.message))
+        ? `timed out after ${secs}s (indexer "${config.jackettIndexer}" waits for the slowest tracker; try a specific indexer or raise JACKETT_TIMEOUT_MS)`
+        : e.message;
+      log.error(`Jackett request failed for "${query}": ${reason}`);
+      throw new Error(`Could not reach Jackett: ${reason}`);
     }
     if (!r.ok) { log.error(`Jackett returned ${r.status} for "${query}"`); throw new Error(`Jackett ${r.status}`); }
     const data = await r.json();
+    log.debug(`Jackett query "${query}" answered in ${Math.round((Date.now() - started) / 1000)}s with ${(data.Results || []).length} results`);
     return data.Results || [];
   });
 }

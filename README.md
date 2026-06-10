@@ -130,6 +130,8 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `ADMIN_USERNAME` | `admin` | Created on first boot only |
 | `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
+| `SWEEP_INTERVAL_MS` | `600000` | How often the download dir is re-scanned for completed-but-unimported files |
+| `JACKETT_TIMEOUT_MS` | `120000` | Search timeout; the `all` aggregate waits for the slowest indexer |
 
 ## First login
 

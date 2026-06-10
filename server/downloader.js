@@ -136,8 +136,60 @@ function subdirFor(dl) {
 
 /* ------------------------------------------------------------ Poll loop */
 export function startPoller() {
-  log.info(`poll loop started, every ${config.pollIntervalMs}ms`);
+  log.info(`poll loop started, every ${config.pollIntervalMs}ms (unimported-files sweep every ${config.sweepIntervalMs}ms)`);
   setInterval(() => tick().catch(e => log.error('poll tick failed', e)), config.pollIntervalMs);
+  // Recover completed downloads whose import never happened (crash mid-import,
+  // matching bug, plan lost across a restart, ...): shortly after boot, then
+  // periodically.
+  setTimeout(() => sweepUnimported().catch(e => log.error('sweep failed', e)), Math.min(15000, config.sweepIntervalMs));
+  setInterval(() => sweepUnimported().catch(e => log.error('sweep failed', e)), config.sweepIntervalMs);
+}
+
+let sweeping = false;
+const failedSweeps = new Map(); // srcDir -> dir mtime at last failed attempt
+/** Scan the download dir for musicarr-<id> folders whose download row has
+ *  tracks that never made it into the library, and retry the import. */
+export async function sweepUnimported() {
+  if (sweeping) return;
+  sweeping = true;
+  try {
+    let entries = [];
+    try { entries = fs.readdirSync(config.downloadDir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const m = e.name.match(/^musicarr-(\d+)/);
+      if (!m) continue;
+      const dl = db.prepare('SELECT * FROM downloads WHERE id = ?').get(parseInt(m[1], 10));
+      if (!dl) continue;                                  // dismissed download; leave files for seeding
+      if (!['done', 'error', 'importing'].includes(dl.status)) continue; // active ones belong to the poller
+      const srcDir = path.join(config.downloadDir, e.name);
+      // Don't re-attempt a folder that already failed unless it changed.
+      const mtime = fs.statSync(srcDir).mtimeMs;
+      if (failedSweeps.get(srcDir) === mtime) continue;
+      try {
+        if (!pendingImports.has(dl.id)) await rebuildPlan(dl);
+        const plan = pendingImports.get(dl.id);
+        const missing = (plan?.wantedTracks || []).filter(w => {
+          const t = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(w.deezer_id);
+          return !(t?.file_path && fs.existsSync(t.file_path));
+        });
+        if (!missing.length) continue;
+        log.info(`sweep: download #${dl.id} (${dl.label}) has ${missing.length} unimported track(s), retrying import from ${e.name}`);
+        const n = await importDownload(dl, null, srcDir);
+        failedSweeps.delete(srcDir);
+        setStatus(dl.id, 'done', n > 1 ? `Imported ${n} tracks to your library` : 'Added to your library', { progress: 1 });
+      } catch (err) {
+        failedSweeps.set(srcDir, mtime);
+        // Keep quiet at info level: a permanently unmatchable folder would
+        // otherwise log an error every sweep.
+        log.debug(`sweep: #${dl.id} retry failed: ${err.message}`);
+      } finally {
+        pendingImports.delete(dl.id);
+      }
+    }
+  } finally {
+    sweeping = false;
+  }
 }
 
 async function tick() {
@@ -210,11 +262,11 @@ function titleMatches(fi, wantTitle) {
   return (ft && (ft.includes(wt) || wt.includes(ft))) || fb.includes(wt);
 }
 
-async function importDownload(dl, torrent) {
+async function importDownload(dl, torrent, srcDirOverride = null) {
   const plan = pendingImports.get(dl.id);
   // Downloads queued before the descriptive folder names landed live in the
   // bare `musicarr-<id>` directory; fall back to it.
-  let srcDir = path.join(config.downloadDir, subdirFor(dl));
+  let srcDir = srcDirOverride || path.join(config.downloadDir, subdirFor(dl));
   if (!fs.existsSync(srcDir)) {
     const legacy = path.join(config.downloadDir, `musicarr-${dl.id}`);
     if (fs.existsSync(legacy)) srcDir = legacy;
