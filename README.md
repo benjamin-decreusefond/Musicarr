@@ -61,27 +61,39 @@ differ between the two, set both variables so the mapping is correct.
 `/music` is where the permanent library lives and should be a persistent
 volume. `/data` holds the SQLite database and must also persist.
 
-The library root folder can also be changed from the UI (admin only, under
-**Settings → Media management**), like Radarr/Sonarr root folders. A value set
-there is stored in the database and takes precedence over `MUSIC_DIR`, which
-only provides the initial default.
+## Configuration from the UI
+
+Most settings can be changed from the UI (admin only, under **Settings**),
+like Radarr/Sonarr — no restart required, and values persist in the database:
+
+- **Media management** — library root folder and the Transmission download directory
+- **Jackett** — URL, API key, indexer, and search categories (with a *Test connection* button)
+- **Transmission** — RPC URL, username, and password (with a *Test connection* button)
+
+Anything set in the UI is stored in the database and **takes precedence over the
+corresponding environment variable**, which only seeds the first-run default. So
+you can run with no Jackett/Transmission env vars at all and configure everything
+from the Settings page after first login.
 
 ## Environment variables
+
+All of these are optional seeds for the first-run defaults; the ones marked
+*(UI)* can also be managed from the Settings page afterwards.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8686` | HTTP port |
 | `DATA_DIR` | `/data` | SQLite database location (persist this) |
-| `MUSIC_DIR` | `/music` | Default root folder for the audio library (persist this) |
+| `MUSIC_DIR` | `/music` | Default root folder for the audio library *(UI)* |
 | `DOWNLOAD_DIR` | `/downloads` | Where Musicarr reads completed downloads |
-| `TRANSMISSION_DOWNLOAD_DIR` | = `DOWNLOAD_DIR` | Download path as Transmission sees it |
-| `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) |
-| `JACKETT_API_KEY` | — | From Jackett's dashboard |
-| `JACKETT_INDEXER` | `all` | Indexer id, or `all` to query every configured one |
-| `SEARCH_CATEGORIES` | `3000` | Torznab categories (3000 = Audio); comma-separated |
-| `TRANSMISSION_URL` | `http://transmission:9091/transmission/rpc` | RPC endpoint |
-| `TRANSMISSION_USER` | — | RPC username (if auth enabled) |
-| `TRANSMISSION_PASS` | — | RPC password |
+| `TRANSMISSION_DOWNLOAD_DIR` | = `DOWNLOAD_DIR` | Download path as Transmission sees it *(UI)* |
+| `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) *(UI)* |
+| `JACKETT_API_KEY` | — | From Jackett's dashboard *(UI)* |
+| `JACKETT_INDEXER` | `all` | Indexer id, or `all` to query every configured one *(UI)* |
+| `SEARCH_CATEGORIES` | `3000` | Torznab categories (3000 = Audio); comma-separated *(UI)* |
+| `TRANSMISSION_URL` | `http://transmission:9091/transmission/rpc` | RPC endpoint *(UI)* |
+| `TRANSMISSION_USER` | — | RPC username (if auth enabled) *(UI)* |
+| `TRANSMISSION_PASS` | — | RPC password *(UI)* |
 | `ADMIN_USERNAME` | `admin` | Created on first boot only |
 | `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |

@@ -3,36 +3,102 @@ import path from 'node:path';
 import { Router } from 'express';
 import { db, config, getSetting, setSetting } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
-import { deezerGet } from './sources.js';
+import { deezerGet, testJackett, testTransmission } from './sources.js';
 import { queueDownload } from './downloader.js';
 
 export const api = Router();
 api.use(requireAuth);
 
 /* -------------------------------------------------------------- Settings */
-// Root folder works like Radarr/Sonarr: set from the UI, stored in the DB.
-// The MUSIC_DIR env var only provides the initial default.
-api.get('/settings', requireAdmin, (req, res) => {
-  res.json({
+// Settings work like Radarr/Sonarr: edited from the UI, stored in the DB, and
+// persisted across reboots. The matching env vars only seed first-run defaults.
+
+// Current effective config (what the server is actually using right now).
+function currentSettings() {
+  return {
     root_folder: config.musicDir,
-    root_folder_is_default: getSetting('root_folder') === null,
-    root_folder_default: config.envMusicDir,
-  });
+    jackett_url: config.jackettUrl,
+    jackett_api_key: config.jackettApiKey,
+    jackett_indexer: config.jackettIndexer,
+    search_categories: config.searchCategories.join(', '),
+    transmission_url: config.transmissionUrl,
+    transmission_user: config.transmissionUser,
+    transmission_pass: config.transmissionPass,
+    transmission_download_dir: config.transmissionDownloadDir,
+  };
+}
+
+api.get('/settings', requireAdmin, (req, res) => {
+  res.json(currentSettings());
 });
 
 api.put('/settings', requireAdmin, (req, res) => {
-  const raw = (req.body?.root_folder || '').toString().trim();
-  if (!raw) return res.status(400).json({ error: 'root_folder is required' });
-  if (!path.isAbsolute(raw)) return res.status(400).json({ error: 'Root folder must be an absolute path (e.g. /music)' });
-  const folder = path.resolve(raw);
+  const b = req.body || {};
+  const str = v => (v ?? '').toString().trim();
+  const has = k => Object.prototype.hasOwnProperty.call(b, k);
+  const isHttpUrl = v => /^https?:\/\/\S+$/i.test(v);
+
   try {
-    fs.mkdirSync(folder, { recursive: true });
-    fs.accessSync(folder, fs.constants.W_OK);
+    // --- Library root folder (created and write-checked) ---
+    if (has('root_folder')) {
+      const folder = str(b.root_folder);
+      if (!folder) throw new Error('Root folder is required');
+      if (!path.isAbsolute(folder)) throw new Error('Root folder must be an absolute path (e.g. /music)');
+      const resolved = path.resolve(folder);
+      try {
+        fs.mkdirSync(resolved, { recursive: true });
+        fs.accessSync(resolved, fs.constants.W_OK);
+      } catch (e) {
+        throw new Error(`Root folder is not writable: ${e.message}`);
+      }
+      setSetting('root_folder', resolved);
+    }
+
+    // --- Jackett ---
+    if (has('jackett_url')) {
+      const url = str(b.jackett_url);
+      if (url && !isHttpUrl(url)) throw new Error('Jackett URL must start with http:// or https://');
+      setSetting('jackett_url', url.replace(/\/$/, ''));
+    }
+    if (has('jackett_api_key')) setSetting('jackett_api_key', str(b.jackett_api_key));
+    if (has('jackett_indexer')) setSetting('jackett_indexer', str(b.jackett_indexer) || 'all');
+    if (has('search_categories')) setSetting('search_categories', str(b.search_categories) || '3000');
+
+    // --- Transmission ---
+    if (has('transmission_url')) {
+      const url = str(b.transmission_url);
+      if (!url) throw new Error('Transmission RPC URL is required');
+      if (!isHttpUrl(url)) throw new Error('Transmission URL must start with http:// or https://');
+      setSetting('transmission_url', url);
+    }
+    if (has('transmission_user')) setSetting('transmission_user', str(b.transmission_user));
+    if (has('transmission_pass')) setSetting('transmission_pass', str(b.transmission_pass));
+    if (has('transmission_download_dir')) {
+      const dir = str(b.transmission_download_dir);
+      if (dir && !path.isAbsolute(dir)) throw new Error('Transmission download dir must be an absolute path');
+      setSetting('transmission_download_dir', dir);
+    }
   } catch (e) {
-    return res.status(400).json({ error: `Folder is not writable: ${e.message}` });
+    return res.status(400).json({ error: String(e.message || e) });
   }
-  setSetting('root_folder', folder);
-  res.json({ root_folder: folder, root_folder_is_default: false, root_folder_default: config.envMusicDir });
+  res.json(currentSettings());
+});
+
+// Test a connection with the values being entered (before saving them).
+api.post('/settings/test', requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  try {
+    if (b.section === 'jackett') {
+      await testJackett({ url: b.jackett_url, apiKey: b.jackett_api_key, indexer: b.jackett_indexer });
+    } else if (b.section === 'transmission') {
+      await testTransmission({ url: b.transmission_url, username: b.transmission_user, password: b.transmission_pass });
+    } else {
+      return res.status(400).json({ error: 'Unknown section' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 /* ----------------------------------------------------------- Library view */

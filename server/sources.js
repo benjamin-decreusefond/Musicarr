@@ -56,6 +56,17 @@ export async function jackettSearch(query) {
   return data.Results || [];
 }
 
+/** Verify Jackett credentials by issuing a trivial search. Throws on failure. */
+export async function testJackett({ url, apiKey, indexer }) {
+  const base = (url || '').replace(/\/$/, '');
+  if (!base || !apiKey) throw new Error('URL and API key are required');
+  const params = new URLSearchParams({ apikey: apiKey, Query: 'test' });
+  const r = await fetch(`${base}/api/v2.0/indexers/${indexer || 'all'}/results?${params}`, { signal: AbortSignal.timeout(15000) });
+  if (r.status === 401 || r.status === 403) throw new Error('Jackett rejected the API key');
+  if (!r.ok) throw new Error(`Jackett returned ${r.status}`);
+  return true;
+}
+
 const norm = s => (s || '')
   .toLowerCase()
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -111,6 +122,27 @@ async function tmCall(method, args) {
   const data = await r.json();
   if (data.result !== 'success') throw new Error(`Transmission: ${data.result}`);
   return data.arguments;
+}
+
+/** Verify a Transmission RPC endpoint (and optional auth). Throws on failure. */
+export async function testTransmission({ url, username, password }) {
+  if (!url) throw new Error('RPC URL is required');
+  const headers = { 'Content-Type': 'application/json' };
+  if (username) headers.Authorization = 'Basic ' + Buffer.from(`${username}:${password || ''}`).toString('base64');
+  const body = JSON.stringify({ method: 'session-get' });
+  let r;
+  try {
+    r = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) });
+    if (r.status === 409) { // CSRF handshake, retry once with the session id
+      headers['X-Transmission-Session-Id'] = r.headers.get('x-transmission-session-id') || '';
+      r = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) });
+    }
+  } catch (e) {
+    throw new Error(`Could not reach Transmission: ${e.message}`);
+  }
+  if (r.status === 401) throw new Error('Transmission rejected the username/password');
+  if (!r.ok) throw new Error(`Transmission returned ${r.status}`);
+  return true;
 }
 
 /** Add a torrent (magnet URI or .torrent URL). Returns { hashString, name }. */

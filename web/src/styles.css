@@ -151,9 +151,16 @@
 .admin-name { flex: 1; font-weight: 600; }
 
 /* ============================ Settings ============================= */
+.settings-section { max-width: 620px; border-bottom: 1px solid var(--line); padding-bottom: 22px; }
 .settings-hint { color: var(--text-dim); font-size: 13.5px; margin-bottom: 14px; max-width: 560px; }
-.settings-path { min-width: 340px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-.settings-msg { font-size: 13.5px; margin-top: 4px; }
+.settings-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; max-width: 560px; }
+.settings-label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.settings-input { background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 14px; outline: none; width: 100%; }
+.settings-input:focus { border-color: var(--accent); }
+.settings-fieldhint { font-size: 12px; color: var(--text-faint); }
+.settings-actions { display: flex; align-items: center; gap: 14px; margin-top: 6px; }
+.settings-save { display: flex; align-items: center; gap: 16px; margin-top: 26px; }
+.settings-msg { font-size: 13.5px; }
 .settings-msg.ok { color: var(--accent); }
 .settings-msg.err { color: var(--danger); }
 
