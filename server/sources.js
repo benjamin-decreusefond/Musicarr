@@ -7,7 +7,8 @@ const log = logger('sources');
 /* ---------------------------------------------------------------- Deezer */
 // Free, key-less metadata API. We proxy it server-side (no CORS issues, and
 // responses get a short cache).
-const DEEZER = 'https://api.deezer.com';
+// Overridable for tests and proxied setups.
+const DEEZER = (process.env.DEEZER_URL || 'https://api.deezer.com').replace(/\/$/, '');
 const ALLOWED = [
   /^search(\/(track|album|artist))?$/,
   /^track\/\d+$/,
@@ -28,6 +29,8 @@ export async function deezerGet(pathAndQuery) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`Deezer ${r.status}`);
   const body = await r.json();
+  // Deezer reports errors as 200s with an error payload; don't cache those.
+  if (body?.error) throw new Error(`Deezer: ${body.error.message || body.error.type || JSON.stringify(body.error)}`);
   if (cache.size > 500) cache.clear();
   cache.set(url, { at: Date.now(), body });
   return body;
