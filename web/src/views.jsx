@@ -205,9 +205,13 @@ export function Album({ id, nav }) {
 
 /* -------------------------------------------------------------- Library */
 export function Library() {
-  const { data, err, loading } = useAsync(() => api.get('/api/library'), []);
-  if (loading) return <Loading />;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = useCallback(() => { api.get('/api/library').then(setData).catch(e => setErr(e.message)); }, []);
+  // Poll so freshly-queued downloads and their status changes show up live.
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
   if (err) return <ErrState msg={err} />;
+  if (!data) return <Loading />;
   return (
     <div className="page">
       <h1 className="page-h1">Your library</h1>

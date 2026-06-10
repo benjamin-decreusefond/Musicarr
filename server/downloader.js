@@ -3,6 +3,9 @@ import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { db, config, upsertTrack, trackRowFromDeezer } from './db.js';
 import { deezerGet, jackettSearch, scoreResults, tmAdd, tmStatus } from './sources.js';
+import { logger } from './log.js';
+
+const log = logger('download');
 
 const AUDIO_EXT = new Set(['.flac', '.mp3', '.m4a', '.ogg', '.opus', '.wav', '.aac', '.wma']);
 
@@ -11,6 +14,8 @@ function setStatus(id, status, detail, extra = {}) {
   const sets = Object.keys(fields).map(k => `${k} = @${k}`).join(', ');
   db.prepare(`UPDATE downloads SET ${sets}, updated_at = datetime('now') WHERE id = @id`)
     .run({ id, ...fields });
+  if (status === 'error' || status === 'not_found') log.warn(`#${id} -> ${status}`, detail || '');
+  else log.info(`#${id} -> ${status}`, detail || '');
 }
 
 /**
@@ -22,7 +27,8 @@ export function queueDownload(userId, kind, deezerId, label, cover) {
   const existing = db.prepare('INSERT INTO downloads (user_id, kind, deezer_id, label, cover) VALUES (?, ?, ?, ?, ?)')
     .run(userId, kind, deezerId, label, cover || null);
   const id = existing.lastInsertRowid;
-  startSearch(id).catch(e => setStatus(id, 'error', String(e.message || e)));
+  log.info(`#${id} queued ${kind} ${deezerId} by user ${userId}: ${label}`);
+  startSearch(id).catch(e => { log.error(`#${id} startSearch failed`, e); setStatus(id, 'error', String(e.message || e)); });
   return id;
 }
 
@@ -31,18 +37,25 @@ async function startSearch(downloadId) {
   if (!dl) return;
 
   // 1. Resolve what we need from Deezer (artist, title, and for albums the
-  //    full tracklist so we can match files later).
-  let artist, title, wantedTracks;
+  //    full tracklist so we can match files later). `attempts` is an ordered
+  //    list of { query, matchTitle } pairs — each query is scored against the
+  //    title that the release name is expected to contain.
+  let artist, title, wantedTracks, attempts;
   if (dl.kind === 'album') {
     const album = await deezerGet(`album/${dl.deezer_id}`);
     artist = album.artist?.name || '';
     title = album.title || '';
     wantedTracks = (album.tracks?.data || []).map(t => trackRowFromDeezer(t, album));
     wantedTracks.forEach(upsertTrack);
+    attempts = [
+      { query: `${artist} ${title}`, matchTitle: title },
+      { query: title, matchTitle: title },
+    ];
   } else {
     const tr = await deezerGet(`track/${dl.deezer_id}`);
     artist = tr.artist?.name || '';
     title = tr.title || '';
+    const albumTitle = tr.album?.title || '';
     const row = trackRowFromDeezer(tr);
     upsertTrack(row);
     wantedTracks = [row];
@@ -52,30 +65,42 @@ async function startSearch(downloadId) {
     if (have?.file_path && fs.existsSync(have.file_path)) {
       return setStatus(downloadId, 'done', 'Already in library', { progress: 1 });
     }
+
+    // Try the track itself first, but trackers almost always carry the full
+    // album rather than single tracks — so fall back to the track's album and
+    // let the import step keep just the one file we want.
+    attempts = [{ query: `${artist} ${title}`, matchTitle: title }];
+    if (albumTitle) {
+      attempts.push({ query: `${artist} ${albumTitle}`, matchTitle: albumTitle });
+      attempts.push({ query: albumTitle, matchTitle: albumTitle });
+    }
   }
 
-  // 2. Search Jackett. For a single track, an album release is acceptable —
-  //    we'll just keep the one file we need.
+  // 2. Search Jackett, trying each query until one yields a viable release.
   setStatus(downloadId, 'searching', 'Searching indexers');
-  const queries = dl.kind === 'album'
-    ? [`${artist} ${title}`, title]
-    : [`${artist} ${title}`, `${artist} ${title} album`];
-
   let best = null;
-  for (const q of queries) {
-    const results = await jackettSearch(q);
-    const scored = scoreResults(results, artist, dl.kind === 'album' ? title : title);
+  for (const { query, matchTitle } of attempts) {
+    log.info(`#${downloadId} searching Jackett: "${query}" (match against "${matchTitle}")`);
+    const results = await jackettSearch(query);
+    const scored = scoreResults(results, artist, matchTitle);
+    log.info(`#${downloadId} "${query}": ${results.length} results, ${scored.length} viable`);
     if (scored.length) { best = scored[0]; break; }
   }
-  if (!best) return setStatus(downloadId, 'not_found', 'No matching release found');
+  if (!best) {
+    log.warn(`#${downloadId} no viable release for "${artist} - ${title}" (categories: ${config.searchCategories.join(',')})`);
+    return setStatus(downloadId, 'not_found',
+      dl.kind === 'track' ? 'No release found for the track or its album' : 'No matching release found');
+  }
 
   // 3. Hand off to Transmission.
   const link = best.result.MagnetUri || best.result.Link;
   const subdir = `musicarr-${downloadId}`;
+  log.info(`#${downloadId} best release (score ${Math.round(best.score)}): ${best.result.Title}`);
   setStatus(downloadId, 'downloading', `Found: ${best.result.Title}`, {
     release_title: best.result.Title, progress: 0,
   });
   const t = await tmAdd(link, subdir);
+  log.info(`#${downloadId} handed to Transmission, hash ${t.hashString}, dir ${config.downloadDir}/${subdir}`);
   setStatus(downloadId, 'downloading', `Found: ${best.result.Title}`, { torrent_hash: t.hashString });
 
   // Remember which tracks this download is responsible for importing.
@@ -87,7 +112,8 @@ const pendingImports = new Map();
 
 /* ------------------------------------------------------------ Poll loop */
 export function startPoller() {
-  setInterval(() => tick().catch(e => console.error('[poll]', e)), config.pollIntervalMs);
+  log.info(`poll loop started, every ${config.pollIntervalMs}ms`);
+  setInterval(() => tick().catch(e => log.error('poll tick failed', e)), config.pollIntervalMs);
 }
 
 async function tick() {
@@ -95,7 +121,12 @@ async function tick() {
   if (!active.length) return;
   const hashes = active.map(d => d.torrent_hash);
   let torrents = [];
-  try { torrents = await tmStatus(hashes); } catch (e) { return; }
+  try {
+    torrents = await tmStatus(hashes);
+  } catch (e) {
+    log.warn(`could not reach Transmission to poll ${active.length} active download(s): ${e.message}`);
+    return;
+  }
   const byHash = new Map(torrents.map(t => [t.hashString, t]));
 
   for (const dl of active) {
@@ -138,8 +169,15 @@ const normTitle = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300
 async function importDownload(dl, torrent) {
   const plan = pendingImports.get(dl.id);
   const srcDir = path.join(config.downloadDir, `musicarr-${dl.id}`);
+  log.info(`#${dl.id} importing from ${srcDir}`);
   const files = walkAudio(srcDir);
-  if (!files.length) throw new Error('No audio files in the completed download');
+  log.info(`#${dl.id} found ${files.length} audio file(s) in download`);
+  if (!files.length) {
+    const exists = fs.existsSync(srcDir);
+    throw new Error(exists
+      ? `No audio files found in ${srcDir} — check that DOWNLOAD_DIR/Transmission download directory points at the same storage`
+      : `Download directory ${srcDir} does not exist on Musicarr's side — the download dir and Transmission must share the same volume/path`);
+  }
 
   // Read metadata for each downloaded file once.
   const fileInfos = [];
@@ -172,7 +210,7 @@ async function importDownload(dl, torrent) {
     }
     // Single-track download with a single audio file: take it.
     if (!match && wanted.length === 1 && fileInfos.length === 1) match = fileInfos[0];
-    if (!match) continue;
+    if (!match) { log.debug(`#${dl.id} no file matched "${want.artist} - ${want.title}"`); continue; }
     match.used = true;
 
     const ext = path.extname(match.path);
@@ -197,10 +235,46 @@ async function importDownload(dl, torrent) {
       }
     }
     db.prepare('UPDATE tracks SET file_path = ? WHERE deezer_id = ?').run(dest, want.deezer_id);
+    log.info(`#${dl.id} imported "${want.artist} - ${want.title}" -> ${dest}`);
     imported++;
   }
 
-  if (imported === 0) throw new Error('Downloaded files did not match the requested tracks');
+  if (imported === 0) {
+    throw new Error(`Downloaded ${fileInfos.length} file(s) but none matched the ${wanted.length} requested track(s)`);
+  }
+  log.info(`#${dl.id} import complete: ${imported}/${wanted.length} track(s)`);
+}
+
+/** Reconcile the catalog with what's actually on disk in the root folder so the
+ *  library reflects reality: drop file paths whose file vanished, and re-link
+ *  known tracks whose file is present at the expected path (e.g. after the DB
+ *  lost the link). Returns a small summary. */
+export function scanLibrary() {
+  const root = config.musicDir;
+  let pruned = 0, relinked = 0;
+
+  for (const t of db.prepare('SELECT deezer_id, file_path FROM tracks WHERE file_path IS NOT NULL').all()) {
+    if (!fs.existsSync(t.file_path)) {
+      db.prepare('UPDATE tracks SET file_path = NULL WHERE deezer_id = ?').run(t.deezer_id);
+      pruned++;
+    }
+  }
+
+  for (const t of db.prepare('SELECT deezer_id, artist, album, title FROM tracks WHERE file_path IS NULL').all()) {
+    const dir = path.join(root, safeName(t.artist), safeName(t.album || 'Singles'));
+    if (!fs.existsSync(dir)) continue;
+    const want = safeName(t.title);
+    const hit = fs.readdirSync(dir).find(f =>
+      AUDIO_EXT.has(path.extname(f).toLowerCase()) && path.basename(f, path.extname(f)) === want);
+    if (hit) {
+      db.prepare('UPDATE tracks SET file_path = ? WHERE deezer_id = ?').run(path.join(dir, hit), t.deezer_id);
+      relinked++;
+    }
+  }
+
+  const total = db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE file_path IS NOT NULL').get().n;
+  log.info(`library scan: ${total} track(s) on disk in ${root} (relinked ${relinked}, pruned ${pruned} missing)`);
+  return { total, relinked, pruned };
 }
 
 /** On boot, resume polling for anything that was mid-flight. Imports for those

@@ -124,10 +124,25 @@ function trackWithFlags(userId) {
   `).pluck(false);
 }
 
+// The library shows every track on disk (file_path set), plus tracks that are
+// currently being fetched so a download shows up the moment it's clicked. Each
+// row carries `available` (file on disk) and the latest `download_status`.
 api.get('/library', (req, res) => {
   const rows = db.prepare(`
-    SELECT t.*, EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = ? AND f.track_id = t.deezer_id) AS favorite
-    FROM tracks t WHERE t.file_path IS NOT NULL ORDER BY t.added_at DESC
+    SELECT t.*,
+      (t.file_path IS NOT NULL) AS available,
+      EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = ? AND f.track_id = t.deezer_id) AS favorite,
+      (SELECT d.status FROM downloads d
+         WHERE (d.kind = 'track' AND d.deezer_id = t.deezer_id)
+            OR (d.kind = 'album' AND d.deezer_id = t.album_id)
+         ORDER BY d.created_at DESC LIMIT 1) AS download_status
+    FROM tracks t
+    WHERE t.file_path IS NOT NULL
+       OR EXISTS (SELECT 1 FROM downloads d
+            WHERE d.status IN ('searching', 'downloading', 'importing')
+              AND ((d.kind = 'track' AND d.deezer_id = t.deezer_id)
+                OR (d.kind = 'album' AND d.deezer_id = t.album_id)))
+    ORDER BY (t.file_path IS NOT NULL) DESC, t.added_at DESC
   `).all(req.user.id);
   res.json(rows);
 });

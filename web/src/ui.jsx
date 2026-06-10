@@ -128,6 +128,8 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav }) {
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
   const available = track.available || track.file_path;
+  const DL_LABEL = { searching: 'Searching…', downloading: 'Downloading…', importing: 'Importing…', error: 'Failed', not_found: 'Not found' };
+  const pending = !available && DL_LABEL[track.download_status];
 
   const onPlay = () => {
     if (!available) return;
@@ -147,11 +149,11 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav }) {
         <div className="track-title">{track.title}</div>
         <div className="track-sub">{track.artist}{showAlbum && track.album ? ` · ${track.album}` : ''}</div>
       </div>
-      {!available && <span className="badge">Not downloaded</span>}
+      {pending ? <span className="badge">{pending}</span> : (!available && <span className="badge">Not downloaded</span>)}
       <div className="track-actions" onClick={e => e.stopPropagation()}>
         <HeartButton trackId={id} initial={track.favorite} onChange={onFav} />
         <AddToPlaylist trackId={id} />
-        {!available && <DownloadButton kind="track" id={id} label={track.title} />}
+        {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
       </div>
       <span className="track-time">{fmtTime(track.duration)}</span>
     </div>
