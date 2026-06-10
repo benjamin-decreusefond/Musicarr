@@ -190,6 +190,26 @@ function safeName(s) {
 
 const normTitle = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
 
+/** Best-effort track number from a filename: handles "03 - x", "03. x",
+ *  "03_x", "3 x", and disc-prefixed "1-03 x" / "1.03 x". */
+function fileTrackNo(base) {
+  const name = base.replace(/\.[^.]+$/, '');
+  let m = name.match(/^\s*\d{1,2}\s*[-_.]\s*(\d{1,3})(?:\D|$)/); // disc-track
+  if (m) return parseInt(m[1], 10);
+  m = name.match(/^\s*(\d{1,3})(?:\D|$)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** True when a downloaded file's title/name plausibly matches a wanted title,
+ *  in either direction (handles "(feat. \u2026)" and punctuation differences). */
+function titleMatches(fi, wantTitle) {
+  const wt = normTitle(wantTitle);
+  if (!wt) return false;
+  const ft = normTitle(fi.title);
+  const fb = normTitle(fi.base);
+  return (ft && (ft.includes(wt) || wt.includes(ft))) || fb.includes(wt);
+}
+
 async function importDownload(dl, torrent) {
   const plan = pendingImports.get(dl.id);
   // Downloads queued before the descriptive folder names landed live in the
@@ -209,9 +229,11 @@ async function importDownload(dl, torrent) {
       : `Download directory ${srcDir} does not exist on Musicarr's side — the download dir and Transmission must share the same volume/path`);
   }
 
-  // Read metadata for each downloaded file once.
+  // Read metadata for each downloaded file once. Track number comes from the
+  // tag when present, otherwise from the filename.
   const fileInfos = [];
   for (const f of files) {
+    const base = path.basename(f);
     let title = path.basename(f, path.extname(f));
     let trackNo = null;
     try {
@@ -219,35 +241,17 @@ async function importDownload(dl, torrent) {
       title = mm.common.title || title;
       trackNo = mm.common.track?.no ?? null;
     } catch { /* fall back to filename */ }
-    fileInfos.push({ path: f, title, trackNo, base: path.basename(f) });
+    if (trackNo == null) trackNo = fileTrackNo(base);
+    fileInfos.push({ path: f, title, trackNo, base });
   }
 
   const wanted = plan?.wantedTracks || [];
   let imported = 0;
 
-  for (const want of wanted) {
-    // If we already have this track's file globally, just reuse it.
-    const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id);
-    if (have?.file_path && fs.existsSync(have.file_path)) { imported++; continue; }
-
-    // Match a downloaded file to this wanted track: prefer track number, then
-    // fuzzy title containment.
-    let match = null;
-    if (want.track_position) match = fileInfos.find(fi => fi.trackNo === want.track_position && !fi.used);
-    if (!match) {
-      const wt = normTitle(want.title);
-      match = fileInfos.find(fi => !fi.used && wt && (normTitle(fi.title).includes(wt) || normTitle(fi.base).includes(wt)));
-    }
-    // A release with a single audio file: assume it's the song the user asked
-    // for, even when tag/filename matching failed.
-    if (!match && fileInfos.length === 1 && !fileInfos[0].used
-        && (wanted.length === 1 || want.deezer_id === plan?.requiredId)) {
-      match = fileInfos[0];
-    }
-    if (!match) { log.debug(`#${dl.id} no file matched "${want.artist} - ${want.title}"`); continue; }
-    match.used = true;
-
-    const ext = path.extname(match.path);
+  // Link one downloaded file into the library for a wanted track.
+  const linkInto = (want, fi) => {
+    fi.used = true;
+    const ext = path.extname(fi.path);
     const destDir = path.join(config.musicDir, safeName(want.artist), safeName(want.album || 'Singles'));
     fs.mkdirSync(destDir, { recursive: true });
     const dest = path.join(destDir, `${safeName(want.title)}${ext}`);
@@ -256,14 +260,11 @@ async function importDownload(dl, torrent) {
     // the download dir and root folder are on different filesystems.
     try {
       if (fs.existsSync(dest)) fs.unlinkSync(dest);
-      fs.linkSync(match.path, dest);
+      fs.linkSync(fi.path, dest);
     } catch (e) {
       if (e.code === 'EXDEV' || e.code === 'EPERM') {
-        try {
-          fs.copyFileSync(match.path, dest);
-        } catch (e2) {
-          throw new Error(`Copy failed: ${e2.message}`);
-        }
+        try { fs.copyFileSync(fi.path, dest); }
+        catch (e2) { throw new Error(`Copy failed: ${e2.message}`); }
       } else {
         throw new Error(`Hardlink failed: ${e.message}`);
       }
@@ -271,6 +272,46 @@ async function importDownload(dl, torrent) {
     db.prepare('UPDATE tracks SET file_path = ? WHERE deezer_id = ?').run(dest, want.deezer_id);
     log.info(`#${dl.id} imported "${want.artist} - ${want.title}" -> ${dest}`);
     imported++;
+  };
+
+  const unmatched = [];
+  for (const want of wanted) {
+    // If we already have this track's file globally, just reuse it.
+    const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id);
+    if (have?.file_path && fs.existsSync(have.file_path)) { imported++; continue; }
+
+    // Match a downloaded file to this wanted track: prefer track number (tag or
+    // filename), then bidirectional title matching.
+    let match = null;
+    if (want.track_position) match = fileInfos.find(fi => !fi.used && fi.trackNo === want.track_position);
+    if (!match) match = fileInfos.find(fi => !fi.used && titleMatches(fi, want.title));
+    // A release with a single audio file: assume it's the song the user asked
+    // for, even when tag/filename matching failed.
+    if (!match && fileInfos.length === 1 && !fileInfos[0].used
+        && (wanted.length === 1 || want.deezer_id === plan?.requiredId)) {
+      match = fileInfos[0];
+    }
+    if (!match) { unmatched.push(want); continue; }
+    linkInto(want, match);
+  }
+
+  // Positional fallback for albums: if some tracks still didn't match (messy
+  // tags/filenames) but there are leftover files, line them up in track order.
+  // Only when the leftover counts line up closely, to avoid mislabeling.
+  if (unmatched.length && dl.kind === 'album') {
+    const freeFiles = fileInfos.filter(fi => !fi.used)
+      .sort((a, b) => (a.trackNo ?? 1e9) - (b.trackNo ?? 1e9) || a.base.localeCompare(b.base));
+    const need = [...unmatched].sort((a, b) => (a.track_position ?? 1e9) - (b.track_position ?? 1e9));
+    if (freeFiles.length && Math.abs(freeFiles.length - need.length) <= 1) {
+      log.info(`#${dl.id} positional fallback: assigning ${Math.min(freeFiles.length, need.length)} leftover file(s) by track order`);
+      for (let i = 0; i < need.length && i < freeFiles.length; i++) linkInto(need[i], freeFiles[i]);
+    }
+  }
+
+  for (const want of unmatched) {
+    if (!db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id)?.file_path) {
+      log.debug(`#${dl.id} no file matched "${want.artist} - ${want.title}"`);
+    }
   }
 
   if (imported === 0) {

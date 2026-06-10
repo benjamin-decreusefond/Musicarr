@@ -53,19 +53,39 @@ export function Home({ nav }) {
 }
 
 /* --------------------------------------------------------------- Search */
+const SEARCH_HISTORY_KEY = 'musicarr:search:history';
+const loadHistory = () => { try { return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY)) || []; } catch { return []; } };
+
 export function Search({ nav }) {
   const [q, setQ] = useState('');
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [history, setHistory] = useState(loadHistory);
+
+  const remember = useCallback((term) => {
+    const t = term.trim();
+    if (!t) return;
+    setHistory(prev => {
+      const next = [t, ...prev.filter(x => x.toLowerCase() !== t.toLowerCase())].slice(0, 10);
+      localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+  const clearHistory = () => { localStorage.removeItem(SEARCH_HISTORY_KEY); setHistory([]); };
+
   useEffect(() => {
     if (!q.trim()) { setRes(null); return; }
     setLoading(true);
     const id = setTimeout(async () => {
-      try { setRes(await api.get(`/api/search?q=${encodeURIComponent(q)}`)); } catch {}
+      try {
+        const r = await api.get(`/api/search?q=${encodeURIComponent(q)}`);
+        setRes(r);
+        if ((r.artists.length || r.albums.length || r.tracks.length)) remember(q);
+      } catch {}
       setLoading(false);
     }, 350);
     return () => clearTimeout(id);
-  }, [q]);
+  }, [q, remember]);
 
   return (
     <div className="page">
@@ -74,6 +94,21 @@ export function Search({ nav }) {
         <input autoFocus value={q} onChange={e => setQ(e.target.value)}
           placeholder="Artists, albums, or tracks to find and download" />
       </div>
+      {!q.trim() && !!history.length && (
+        <section className="page-block">
+          <div className="recent-head">
+            <h2 className="row-title">Recent searches</h2>
+            <button className="btn-ghost sm" onClick={clearHistory}>Clear</button>
+          </div>
+          <div className="chip-row">
+            {history.map(term => (
+              <button key={term} className="chip" onClick={() => setQ(term)}>
+                <Icon name="search" size={14} /> {term}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {loading && <Loading />}
       {res && !loading && (
         <>
@@ -108,7 +143,7 @@ export function Search({ nav }) {
           )}
         </>
       )}
-      {!res && !loading && <div className="state faint">Search anything — if it's not downloaded yet, you can grab it.</div>}
+      {!res && !loading && !history.length && <div className="state faint">Search anything — if it's not downloaded yet, you can grab it.</div>}
     </div>
   );
 }
@@ -312,6 +347,56 @@ export function Downloads() {
         ))}
         {!items.length && <div className="state faint">No downloads yet.</div>}
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- Profile */
+export function Profile({ me }) {
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setMsg(null);
+    if (next.length < 4) return setMsg({ err: true, text: 'New password must be at least 4 characters' });
+    if (next !== confirm) return setMsg({ err: true, text: 'New passwords do not match' });
+    setBusy(true);
+    try {
+      await api.post('/api/auth/password', { current: cur, next });
+      setMsg({ err: false, text: 'Password changed.' });
+      setCur(''); setNext(''); setConfirm('');
+    } catch (e) { setMsg({ err: true, text: e.message }); }
+    setBusy(false);
+  };
+  return (
+    <div className="page">
+      <h1 className="page-h1">Profile</h1>
+      <section className="page-block settings-section">
+        <h2 className="row-title">Account</h2>
+        <div className="profile-id">
+          <div className="profile-avatar"><Icon name="user" size={28} /></div>
+          <div>
+            <div className="profile-name">{me.username}</div>
+            <div className="settings-fieldhint">{me.is_admin ? 'Administrator' : 'User'}</div>
+          </div>
+        </div>
+      </section>
+      <section className="page-block settings-section">
+        <h2 className="row-title">Change password</h2>
+        <form className="profile-form" onSubmit={submit}>
+          <input className="settings-input" type="password" placeholder="Current password"
+            autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} />
+          <input className="settings-input" type="password" placeholder="New password"
+            autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
+          <input className="settings-input" type="password" placeholder="Confirm new password"
+            autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+          <button className="btn-primary" disabled={busy || !cur || !next}>{busy ? 'Saving…' : 'Update password'}</button>
+        </form>
+        {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+      </section>
     </div>
   );
 }

@@ -1,9 +1,60 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, fmtTime, PlayerProvider, usePlayer } from './store.jsx';
+import { api, fmtTime, PlayerProvider, usePlayer, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Artist, Album, Library, Favorites, Playlist, Downloads, Admin, Settings } from './views.jsx';
+import { Home, Search, Artist, Album, Library, Favorites, Playlist, Downloads, Admin, Settings, Profile } from './views.jsx';
 import './styles.css';
+
+/* --------------------------------------------------------- EQ controls */
+function Equalizer() {
+  const p = usePlayer();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const active = p.eqEnabled && p.eqGains.some(g => g !== 0);
+  return (
+    <div className="eq-wrap" ref={ref}>
+      <button className="icon-btn" onClick={() => setOpen(o => !o)} title="Equalizer"
+        style={{ color: active ? 'var(--accent)' : undefined }}>
+        <Icon name="sliders" size={18} />
+      </button>
+      {open && (
+        <div className="eq-panel" onClick={e => e.stopPropagation()}>
+          <div className="eq-head">
+            <span>Equalizer</span>
+            <label className="eq-switch">
+              <input type="checkbox" checked={p.eqEnabled} onChange={e => p.setEqEnabled(e.target.checked)} /> On
+            </label>
+          </div>
+          <div className="eq-bands">
+            {EQ_LABELS.map((label, i) => (
+              <div className="eq-band" key={label}>
+                <input className="eq-slider" type="range" min={-12} max={12} step={1}
+                  value={p.eqGains[i]} disabled={!p.eqEnabled}
+                  onChange={e => p.setEqBand(i, parseInt(e.target.value, 10))}
+                  // vertical slider
+                  style={{ writingMode: 'vertical-lr', direction: 'rtl' }} />
+                <span className="eq-gain">{p.eqGains[i] > 0 ? `+${p.eqGains[i]}` : p.eqGains[i]}</span>
+                <span className="eq-freq">{label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="eq-presets">
+            <select value="" onChange={e => { if (e.target.value) p.applyPreset(e.target.value); }}>
+              <option value="">Presets…</option>
+              {Object.keys(EQ_PRESETS).map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <button className="btn-ghost sm" onClick={p.resetEq}>Reset</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ---------------------------------------------------------------- Login */
 function Login({ onLogin }) {
@@ -87,8 +138,10 @@ function Sidebar({ route, nav, me, onLogout }) {
         ))}
       </div>
       <div className="user-foot">
-        <Icon name="user" size={18} />
-        <span className="user-name">{me.username}</span>
+        <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title="Profile">
+          <Icon name="user" size={18} />
+          <span className="user-name">{me.username}</span>
+        </button>
         <button className="icon-btn" onClick={onLogout} title="Sign out"><Icon name="logout" size={18} /></button>
       </div>
     </aside>
@@ -128,6 +181,7 @@ function PlayerBar() {
         </div>
       </div>
       <div className="player-right">
+        <Equalizer />
         <Icon name="vol" size={18} />
         <input className="vol" type="range" min={0} max={1} step="0.01" value={p.volume}
           onChange={e => p.setVolume(parseFloat(e.target.value))} style={{ '--pct': `${p.volume * 100}%` }} />
@@ -205,6 +259,7 @@ function App() {
     case 'downloads': page = <Downloads />; break;
     case 'admin': page = <Admin me={me} />; break;
     case 'settings': page = <Settings />; break;
+    case 'profile': page = <Profile me={me} />; break;
     default: page = <Home nav={nav} />;
   }
 

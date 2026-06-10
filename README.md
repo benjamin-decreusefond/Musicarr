@@ -90,6 +90,25 @@ corresponding environment variable**, which only seeds the first-run default. So
 you can run with no Jackett/Transmission env vars at all and configure everything
 from the Settings page after first login.
 
+Each user can change their own password under **Profile** (click the username in
+the sidebar). There's a functional graphic **equalizer** in the player bar
+(Web Audio, with presets) and recent **search history** on the Search page.
+
+## CI / publishing the image
+
+A GitHub Actions workflow (`.github/workflows/docker.yml`) builds and pushes the
+image to Docker Hub as `paganim/musicarr:latest` (plus a commit-SHA tag) on every
+push to the default branch. It needs two repository secrets:
+
+- `DOCKERHUB_USERNAME` — the Docker Hub account (e.g. `paganim`)
+- `DOCKERHUB_TOKEN` — a Docker Hub access token with write scope
+
+## Caching
+
+Responses from the external APIs are cached in memory to avoid rate limits:
+Deezer metadata for 5 minutes and Jackett searches for 10 minutes, with
+concurrent identical requests de-duplicated into a single upstream call.
+
 ## Environment variables
 
 All of these are optional seeds for the first-run defaults; the ones marked
