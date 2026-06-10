@@ -2,10 +2,15 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 
+const envMusicDir = process.env.MUSIC_DIR || '/music';
+
 export const config = {
   port: parseInt(process.env.PORT || '8686', 10),
   dataDir: process.env.DATA_DIR || '/data',
-  musicDir: process.env.MUSIC_DIR || '/music',
+  // Root folder for the music library. Configurable from the UI (stored in
+  // the settings table); the MUSIC_DIR env var is only the initial default.
+  get musicDir() { return getSetting('root_folder') || envMusicDir; },
+  envMusicDir,
   downloadDir: process.env.DOWNLOAD_DIR || '/downloads',
   // Path of the download dir *as seen by Transmission*. Defaults to the same
   // path: mount the shared volume at the same mount point in both pods.
@@ -23,7 +28,6 @@ export const config = {
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });
-fs.mkdirSync(config.musicDir, { recursive: true });
 fs.mkdirSync(config.downloadDir, { recursive: true });
 
 export const db = new Database(path.join(config.dataDir, 'tonearr.db'));
@@ -31,6 +35,11 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
@@ -101,6 +110,19 @@ CREATE TABLE IF NOT EXISTS playlist_items (
 CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
 `);
+
+export function getSetting(key) {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+}
+
+export function setSetting(key, value) {
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, value);
+}
+
+fs.mkdirSync(config.musicDir, { recursive: true });
 
 /** Insert or refresh a track's catalog metadata without touching file_path. */
 export function upsertTrack(t) {

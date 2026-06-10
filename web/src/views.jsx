@@ -312,6 +312,54 @@ export function Downloads() {
   );
 }
 
+/* ------------------------------------------------------------- Settings */
+export function Settings() {
+  const [folder, setFolder] = useState('');
+  const [info, setInfo] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get('/api/settings')
+      .then(s => { setInfo(s); setFolder(s.root_folder); })
+      .catch(e => setMsg({ err: true, text: e.message }));
+  }, []);
+  const save = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const s = await api.put('/api/settings', { root_folder: folder });
+      setInfo(s); setFolder(s.root_folder);
+      setMsg({ err: false, text: 'Root folder saved. New downloads will be imported there.' });
+    } catch (e) {
+      setMsg({ err: true, text: e.message });
+    }
+    setBusy(false);
+  };
+  if (!info && !msg) return <Loading />;
+  return (
+    <div className="page">
+      <h1 className="page-h1">Settings</h1>
+      <section className="page-block">
+        <h2 className="row-title">Media management</h2>
+        <p className="settings-hint">
+          Root folder where downloaded music is imported (organized as Artist/Album/Track).
+          Existing files are not moved when you change it.
+        </p>
+        <div className="admin-form">
+          <input className="settings-path" placeholder="/music" value={folder} spellCheck={false}
+            onChange={e => setFolder(e.target.value)} onKeyDown={e => e.key === 'Enter' && save()} />
+          <button className="btn-primary" onClick={save} disabled={busy || !folder.trim()}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        {info?.root_folder_is_default && (
+          <p className="settings-hint">Currently using the default from the MUSIC_DIR environment variable ({info.root_folder_default}).</p>
+        )}
+        {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+      </section>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------- Admin */
 export function Admin({ me }) {
   const [users, setUsers] = useState([]);

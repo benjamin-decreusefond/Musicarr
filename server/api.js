@@ -1,12 +1,39 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { Router } from 'express';
-import { db } from './db.js';
-import { requireAuth } from './auth.js';
+import { db, config, getSetting, setSetting } from './db.js';
+import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet } from './sources.js';
 import { queueDownload } from './downloader.js';
 
 export const api = Router();
 api.use(requireAuth);
+
+/* -------------------------------------------------------------- Settings */
+// Root folder works like Radarr/Sonarr: set from the UI, stored in the DB.
+// The MUSIC_DIR env var only provides the initial default.
+api.get('/settings', requireAdmin, (req, res) => {
+  res.json({
+    root_folder: config.musicDir,
+    root_folder_is_default: getSetting('root_folder') === null,
+    root_folder_default: config.envMusicDir,
+  });
+});
+
+api.put('/settings', requireAdmin, (req, res) => {
+  const raw = (req.body?.root_folder || '').toString().trim();
+  if (!raw) return res.status(400).json({ error: 'root_folder is required' });
+  if (!path.isAbsolute(raw)) return res.status(400).json({ error: 'Root folder must be an absolute path (e.g. /music)' });
+  const folder = path.resolve(raw);
+  try {
+    fs.mkdirSync(folder, { recursive: true });
+    fs.accessSync(folder, fs.constants.W_OK);
+  } catch (e) {
+    return res.status(400).json({ error: `Folder is not writable: ${e.message}` });
+  }
+  setSetting('root_folder', folder);
+  res.json({ root_folder: folder, root_folder_is_default: false, root_folder_default: config.envMusicDir });
+});
 
 /* ----------------------------------------------------------- Library view */
 // A track is "available" to a user if its file exists on disk. Ownership is

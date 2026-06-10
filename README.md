@@ -61,13 +61,18 @@ differ between the two, set both variables so the mapping is correct.
 `/music` is where the permanent library lives and should be a persistent
 volume. `/data` holds the SQLite database and must also persist.
 
+The library root folder can also be changed from the UI (admin only, under
+**Settings → Media management**), like Radarr/Sonarr root folders. A value set
+there is stored in the database and takes precedence over `MUSIC_DIR`, which
+only provides the initial default.
+
 ## Environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8686` | HTTP port |
 | `DATA_DIR` | `/data` | SQLite database location (persist this) |
-| `MUSIC_DIR` | `/music` | Permanent audio library (persist this) |
+| `MUSIC_DIR` | `/music` | Default root folder for the audio library (persist this) |
 | `DOWNLOAD_DIR` | `/downloads` | Where Tonearr reads completed downloads |
 | `TRANSMISSION_DOWNLOAD_DIR` | = `DOWNLOAD_DIR` | Download path as Transmission sees it |
 | `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) |
