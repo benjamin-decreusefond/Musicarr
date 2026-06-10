@@ -1,0 +1,348 @@
+import { useState, useEffect, useCallback } from 'react';
+import { api, usePlayer } from './store.jsx';
+import { Icon, Cover, TrackRow, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist } from './ui.jsx';
+
+function useAsync(fn, deps) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setErr(null);
+    fn().then(d => { if (alive) { setData(d); setLoading(false); } })
+        .catch(e => { if (alive) { setErr(e.message); setLoading(false); } });
+    return () => { alive = false; };
+  }, deps);
+  return { data, err, loading, setData };
+}
+
+const Loading = () => <div className="state"><Icon name="spinner" size={28} /></div>;
+const ErrState = ({ msg }) => <div className="state err">{msg}</div>;
+
+/* ----------------------------------------------------------------- Home */
+export function Home({ nav }) {
+  const { data, err, loading } = useAsync(() => api.get('/api/home'), []);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const hour = new Date().getHours();
+  const greet = hour < 5 ? 'Late night' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  return (
+    <div className="page">
+      <h1 className="page-h1">{greet}</h1>
+      <CardRow title="Trending artists">
+        {data.artists.map(a => (
+          <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+            onClick={() => nav({ view: 'artist', id: a.id })} />
+        ))}
+      </CardRow>
+      <CardRow title="Popular albums">
+        {data.albums.map(a => (
+          <TileCard key={a.id} cover={a.cover} title={a.title} sub={a.artist}
+            onClick={() => nav({ view: 'album', id: a.id })}
+            actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+        ))}
+      </CardRow>
+      <section className="page-block">
+        <h2 className="row-title">Charts</h2>
+        <div className="track-list">
+          {data.tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={data.tracks} showAlbum />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- Search */
+export function Search({ nav }) {
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!q.trim()) { setRes(null); return; }
+    setLoading(true);
+    const id = setTimeout(async () => {
+      try { setRes(await api.get(`/api/search?q=${encodeURIComponent(q)}`)); } catch {}
+      setLoading(false);
+    }, 350);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  return (
+    <div className="page">
+      <div className="search-box">
+        <Icon name="search" size={20} />
+        <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+          placeholder="Artists, albums, or tracks to find and download" />
+      </div>
+      {loading && <Loading />}
+      {res && !loading && (
+        <>
+          {!!res.artists.length && (
+            <CardRow title="Artists">
+              {res.artists.map(a => (
+                <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+                  onClick={() => nav({ view: 'artist', id: a.id })} />
+              ))}
+            </CardRow>
+          )}
+          {!!res.albums.length && (
+            <CardRow title="Albums">
+              {res.albums.map(a => (
+                <TileCard key={a.id} cover={a.cover} title={a.title}
+                  sub={`${a.artist} · ${a.nb_tracks} tracks`} badge={a.available ? 'In library' : null}
+                  onClick={() => nav({ view: 'album', id: a.id })}
+                  actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+              ))}
+            </CardRow>
+          )}
+          {!!res.tracks.length && (
+            <section className="page-block">
+              <h2 className="row-title">Tracks</h2>
+              <div className="track-list">
+                {res.tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={res.tracks} showAlbum />)}
+              </div>
+            </section>
+          )}
+          {!res.artists.length && !res.albums.length && !res.tracks.length && (
+            <div className="state">No results for "{q}"</div>
+          )}
+        </>
+      )}
+      {!res && !loading && <div className="state faint">Search anything — if it's not downloaded yet, you can grab it.</div>}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- Artist */
+export function Artist({ id, nav }) {
+  const { data, err, loading } = useAsync(() => api.get(`/api/artist/${id}`), [id]);
+  const player = usePlayer();
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const { artist, top, albums, related } = data;
+  const playable = top.filter(t => t.available);
+  return (
+    <div className="page">
+      <header className="hero">
+        <Cover src={artist.picture} size={200} round alt={artist.name} />
+        <div className="hero-meta">
+          <span className="hero-kind">Artist</span>
+          <h1 className="hero-title">{artist.name}</h1>
+          <span className="hero-sub">{artist.nb_fan?.toLocaleString()} fans</span>
+          <div className="hero-actions">
+            <button className="btn-primary" disabled={!playable.length}
+              onClick={() => player.playList(top, 0)}>
+              <Icon name="play" size={18} fill="currentColor" /> Play
+            </button>
+          </div>
+        </div>
+      </header>
+      <section className="page-block">
+        <h2 className="row-title">Popular</h2>
+        <div className="track-list">
+          {top.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={top} />)}
+        </div>
+      </section>
+      <CardRow title="Discography">
+        {albums.map(a => (
+          <TileCard key={a.id} cover={a.cover} title={a.title}
+            sub={`${a.record_type === 'single' ? 'Single' : 'Album'} · ${(a.release_date || '').slice(0, 4)}`}
+            badge={a.available ? 'In library' : null}
+            onClick={() => nav({ view: 'album', id: a.id })}
+            actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+        ))}
+      </CardRow>
+      {!!related.length && (
+        <CardRow title="Fans also like">
+          {related.map(a => (
+            <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+              onClick={() => nav({ view: 'artist', id: a.id })} />
+          ))}
+        </CardRow>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- Album */
+export function Album({ id, nav }) {
+  const { data, err, loading } = useAsync(() => api.get(`/api/album/${id}`), [id]);
+  const player = usePlayer();
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const tracks = data.tracks.map(t => ({ ...t, cover: data.cover, album: data.title }));
+  const anyAvailable = tracks.some(t => t.available);
+  return (
+    <div className="page">
+      <header className="hero">
+        <Cover src={data.cover} size={200} alt={data.title} />
+        <div className="hero-meta">
+          <span className="hero-kind">Album</span>
+          <h1 className="hero-title">{data.title}</h1>
+          <span className="hero-sub link" onClick={() => nav({ view: 'artist', id: data.artist_id })}>{data.artist}</span>
+          <span className="hero-sub faint">{(data.release_date || '').slice(0, 4)} · {data.nb_tracks} tracks</span>
+          <div className="hero-actions">
+            <button className="btn-primary" disabled={!anyAvailable} onClick={() => player.playList(tracks, 0)}>
+              <Icon name="play" size={18} fill="currentColor" /> Play
+            </button>
+            <button className="btn-ghost" onClick={async (e) => {
+              const btn = e.currentTarget; btn.disabled = true;
+              try { await api.post('/api/download', { kind: 'album', deezer_id: data.id }); btn.textContent = 'Queued ✓'; } catch {}
+            }}>
+              <Icon name="download" size={18} /> Download album
+            </button>
+          </div>
+        </div>
+      </header>
+      <section className="page-block">
+        <div className="track-list">
+          {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- Library */
+export function Library() {
+  const { data, err, loading } = useAsync(() => api.get('/api/library'), []);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  return (
+    <div className="page">
+      <h1 className="page-h1">Your library</h1>
+      {data.length ? (
+        <div className="track-list">
+          {data.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={data} showAlbum />)}
+        </div>
+      ) : <div className="state faint">Nothing downloaded yet. Search for music and hit the download button.</div>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Favorites */
+export function Favorites() {
+  const { data, err, loading } = useAsync(() => api.get('/api/favorites'), []);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const tracks = (data || []).map(t => ({ ...t, available: !!t.file_path, favorite: true }));
+  return (
+    <div className="page">
+      <header className="hero">
+        <div className="fav-art"><Icon name="heart" size={72} fill="var(--accent-ink)" /></div>
+        <div className="hero-meta">
+          <span className="hero-kind">Playlist</span>
+          <h1 className="hero-title">Liked songs</h1>
+          <span className="hero-sub faint">{tracks.length} tracks</span>
+        </div>
+      </header>
+      <section className="page-block">
+        <div className="track-list">
+          {tracks.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={tracks} showAlbum />)}
+          {!tracks.length && <div className="state faint">Tap the heart on any track to save it here.</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- Playlist */
+export function Playlist({ id }) {
+  const { data, err, loading, setData } = useAsync(() => api.get(`/api/playlists/${id}`), [id]);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const tracks = (data.tracks || []).map(t => ({ ...t, available: !!t.file_path }));
+  const remove = async (trackId) => {
+    await api.del(`/api/playlists/${id}/tracks/${trackId}`);
+    setData({ ...data, tracks: data.tracks.filter(t => t.deezer_id !== trackId) });
+  };
+  return (
+    <div className="page">
+      <header className="hero">
+        <Cover src={tracks[0]?.cover} size={200} alt={data.name} />
+        <div className="hero-meta">
+          <span className="hero-kind">Playlist</span>
+          <h1 className="hero-title">{data.name}</h1>
+          <span className="hero-sub faint">{tracks.length} tracks</span>
+        </div>
+      </header>
+      <section className="page-block">
+        <div className="track-list">
+          {tracks.map((t, i) => (
+            <div key={t.deezer_id} className="pl-row">
+              <TrackRow track={t} i={i} tracks={tracks} showAlbum />
+              <button className="icon-btn pl-del" onClick={() => remove(t.deezer_id)} title="Remove"><Icon name="close" size={16} /></button>
+            </div>
+          ))}
+          {!tracks.length && <div className="state faint">This playlist is empty.</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Downloads */
+export function Downloads() {
+  const [items, setItems] = useState([]);
+  const load = useCallback(async () => { try { setItems(await api.get('/api/downloads')); } catch {} }, []);
+  useEffect(() => { load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
+  const remove = async (id) => { await api.del(`/api/downloads/${id}`); load(); };
+  const statusLabel = { searching: 'Searching', downloading: 'Downloading', importing: 'Importing', done: 'Done', not_found: 'Not found', error: 'Error' };
+  return (
+    <div className="page">
+      <h1 className="page-h1">Downloads</h1>
+      <div className="dl-list">
+        {items.map(d => (
+          <div key={d.id} className="dl-item">
+            <Cover src={d.cover} size={52} />
+            <div className="dl-main">
+              <div className="dl-label">{d.label}</div>
+              <div className="dl-detail">{d.detail || statusLabel[d.status]}</div>
+              {d.status === 'downloading' && (
+                <div className="dl-bar"><div className="dl-bar-fill" style={{ width: `${Math.round(d.progress * 100)}%` }} /></div>
+              )}
+            </div>
+            <span className={`dl-status s-${d.status}`}>{statusLabel[d.status] || d.status}</span>
+            <button className="icon-btn" onClick={() => remove(d.id)} title="Dismiss"><Icon name="trash" size={16} /></button>
+          </div>
+        ))}
+        {!items.length && <div className="state faint">No downloads yet.</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- Admin */
+export function Admin({ me }) {
+  const [users, setUsers] = useState([]);
+  const [form, setForm] = useState({ username: '', password: '', is_admin: false });
+  const load = async () => { try { setUsers(await api.get('/api/users')); } catch {} };
+  useEffect(() => { load(); }, []);
+  const create = async () => {
+    if (!form.username || !form.password) return;
+    try { await api.post('/api/users', form); setForm({ username: '', password: '', is_admin: false }); load(); }
+    catch (e) { alert(e.message); }
+  };
+  const del = async (id) => { if (confirm('Delete this user?')) { await api.del(`/api/users/${id}`); load(); } };
+  return (
+    <div className="page">
+      <h1 className="page-h1">Users</h1>
+      <div className="admin-form">
+        <input placeholder="Username" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} />
+        <input placeholder="Password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+        <label className="chk"><input type="checkbox" checked={form.is_admin} onChange={e => setForm({ ...form, is_admin: e.target.checked })} /> Admin</label>
+        <button className="btn-primary" onClick={create}>Add user</button>
+      </div>
+      <div className="admin-list">
+        {users.map(u => (
+          <div key={u.id} className="admin-row">
+            <Icon name="user" size={18} />
+            <span className="admin-name">{u.username}</span>
+            {!!u.is_admin && <span className="badge accent">Admin</span>}
+            {u.id !== me.id && <button className="icon-btn" onClick={() => del(u.id)}><Icon name="trash" size={16} /></button>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

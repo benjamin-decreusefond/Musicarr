@@ -1,0 +1,16 @@
+{
+  "name": "tonearr",
+  "version": "1.0.0",
+  "description": "Self-hosted Spotify-like music app backed by Jackett + Transmission",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2",
+    "music-metadata": "^10.8.2"
+  }
+}

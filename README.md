@@ -1,179 +1,104 @@
-# Musicarr
+# Tonearr
 
-A self-hosted music platform that provides a Spotify-like experience by combining music playback from **Jellyfin**, music acquisition through **Lidarr**, and music discovery through **MusicBrainz**.
+A self-hosted, Spotify-style music app that browses metadata from **Deezer**
+(free, no API key), finds releases through **Jackett**, and downloads them with
+**Transmission**. Per-user playlists, favorites, and accounts; a single shared
+audio library on disk with file deduplication; built-in streaming with HTTP
+range support. State lives in **SQLite** — no Postgres required.
 
-## Features
+It does *not* use Lidarr: Lidarr's artist/album model makes single-track
+downloads awkward, so Tonearr talks to Jackett directly and decides per-request
+whether to grab a whole album or a single track.
 
-- 🎵 **Stream Music** – Play music directly from your Jellyfin library
-- 🔍 **Unified Search** – Search across your library and MusicBrainz simultaneously
-- 📥 **Request Music** – Request new music downloads through Lidarr
-- 📋 **Playlists** – Create and manage playlists synced with Jellyfin
-- 🎨 **Modern UI** – Dark-themed, Spotify-inspired interface
-- 🔐 **Local Auth** – Authenticate using your Musicarr admin account
+## How it works
 
-## Architecture
+1. You search. The UI shows artists, albums and tracks from Deezer with art.
+2. You hit **download** on an album or a single track.
+3. The server queries Jackett (Torznab), scores the results (artist/title match,
+   FLAC/320 bonus, seeders, discography penalty, dead-torrent rejection) and
+   picks the best release.
+4. It hands the magnet/torrent to Transmission into a per-request subfolder.
+5. On completion, audio files are matched to the requested Deezer tracks (by
+   track number, then fuzzy title) and copied into `/music/Artist/Album/`.
+   For a single-track request that lands inside a full-album torrent, only the
+   one matching file is imported.
+6. The track is now streamable by **every** user — a file is only ever stored
+   once. Favorites and playlists referencing it are per-user.
 
-```
-┌─────────────────────────────────────────────┐
-│              React Frontend                 │
-│         (TypeScript + MUI + Vite)           │
-└─────────────────┬───────────────────────────┘
-                  │ REST API
-┌─────────────────▼───────────────────────────┐
-│           ASP.NET Core 9 API                │
-├─────────────────────────────────────────────┤
-│  Application Layer (Services, DTOs)         │
-├─────────────────────────────────────────────┤
-│  Domain Layer (Entities, Interfaces)        │
-├─────────────────────────────────────────────┤
-│  Infrastructure Layer (Adapters)            │
-│  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
-│  │ Jellyfin │ │  Lidarr  │ │MusicBrainz │   │
-│  │ Adapter  │ │ Adapter  │ │  Adapter   │   │
-│  └──────────┘ └──────────┘ └────────────┘   │
-└─────────────────────────────────────────────┘
-```
-
-## Tech Stack
-
-### Backend
-- ASP.NET Core 9 / C#
-- Clean Architecture
-- Entity Framework Core + SQLite
-- REST API with OpenAPI/Swagger
-
-### Frontend
-- React 18 + TypeScript
-- Vite
-- Material UI
-- React Router
-
-### Infrastructure
-- Docker + Docker Compose
-- Kubernetes manifests
-- Helm chart
-
-## Quick Start
-
-### Prerequisites
-- Docker & Docker Compose
-- Jellyfin server (accessible)
-- Lidarr instance (optional, for music acquisition)
-
-### Running with Docker Compose
+## Build the image
 
 ```bash
-# Clone the repository
-git clone https://github.com/BenjaminDecreusefond/Musicarr.git
-cd Musicarr
-
-# Start all services
-docker-compose up -d
+docker build -t tonearr:latest .
 ```
 
-The application will be available at `http://localhost:5000`. On first launch, you will be prompted to **create an admin account**. After logging in, you can configure Jellyfin and Lidarr connections from the **Settings** page.
+The build is multi-stage: it bundles the React frontend, compiles
+`better-sqlite3`, and produces a runtime image that runs as the non-root `node`
+user and exposes **port 8686**.
 
-### Development Setup
-
-#### Backend
-```bash
-# Restore packages
-dotnet restore
-
-# Run the API
-cd src/Musicarr.Api
-dotnet run
-```
-
-#### Frontend
-```bash
-cd src/Musicarr.Web
-npm install
-npm run dev
-```
-
-The frontend dev server runs at `http://localhost:5173` with API proxy to `http://localhost:5000`.
-
-## Configuration
-
-Musicarr uses a **config file** stored in a data directory, similar to how Sonarr and Radarr manage their settings. On first launch, Musicarr prompts you to create an admin account. Jellyfin and Lidarr connections can be configured later from the **Settings** page in the web UI.
-
-### First Launch
-
-1. Navigate to `http://localhost:5000` (or your configured URL)
-2. Create your admin account (username + password)
-3. Log in and optionally configure Jellyfin/Lidarr from **Settings**
-
-### Data Directory
-
-The data directory defaults to `<app>/data/` and can be overridden with the `MUSICARR_DATA_DIR` environment variable:
+## Run
 
 ```bash
-export MUSICARR_DATA_DIR=/path/to/your/config
+docker run -d --name tonearr -p 8686:8686 \
+  -e JACKETT_URL=http://jackett:9117 \
+  -e JACKETT_API_KEY=your_jackett_api_key \
+  -e TRANSMISSION_URL=http://transmission:9091/transmission/rpc \
+  -e ADMIN_PASSWORD=change-me \
+  -v tonearr-data:/data \
+  -v /path/to/music:/music \
+  -v /path/to/downloads:/downloads \
+  tonearr:latest
 ```
 
-The data directory stores:
-- `config.json` – Jellyfin, Lidarr, and MusicDiscovery settings
-- `jwt-secret.key` – Auto-generated JWT signing secret (do not share)
-- `musicarr.db` – SQLite database (unless a custom connection string is set)
+### The shared-download-path requirement
 
-### Updating Settings
+Tonearr and Transmission must agree on where downloads land. Tonearr reads the
+finished files from `DOWNLOAD_DIR`; it tells Transmission to save them under
+`TRANSMISSION_DOWNLOAD_DIR`. **Mount the same physical volume at the same path
+in both containers** (e.g. `/downloads`) and you can leave
+`TRANSMISSION_DOWNLOAD_DIR` unset (it defaults to `DOWNLOAD_DIR`). If the paths
+differ between the two, set both variables so the mapping is correct.
 
-Settings can be updated at any time via **Settings** in the sidebar of the web UI. Changes take effect immediately.
+`/music` is where the permanent library lives and should be a persistent
+volume. `/data` holds the SQLite database and must also persist.
 
-### Environment Variables (Optional Overrides)
+## Environment variables
 
-You can still use environment variables to pre-seed the configuration (they take lower priority than `config.json`):
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8686` | HTTP port |
+| `DATA_DIR` | `/data` | SQLite database location (persist this) |
+| `MUSIC_DIR` | `/music` | Permanent audio library (persist this) |
+| `DOWNLOAD_DIR` | `/downloads` | Where Tonearr reads completed downloads |
+| `TRANSMISSION_DOWNLOAD_DIR` | = `DOWNLOAD_DIR` | Download path as Transmission sees it |
+| `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) |
+| `JACKETT_API_KEY` | — | From Jackett's dashboard |
+| `JACKETT_INDEXER` | `all` | Indexer id, or `all` to query every configured one |
+| `SEARCH_CATEGORIES` | `3000` | Torznab categories (3000 = Audio); comma-separated |
+| `TRANSMISSION_URL` | `http://transmission:9091/transmission/rpc` | RPC endpoint |
+| `TRANSMISSION_USER` | — | RPC username (if auth enabled) |
+| `TRANSMISSION_PASS` | — | RPC password |
+| `ADMIN_USERNAME` | `admin` | Created on first boot only |
+| `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
+| `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ConnectionStrings__DefaultConnection` | SQLite connection string | `Data Source=musicarr.db` |
-| `Jellyfin__BaseUrl` | Jellyfin server URL | `http://localhost:8096` |
-| `Jellyfin__ApiKey` | Jellyfin API key | - |
-| `Lidarr__BaseUrl` | Lidarr server URL | `http://localhost:8686` |
-| `Lidarr__ApiKey` | Lidarr API key | - |
-| `MusicDiscovery__Provider` | Discovery provider | `MusicBrainz` |
-| `MUSICARR_DATA_DIR` | Path to data/config directory | `<app>/data/` |
+## First login
 
-## API Documentation
+On first boot an admin account is created from `ADMIN_USERNAME` /
+`ADMIN_PASSWORD`. Sign in, then go to **Users** (admin only) to add more
+accounts. Each user gets their own playlists and liked songs but shares the
+downloaded audio library.
 
-When running in development mode, Swagger UI is available at `/swagger`.
+## Ports
 
-### Key Endpoints
+- **8686** — HTTP (UI + API + audio streaming). Put it behind your own
+  ingress/TLS.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/auth/login` | Authenticate with Jellyfin |
-| GET | `/api/settings` | Get current settings (API keys masked) |
-| PUT | `/api/settings` | Update settings and save to config file |
-| GET | `/api/settings/status` | Returns `{ isConfigured: bool }` |
-| GET | `/api/catalog/artists` | List artists from library |
-| GET | `/api/catalog/albums` | List albums from library |
-| GET | `/api/catalog/tracks` | List tracks from library |
-| GET | `/api/search?q=` | Unified search |
-| GET | `/api/playlists` | List playlists |
-| POST | `/api/playlists` | Create playlist |
-| POST | `/api/acquisition/request` | Request music download |
-| GET | `/api/playback/stream/{id}` | Get stream URL |
-| GET | `/health` | Health check |
-| GET | `/health/ready` | Readiness probe |
-| GET | `/health/live` | Liveness probe |
+## Notes & limits
 
-## Project Structure
-
-```
-Musicarr/
-├── src/
-│   ├── Musicarr.Domain/          # Entities, interfaces, enums
-│   ├── Musicarr.Application/     # Services, DTOs, business logic
-│   ├── Musicarr.Infrastructure/  # External service adapters, persistence
-│   ├── Musicarr.Api/             # REST API controllers, middleware
-│   └── Musicarr.Web/             # React frontend
-├── Dockerfile
-├── docker-compose.yml
-└── Musicarr.sln
-```
-
-## License
-
-MIT
+- Authentication is cookie-session based (HttpOnly, SameSite=Lax). Serve over
+  HTTPS in production.
+- Deezer is used purely for metadata and discovery; no audio comes from Deezer.
+- Streaming reads files directly from `/music` with range requests, so seeking
+  works in the browser for FLAC/MP3/M4A/OGG/Opus/WAV/AAC.
+- The Transmission client must allow RPC access from the Tonearr container
+  (`rpc-whitelist` / `rpc-host-whitelist`).

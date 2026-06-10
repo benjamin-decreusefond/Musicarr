@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Tonearr</title>
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --bg-elev: #141620;
+      --bg-elev-2: #1c1f2e;
+      --surface-hover: #232739;
+      --text: #f4f5fb;
+      --text-dim: #9aa0b4;
+      --text-faint: #5d6275;
+      --accent: #c9f24d;        /* acid lime — the signature */
+      --accent-ink: #11140a;
+      --line: #242838;
+      --danger: #ff5d6c;
+      --radius: 10px;
+      --radius-lg: 16px;
+      --sidebar-w: 232px;
+      --player-h: 84px;
+      --font-display: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+      --font: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+    input { font-family: inherit; }
+    a { color: inherit; text-decoration: none; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: #2b3043; border-radius: 8px; border: 2px solid var(--bg); }
+    ::-webkit-scrollbar-thumb:hover { background: #3a4159; }
+    ::selection { background: var(--accent); color: var(--accent-ink); }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
