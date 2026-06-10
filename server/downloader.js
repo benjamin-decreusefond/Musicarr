@@ -58,7 +58,6 @@ async function startSearch(downloadId) {
     const albumTitle = tr.album?.title || '';
     const row = trackRowFromDeezer(tr);
     upsertTrack(row);
-    wantedTracks = [row];
 
     // If the file already exists from a previous download, finish instantly.
     const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(dl.deezer_id);
@@ -66,9 +65,23 @@ async function startSearch(downloadId) {
       return setStatus(downloadId, 'done', 'Already in library', { progress: 1 });
     }
 
+    // Releases are usually full albums, so plan for the whole tracklist: any
+    // sibling track that comes along in the download gets imported too, and a
+    // later request for one of them completes instantly from the library.
+    wantedTracks = [row];
+    if (tr.album?.id) {
+      try {
+        const album = await deezerGet(`album/${tr.album.id}`);
+        const all = (album.tracks?.data || []).map(t => trackRowFromDeezer(t, album));
+        if (all.length) { all.forEach(upsertTrack); wantedTracks = all; }
+      } catch (e) {
+        log.warn(`#${downloadId} could not fetch album ${tr.album.id} tracklist, importing the single track only: ${e.message}`);
+      }
+    }
+
     // Try the track itself first, but trackers almost always carry the full
     // album rather than single tracks — so fall back to the track's album and
-    // let the import step keep just the one file we want.
+    // let the import step keep what it can match.
     attempts = [{ query: `${artist} ${title}`, matchTitle: title }];
     if (albumTitle) {
       attempts.push({ query: `${artist} ${albumTitle}`, matchTitle: albumTitle });
@@ -94,7 +107,7 @@ async function startSearch(downloadId) {
 
   // 3. Hand off to Transmission.
   const link = best.result.MagnetUri || best.result.Link;
-  const subdir = `musicarr-${downloadId}`;
+  const subdir = subdirFor(dl);
   log.info(`#${downloadId} best release (score ${Math.round(best.score)}): ${best.result.Title}`);
   setStatus(downloadId, 'downloading', `Found: ${best.result.Title}`, {
     release_title: best.result.Title, progress: 0,
@@ -103,12 +116,23 @@ async function startSearch(downloadId) {
   log.info(`#${downloadId} handed to Transmission, hash ${t.hashString}, dir ${config.downloadDir}/${subdir}`);
   setStatus(downloadId, 'downloading', `Found: ${best.result.Title}`, { torrent_hash: t.hashString });
 
-  // Remember which tracks this download is responsible for importing.
-  pendingImports.set(downloadId, { wantedTracks, subdir, kind: dl.kind, deezerId: dl.deezer_id });
+  // Remember which tracks this download is responsible for importing. For a
+  // track download `requiredId` is the song the user actually asked for; the
+  // rest of the album is imported opportunistically.
+  pendingImports.set(downloadId, {
+    wantedTracks, subdir, kind: dl.kind, deezerId: dl.deezer_id,
+    requiredId: dl.kind === 'track' ? dl.deezer_id : null,
+  });
 }
 
 // downloadId -> import plan, kept in memory while torrents are active.
 const pendingImports = new Map();
+
+/** Download folder name: readable in Transmission's UI, and deterministic
+ *  from the DB row so the import step can find it again after a reboot. */
+function subdirFor(dl) {
+  return `musicarr-${dl.id}-${safeName(dl.label)}`;
+}
 
 /* ------------------------------------------------------------ Poll loop */
 export function startPoller() {
@@ -140,8 +164,8 @@ async function tick() {
     // Download finished -> import.
     setStatus(dl.id, 'importing', 'Importing files', { progress: 1 });
     try {
-      await importDownload(dl, t);
-      setStatus(dl.id, 'done', 'Added to your library', { progress: 1 });
+      const n = await importDownload(dl, t);
+      setStatus(dl.id, 'done', n > 1 ? `Imported ${n} tracks to your library` : 'Added to your library', { progress: 1 });
     } catch (e) {
       setStatus(dl.id, 'error', String(e.message || e));
     }
@@ -168,7 +192,13 @@ const normTitle = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300
 
 async function importDownload(dl, torrent) {
   const plan = pendingImports.get(dl.id);
-  const srcDir = path.join(config.downloadDir, `musicarr-${dl.id}`);
+  // Downloads queued before the descriptive folder names landed live in the
+  // bare `musicarr-<id>` directory; fall back to it.
+  let srcDir = path.join(config.downloadDir, subdirFor(dl));
+  if (!fs.existsSync(srcDir)) {
+    const legacy = path.join(config.downloadDir, `musicarr-${dl.id}`);
+    if (fs.existsSync(legacy)) srcDir = legacy;
+  }
   log.info(`#${dl.id} importing from ${srcDir}`);
   const files = walkAudio(srcDir);
   log.info(`#${dl.id} found ${files.length} audio file(s) in download`);
@@ -208,8 +238,12 @@ async function importDownload(dl, torrent) {
       const wt = normTitle(want.title);
       match = fileInfos.find(fi => !fi.used && wt && (normTitle(fi.title).includes(wt) || normTitle(fi.base).includes(wt)));
     }
-    // Single-track download with a single audio file: take it.
-    if (!match && wanted.length === 1 && fileInfos.length === 1) match = fileInfos[0];
+    // A release with a single audio file: assume it's the song the user asked
+    // for, even when tag/filename matching failed.
+    if (!match && fileInfos.length === 1 && !fileInfos[0].used
+        && (wanted.length === 1 || want.deezer_id === plan?.requiredId)) {
+      match = fileInfos[0];
+    }
     if (!match) { log.debug(`#${dl.id} no file matched "${want.artist} - ${want.title}"`); continue; }
     match.used = true;
 
@@ -242,7 +276,16 @@ async function importDownload(dl, torrent) {
   if (imported === 0) {
     throw new Error(`Downloaded ${fileInfos.length} file(s) but none matched the ${wanted.length} requested track(s)`);
   }
+  // For a track download, sibling album tracks are a bonus — but the download
+  // only counts as done if the song the user asked for actually made it in.
+  if (plan?.requiredId) {
+    const got = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(plan.requiredId);
+    if (!got?.file_path || !fs.existsSync(got.file_path)) {
+      throw new Error(`Imported ${imported} other track(s) from the release, but the requested song was not in it`);
+    }
+  }
   log.info(`#${dl.id} import complete: ${imported}/${wanted.length} track(s)`);
+  return imported;
 }
 
 /** Reconcile the catalog with what's actually on disk in the root folder so the
@@ -298,9 +341,21 @@ async function rebuildPlan(dl) {
     const album = await deezerGet(`album/${dl.deezer_id}`);
     wantedTracks = (album.tracks?.data || []).map(t => trackRowFromDeezer(t, album));
   } else {
+    // Same as startSearch: plan for the whole album so sibling tracks in the
+    // downloaded release get imported too.
     const tr = await deezerGet(`track/${dl.deezer_id}`);
     wantedTracks = [trackRowFromDeezer(tr)];
+    if (tr.album?.id) {
+      try {
+        const album = await deezerGet(`album/${tr.album.id}`);
+        const all = (album.tracks?.data || []).map(t => trackRowFromDeezer(t, album));
+        if (all.length) wantedTracks = all;
+      } catch { /* single track plan is still fine */ }
+    }
   }
   wantedTracks.forEach(upsertTrack);
-  pendingImports.set(dl.id, { wantedTracks, subdir: `musicarr-${dl.id}`, kind: dl.kind, deezerId: dl.deezer_id });
+  pendingImports.set(dl.id, {
+    wantedTracks, subdir: subdirFor(dl), kind: dl.kind, deezerId: dl.deezer_id,
+    requiredId: dl.kind === 'track' ? dl.deezer_id : null,
+  });
 }
