@@ -4,7 +4,7 @@ async function req(method, url, body) {
   const opts = { method, headers: {}, credentials: 'same-origin' };
   if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const r = await fetch(url, opts);
-  if (r.status === 401) { window.dispatchEvent(new Event('tonearr:unauth')); throw new Error('Unauthorized'); }
+  if (r.status === 401) { window.dispatchEvent(new Event('musicarr:unauth')); throw new Error('Unauthorized'); }
   const txt = await r.text();
   const data = txt ? JSON.parse(txt) : null;
   if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);

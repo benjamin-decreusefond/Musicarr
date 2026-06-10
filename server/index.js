@@ -29,6 +29,6 @@ resumeOnBoot();
 startPoller();
 
 app.listen(config.port, () => {
-  console.log(`[tonearr] listening on :${config.port}`);
-  console.log(`[tonearr] jackett=${config.jackettUrl || 'NOT SET'} transmission=${config.transmissionUrl}`);
+  console.log(`[musicarr] listening on :${config.port}`);
+  console.log(`[musicarr] jackett=${config.jackettUrl || 'NOT SET'} transmission=${config.transmissionUrl}`);
 });

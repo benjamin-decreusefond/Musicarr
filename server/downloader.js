@@ -71,7 +71,7 @@ async function startSearch(downloadId) {
 
   // 3. Hand off to Transmission.
   const link = best.result.MagnetUri || best.result.Link;
-  const subdir = `tonearr-${downloadId}`;
+  const subdir = `musicarr-${downloadId}`;
   setStatus(downloadId, 'downloading', `Found: ${best.result.Title}`, {
     release_title: best.result.Title, progress: 0,
   });
@@ -137,7 +137,7 @@ const normTitle = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300
 
 async function importDownload(dl, torrent) {
   const plan = pendingImports.get(dl.id);
-  const srcDir = path.join(config.downloadDir, `tonearr-${dl.id}`);
+  const srcDir = path.join(config.downloadDir, `musicarr-${dl.id}`);
   const files = walkAudio(srcDir);
   if (!files.length) throw new Error('No audio files in the completed download');
 
@@ -216,5 +216,5 @@ async function rebuildPlan(dl) {
     wantedTracks = [trackRowFromDeezer(tr)];
   }
   wantedTracks.forEach(upsertTrack);
-  pendingImports.set(dl.id, { wantedTracks, subdir: `tonearr-${dl.id}`, kind: dl.kind, deezerId: dl.deezer_id });
+  pendingImports.set(dl.id, { wantedTracks, subdir: `musicarr-${dl.id}`, kind: dl.kind, deezerId: dl.deezer_id });
 }

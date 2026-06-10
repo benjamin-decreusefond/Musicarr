@@ -1,5 +1,5 @@
 {
-  "name": "tonearr",
+  "name": "musicarr",
   "version": "1.0.0",
   "description": "Self-hosted Spotify-like music app backed by Jackett + Transmission",
   "type": "module",

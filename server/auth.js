@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { Router } from 'express';
 import { db, config } from './db.js';
 
-const COOKIE = 'tonearr_session';
+const COOKIE = 'musicarr_session';
 
 export function bootstrapAdmin() {
   const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
