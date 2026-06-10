@@ -2,29 +2,47 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const envMusicDir = process.env.MUSIC_DIR || '/music';
-
-export const config = {
-  port: parseInt(process.env.PORT || '8686', 10),
-  dataDir: process.env.DATA_DIR || '/data',
-  // Root folder for the music library. Configurable from the UI (stored in
-  // the settings table); the MUSIC_DIR env var is only the initial default.
-  get musicDir() { return getSetting('root_folder') || envMusicDir; },
-  envMusicDir,
-  downloadDir: process.env.DOWNLOAD_DIR || '/downloads',
+// Initial defaults from the environment. The Jackett/Transmission/library
+// settings below can all be overridden from the UI (stored in the settings
+// table); these env vars only seed the first-run defaults.
+const envDefaults = {
+  musicDir: process.env.MUSIC_DIR || '/music',
   // Path of the download dir *as seen by Transmission*. Defaults to the same
   // path: mount the shared volume at the same mount point in both pods.
   transmissionDownloadDir: process.env.TRANSMISSION_DOWNLOAD_DIR || process.env.DOWNLOAD_DIR || '/downloads',
   jackettUrl: (process.env.JACKETT_URL || '').replace(/\/$/, ''),
   jackettApiKey: process.env.JACKETT_API_KEY || '',
   jackettIndexer: process.env.JACKETT_INDEXER || 'all',
-  searchCategories: (process.env.SEARCH_CATEGORIES || '3000').split(',').map(s => s.trim()).filter(Boolean),
-  transmissionUrl: (process.env.TRANSMISSION_URL || 'http://transmission:9091/transmission/rpc'),
+  searchCategories: process.env.SEARCH_CATEGORIES || '3000',
+  transmissionUrl: process.env.TRANSMISSION_URL || 'http://transmission:9091/transmission/rpc',
   transmissionUser: process.env.TRANSMISSION_USER || '',
   transmissionPass: process.env.TRANSMISSION_PASS || '',
+};
+
+// A stored value of '' is meaningful (e.g. clearing Transmission auth), so
+// only fall back to the env default when nothing has been saved (null).
+const stored = (key, dflt) => { const v = getSetting(key); return v === null ? dflt : v; };
+
+export const config = {
+  port: parseInt(process.env.PORT || '8686', 10),
+  dataDir: process.env.DATA_DIR || '/data',
+  downloadDir: process.env.DOWNLOAD_DIR || '/downloads',
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin',
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
+  envDefaults,
+
+  get musicDir() { return getSetting('root_folder') || envDefaults.musicDir; },
+  get transmissionDownloadDir() { return getSetting('transmission_download_dir') || envDefaults.transmissionDownloadDir; },
+  get jackettUrl() { return stored('jackett_url', envDefaults.jackettUrl).replace(/\/$/, ''); },
+  get jackettApiKey() { return stored('jackett_api_key', envDefaults.jackettApiKey); },
+  get jackettIndexer() { return getSetting('jackett_indexer') || envDefaults.jackettIndexer; },
+  get searchCategories() {
+    return stored('search_categories', envDefaults.searchCategories).split(',').map(s => s.trim()).filter(Boolean);
+  },
+  get transmissionUrl() { return getSetting('transmission_url') || envDefaults.transmissionUrl; },
+  get transmissionUser() { return stored('transmission_user', envDefaults.transmissionUser); },
+  get transmissionPass() { return stored('transmission_pass', envDefaults.transmissionPass); },
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });

@@ -313,49 +313,116 @@ export function Downloads() {
 }
 
 /* ------------------------------------------------------------- Settings */
+const SETTING_FIELDS = [
+  'root_folder', 'jackett_url', 'jackett_api_key', 'jackett_indexer', 'search_categories',
+  'transmission_url', 'transmission_user', 'transmission_pass', 'transmission_download_dir',
+];
+
+function Field({ label, hint, type = 'text', value, onChange }) {
+  return (
+    <label className="settings-field">
+      <span className="settings-label">{label}</span>
+      <input className="settings-input" type={type} value={value ?? ''} spellCheck={false}
+        autoComplete="off" onChange={e => onChange(e.target.value)} />
+      {hint && <span className="settings-fieldhint">{hint}</span>}
+    </label>
+  );
+}
+
 export function Settings() {
-  const [folder, setFolder] = useState('');
-  const [info, setInfo] = useState(null);
+  const [s, setS] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(null);
+  const [tested, setTested] = useState({});
   useEffect(() => {
-    api.get('/api/settings')
-      .then(s => { setInfo(s); setFolder(s.root_folder); })
-      .catch(e => setMsg({ err: true, text: e.message }));
+    api.get('/api/settings').then(setS).catch(e => setMsg({ err: true, text: e.message }));
   }, []);
+  const set = (k, v) => setS(prev => ({ ...prev, [k]: v }));
+
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
-      const s = await api.put('/api/settings', { root_folder: folder });
-      setInfo(s); setFolder(s.root_folder);
-      setMsg({ err: false, text: 'Root folder saved. New downloads will be imported there.' });
+      const payload = Object.fromEntries(SETTING_FIELDS.map(k => [k, s[k] ?? '']));
+      const next = await api.put('/api/settings', payload);
+      setS(next);
+      setMsg({ err: false, text: 'Settings saved. Changes apply immediately — no restart needed.' });
     } catch (e) {
       setMsg({ err: true, text: e.message });
     }
     setBusy(false);
   };
-  if (!info && !msg) return <Loading />;
+
+  const test = async (section) => {
+    setTesting(section); setTested(t => ({ ...t, [section]: null }));
+    const body = section === 'jackett'
+      ? { section, jackett_url: s.jackett_url, jackett_api_key: s.jackett_api_key, jackett_indexer: s.jackett_indexer }
+      : { section, transmission_url: s.transmission_url, transmission_user: s.transmission_user, transmission_pass: s.transmission_pass };
+    try {
+      await api.post('/api/settings/test', body);
+      setTested(t => ({ ...t, [section]: { ok: true, text: 'Connection successful' } }));
+    } catch (e) {
+      setTested(t => ({ ...t, [section]: { ok: false, text: e.message } }));
+    }
+    setTesting(null);
+  };
+
+  if (!s) return msg ? <ErrState msg={msg.text} /> : <Loading />;
+  const TestResult = ({ section }) => {
+    const r = tested[section];
+    if (!r) return null;
+    return <span className={`settings-msg ${r.ok ? 'ok' : 'err'}`}>{r.text}</span>;
+  };
+
   return (
     <div className="page">
       <h1 className="page-h1">Settings</h1>
-      <section className="page-block">
+
+      <section className="page-block settings-section">
         <h2 className="row-title">Media management</h2>
         <p className="settings-hint">
           Root folder where downloaded music is imported (organized as Artist/Album/Track).
           Existing files are not moved when you change it.
         </p>
-        <div className="admin-form">
-          <input className="settings-path" placeholder="/music" value={folder} spellCheck={false}
-            onChange={e => setFolder(e.target.value)} onKeyDown={e => e.key === 'Enter' && save()} />
-          <button className="btn-primary" onClick={save} disabled={busy || !folder.trim()}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-        {info?.root_folder_is_default && (
-          <p className="settings-hint">Currently using the default from the MUSIC_DIR environment variable ({info.root_folder_default}).</p>
-        )}
-        {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+        <Field label="Root folder" hint="Absolute path, e.g. /music" value={s.root_folder} onChange={v => set('root_folder', v)} />
+        <Field label="Transmission download directory"
+          hint="Where Transmission saves completed downloads, as Transmission sees the path."
+          value={s.transmission_download_dir} onChange={v => set('transmission_download_dir', v)} />
       </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Jackett</h2>
+        <p className="settings-hint">Indexer aggregator used to find releases.</p>
+        <Field label="URL" hint="e.g. http://jackett:9117 (no trailing slash)" value={s.jackett_url} onChange={v => set('jackett_url', v)} />
+        <Field label="API key" type="password" value={s.jackett_api_key} onChange={v => set('jackett_api_key', v)} />
+        <Field label="Indexer" hint='Indexer id, or "all" to query every configured one' value={s.jackett_indexer} onChange={v => set('jackett_indexer', v)} />
+        <Field label="Search categories" hint="Torznab categories, comma-separated (3000 = Audio)" value={s.search_categories} onChange={v => set('search_categories', v)} />
+        <div className="settings-actions">
+          <button className="btn-ghost" onClick={() => test('jackett')} disabled={testing === 'jackett'}>
+            {testing === 'jackett' ? 'Testing…' : 'Test connection'}
+          </button>
+          <TestResult section="jackett" />
+        </div>
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Transmission</h2>
+        <p className="settings-hint">BitTorrent client that performs the downloads.</p>
+        <Field label="RPC URL" hint="e.g. http://transmission:9091/transmission/rpc" value={s.transmission_url} onChange={v => set('transmission_url', v)} />
+        <Field label="Username" hint="Leave blank if RPC auth is disabled" value={s.transmission_user} onChange={v => set('transmission_user', v)} />
+        <Field label="Password" type="password" value={s.transmission_pass} onChange={v => set('transmission_pass', v)} />
+        <div className="settings-actions">
+          <button className="btn-ghost" onClick={() => test('transmission')} disabled={testing === 'transmission'}>
+            {testing === 'transmission' ? 'Testing…' : 'Test connection'}
+          </button>
+          <TestResult section="transmission" />
+        </div>
+      </section>
+
+      <div className="settings-save">
+        <button className="btn-primary lg" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save all settings'}</button>
+        {msg && <span className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</span>}
+      </div>
     </div>
   );
 }
