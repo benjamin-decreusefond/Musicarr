@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { config } from './db.js';
+import { logger } from './log.js';
+
+const log = logger('sources');
 
 /* ---------------------------------------------------------------- Deezer */
 // Free, key-less metadata API. We proxy it server-side (no CORS issues, and
@@ -45,13 +48,21 @@ deezerRouter.get(/^\/(.*)$/, async (req, res) => {
 /* --------------------------------------------------------------- Jackett */
 export async function jackettSearch(query) {
   if (!config.jackettUrl || !config.jackettApiKey) {
-    throw new Error('JACKETT_URL / JACKETT_API_KEY not configured');
+    log.warn('Jackett is not configured (URL / API key missing) — set it under Settings → Jackett');
+    throw new Error('Jackett URL / API key not configured');
   }
   const params = new URLSearchParams({ apikey: config.jackettApiKey, Query: query });
   for (const c of config.searchCategories) params.append('Category[]', c);
   const url = `${config.jackettUrl}/api/v2.0/indexers/${config.jackettIndexer}/results?${params}`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(45000) });
-  if (!r.ok) throw new Error(`Jackett ${r.status}`);
+  log.debug(`Jackett query "${query}" via indexer ${config.jackettIndexer}`);
+  let r;
+  try {
+    r = await fetch(url, { signal: AbortSignal.timeout(45000) });
+  } catch (e) {
+    log.error(`Jackett request failed for "${query}": ${e.message}`);
+    throw new Error(`Could not reach Jackett: ${e.message}`);
+  }
+  if (!r.ok) { log.error(`Jackett returned ${r.status} for "${query}"`); throw new Error(`Jackett ${r.status}`); }
   const data = await r.json();
   return data.Results || [];
 }
