@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 fs.mkdirSync('dist', { recursive: true });
 fs.copyFileSync('src/index.html', 'dist/index.html');
+fs.copyFileSync('src/favicon.svg', 'dist/favicon.svg');
 
 await esbuild.build({
   entryPoints: ['src/main.jsx'],

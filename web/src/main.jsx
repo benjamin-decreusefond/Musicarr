@@ -136,11 +136,31 @@ function PlayerBar() {
   );
 }
 
+/* ----------------------------------------------------------- URL routing */
+// Keep the current view in the address bar so a refresh restores it (the
+// server serves index.html for any non-API path, so deep links work too).
+const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist']);
+
+function routeToPath({ view, id }) {
+  if (view === 'home') return '/';
+  return VIEWS_WITH_ID.has(view) && id != null ? `/${view}/${id}` : `/${view}`;
+}
+
+function parsePath(pathname) {
+  const [, view, rawId] = pathname.split('/');
+  if (!view) return { view: 'home' };
+  if (VIEWS_WITH_ID.has(view)) {
+    const id = Number(rawId);
+    return Number.isFinite(id) ? { view, id } : { view: 'home' };
+  }
+  return { view };
+}
+
 /* ------------------------------------------------------------------ App */
 function App() {
   const [me, setMe] = useState(undefined); // undefined = loading
-  const [route, setRoute] = useState({ view: 'home' });
-  const [history, setHistory] = useState([]);
+  const [route, setRoute] = useState(() => parsePath(window.location.pathname));
+  const [depth, setDepth] = useState(0); // in-app history depth, for the back button
 
   useEffect(() => { api.get('/api/auth/me').then(setMe).catch(() => setMe(null)); }, []);
   useEffect(() => {
@@ -149,13 +169,24 @@ function App() {
     return () => window.removeEventListener('musicarr:unauth', h);
   }, []);
 
+  // Seed history state for the initial route, and follow browser back/forward.
+  useEffect(() => {
+    window.history.replaceState({ route }, '', routeToPath(route));
+    const onPop = (e) => {
+      setRoute(e.state?.route || parsePath(window.location.pathname));
+      setDepth(d => Math.max(0, d - 1));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   const nav = useCallback((r) => {
-    setRoute(prev => { setHistory(h => [...h, prev]); return r; });
+    window.history.pushState({ route: r }, '', routeToPath(r));
+    setRoute(r);
+    setDepth(d => d + 1);
     document.querySelector('.main-scroll')?.scrollTo(0, 0);
   }, []);
-  const back = useCallback(() => {
-    setHistory(h => { if (!h.length) return h; const prev = h[h.length - 1]; setRoute(prev); return h.slice(0, -1); });
-  }, []);
+  const back = useCallback(() => { window.history.back(); }, []);
 
   const logout = async () => { await api.post('/api/auth/logout'); setMe(null); };
 
@@ -182,7 +213,7 @@ function App() {
       <Sidebar route={route} nav={nav} me={me} onLogout={logout} />
       <main className="main">
         <div className="topbar">
-          <button className="round-btn" onClick={back} disabled={!history.length} title="Back">‹</button>
+          <button className="round-btn" onClick={back} disabled={!depth} title="Back">‹</button>
         </div>
         <div className="main-scroll" key={route.view + (route.id || '')}>{page}</div>
       </main>
