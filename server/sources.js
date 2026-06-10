@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { config } from './db.js';
 import { logger } from './log.js';
+import { createCache } from './cache.js';
 
 const log = logger('sources');
 
@@ -19,21 +20,19 @@ const ALLOWED = [
   /^editorial\/\d+\/charts$/,
 ];
 
-const cache = new Map(); // url -> { at, body }
-const CACHE_MS = 5 * 60 * 1000;
+const deezerCache = createCache({ ttlMs: 5 * 60 * 1000, max: 1000 });
 
 export async function deezerGet(pathAndQuery) {
   const url = `${DEEZER}/${pathAndQuery}`;
-  const hit = cache.get(url);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Deezer ${r.status}`);
-  const body = await r.json();
-  // Deezer reports errors as 200s with an error payload; don't cache those.
-  if (body?.error) throw new Error(`Deezer: ${body.error.message || body.error.type || JSON.stringify(body.error)}`);
-  if (cache.size > 500) cache.clear();
-  cache.set(url, { at: Date.now(), body });
-  return body;
+  return deezerCache.wrap(url, async () => {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Deezer ${r.status}`);
+    const body = await r.json();
+    // Deezer reports errors as 200s with an error payload; surface (and don't
+    // cache) those rather than letting undefined fields through.
+    if (body?.error) throw new Error(`Deezer: ${body.error.message || body.error.type || JSON.stringify(body.error)}`);
+    return body;
+  });
 }
 
 export const deezerRouter = Router();
@@ -49,6 +48,10 @@ deezerRouter.get(/^\/(.*)$/, async (req, res) => {
 });
 
 /* --------------------------------------------------------------- Jackett */
+// Cache search results briefly: identical queries (e.g. retrying a download,
+// or several users grabbing the same release) won't re-hit the trackers.
+const jackettCache = createCache({ ttlMs: 10 * 60 * 1000, max: 300 });
+
 export async function jackettSearch(query) {
   if (!config.jackettUrl || !config.jackettApiKey) {
     log.warn('Jackett is not configured (URL / API key missing) — set it under Settings → Jackett');
@@ -57,17 +60,21 @@ export async function jackettSearch(query) {
   const params = new URLSearchParams({ apikey: config.jackettApiKey, Query: query });
   for (const c of config.searchCategories) params.append('Category[]', c);
   const url = `${config.jackettUrl}/api/v2.0/indexers/${config.jackettIndexer}/results?${params}`;
-  log.debug(`Jackett query "${query}" via indexer ${config.jackettIndexer}`);
-  let r;
-  try {
-    r = await fetch(url, { signal: AbortSignal.timeout(45000) });
-  } catch (e) {
-    log.error(`Jackett request failed for "${query}": ${e.message}`);
-    throw new Error(`Could not reach Jackett: ${e.message}`);
-  }
-  if (!r.ok) { log.error(`Jackett returned ${r.status} for "${query}"`); throw new Error(`Jackett ${r.status}`); }
-  const data = await r.json();
-  return data.Results || [];
+  // Key on everything that changes the result, minus the api key.
+  const cacheKey = `${config.jackettUrl}|${config.jackettIndexer}|${config.searchCategories.join(',')}|${query}`;
+  return jackettCache.wrap(cacheKey, async () => {
+    log.debug(`Jackett query "${query}" via indexer ${config.jackettIndexer}`);
+    let r;
+    try {
+      r = await fetch(url, { signal: AbortSignal.timeout(45000) });
+    } catch (e) {
+      log.error(`Jackett request failed for "${query}": ${e.message}`);
+      throw new Error(`Could not reach Jackett: ${e.message}`);
+    }
+    if (!r.ok) { log.error(`Jackett returned ${r.status} for "${query}"`); throw new Error(`Jackett ${r.status}`); }
+    const data = await r.json();
+    return data.Results || [];
+  });
 }
 
 /** Verify Jackett URL/key/indexer via the Torznab caps endpoint, which
