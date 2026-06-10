@@ -6,8 +6,52 @@ import { Home, Search, Artist, Album, Library, Favorites, Playlist, Downloads, A
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
-function Equalizer() {
+// The band sliders + presets, reused by the player-bar popover and the
+// standalone Equalizer page (so it's usable even when nothing is playing).
+function EqControls() {
   const p = usePlayer();
+  return (
+    <>
+      <div className="eq-head">
+        <span>Equalizer</span>
+        <label className="eq-switch">
+          <input type="checkbox" checked={p.eqEnabled} onChange={e => p.setEqEnabled(e.target.checked)} /> On
+        </label>
+      </div>
+      <div className="eq-bands">
+        {EQ_LABELS.map((label, i) => (
+          <div className="eq-band" key={label}>
+            <input className="eq-slider" type="range" min={-12} max={12} step={1}
+              value={p.eqGains[i]} disabled={!p.eqEnabled}
+              onChange={e => p.setEqBand(i, parseInt(e.target.value, 10))} />
+            <span className="eq-gain">{p.eqGains[i] > 0 ? `+${p.eqGains[i]}` : p.eqGains[i]}</span>
+            <span className="eq-freq">{label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="eq-presets">
+        <select value="" onChange={e => { if (e.target.value) p.applyPreset(e.target.value); }}>
+          <option value="">Presets…</option>
+          {Object.keys(EQ_PRESETS).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+        <button className="btn-ghost sm" onClick={p.resetEq}>Reset</button>
+      </div>
+    </>
+  );
+}
+
+// Standalone page so the EQ is reachable from the sidebar at any time.
+function EqualizerPage() {
+  return (
+    <div className="page">
+      <h1 className="page-h1">Equalizer</h1>
+      <p className="settings-hint">Adjust the sound. Changes apply live and are saved across reboots.</p>
+      <div className="eq-page-panel"><EqControls /></div>
+    </div>
+  );
+}
+
+function Popover({ icon, title, active, className, children }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -15,44 +59,49 @@ function Equalizer() {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
-  const active = p.eqEnabled && p.eqGains.some(g => g !== 0);
   return (
     <div className="eq-wrap" ref={ref}>
-      <button className="icon-btn" onClick={() => setOpen(o => !o)} title="Equalizer"
+      <button className="icon-btn" onClick={() => setOpen(o => !o)} title={title}
         style={{ color: active ? 'var(--accent)' : undefined }}>
-        <Icon name="sliders" size={18} />
+        <Icon name={icon} size={18} />
       </button>
-      {open && (
-        <div className="eq-panel" onClick={e => e.stopPropagation()}>
-          <div className="eq-head">
-            <span>Equalizer</span>
-            <label className="eq-switch">
-              <input type="checkbox" checked={p.eqEnabled} onChange={e => p.setEqEnabled(e.target.checked)} /> On
-            </label>
-          </div>
-          <div className="eq-bands">
-            {EQ_LABELS.map((label, i) => (
-              <div className="eq-band" key={label}>
-                <input className="eq-slider" type="range" min={-12} max={12} step={1}
-                  value={p.eqGains[i]} disabled={!p.eqEnabled}
-                  onChange={e => p.setEqBand(i, parseInt(e.target.value, 10))}
-                  // vertical slider
-                  style={{ writingMode: 'vertical-lr', direction: 'rtl' }} />
-                <span className="eq-gain">{p.eqGains[i] > 0 ? `+${p.eqGains[i]}` : p.eqGains[i]}</span>
-                <span className="eq-freq">{label}</span>
-              </div>
-            ))}
-          </div>
-          <div className="eq-presets">
-            <select value="" onChange={e => { if (e.target.value) p.applyPreset(e.target.value); }}>
-              <option value="">Presets…</option>
-              {Object.keys(EQ_PRESETS).map(name => <option key={name} value={name}>{name}</option>)}
-            </select>
-            <button className="btn-ghost sm" onClick={p.resetEq}>Reset</button>
-          </div>
-        </div>
-      )}
+      {open && <div className={className} onClick={e => e.stopPropagation()}>{children}</div>}
     </div>
+  );
+}
+
+function Equalizer() {
+  const p = usePlayer();
+  const active = p.eqEnabled && p.eqGains.some(g => g !== 0);
+  return <Popover icon="sliders" title="Equalizer" active={active} className="eq-panel"><EqControls /></Popover>;
+}
+
+/* ------------------------------------------------------------- Queue */
+function QueuePanel() {
+  const p = usePlayer();
+  return (
+    <Popover icon="queue" title="Play queue" className="queue-panel">
+      <div className="eq-head"><span>Queue</span><span className="queue-count">{p.queue.length} tracks</span></div>
+      <div className="queue-list">
+        {p.queue.map((t, i) => (
+          <div key={`${t.deezer_id || t.id}-${i}`} className={`queue-row ${i === p.index ? 'current' : ''}`}>
+            <button className="queue-main" onClick={() => p.playAt(i)} title="Play">
+              <span className="queue-idx">{i === p.index && p.playing ? <span className="eq"><i /><i /><i /></span> : i + 1}</span>
+              <span className="queue-meta">
+                <span className="queue-title">{t.title}</span>
+                <span className="queue-artist">{t.artist}</span>
+              </span>
+            </button>
+            <div className="queue-actions">
+              <button className="icon-btn" disabled={i === 0} onClick={() => p.moveInQueue(i, i - 1)} title="Move up">↑</button>
+              <button className="icon-btn" disabled={i === p.queue.length - 1} onClick={() => p.moveInQueue(i, i + 1)} title="Move down">↓</button>
+              <button className="icon-btn" onClick={() => p.removeFromQueue(i)} title="Remove"><Icon name="close" size={14} /></button>
+            </div>
+          </div>
+        ))}
+        {!p.queue.length && <div className="state faint">Queue is empty.</div>}
+      </div>
+    </Popover>
   );
 }
 
@@ -118,6 +167,7 @@ function Sidebar({ route, nav, me, onLogout }) {
       <nav className="nav-main">
         <NavItem view="favorites" icon="heart" label="Liked songs" />
         <NavItem view="downloads" icon="download" label="Downloads" />
+        <NavItem view="equalizer" icon="sliders" label="Equalizer" />
         <NavItem view="profile" icon="user" label="Profile" />
         {!!me.is_admin && <NavItem view="admin" icon="user" label="Users" />}
         {!!me.is_admin && <NavItem view="settings" icon="settings" label="Settings" />}
@@ -182,6 +232,7 @@ function PlayerBar() {
         </div>
       </div>
       <div className="player-right">
+        <QueuePanel />
         <Equalizer />
         <Icon name="vol" size={18} />
         <input className="vol" type="range" min={0} max={1} step="0.01" value={p.volume}
@@ -261,6 +312,7 @@ function App() {
     case 'admin': page = <Admin me={me} />; break;
     case 'settings': page = <Settings />; break;
     case 'profile': page = <Profile me={me} />; break;
+    case 'equalizer': page = <EqualizerPage />; break;
     default: page = <Home nav={nav} />;
   }
 

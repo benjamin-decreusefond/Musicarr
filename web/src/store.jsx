@@ -57,11 +57,20 @@ export function PlayerProvider({ children }) {
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolumeState] = useState(() => {
+    const v = parseFloat(localStorage.getItem('musicarr:volume'));
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+  });
   const [eqEnabled, setEqEnabled] = useState(() => localStorage.getItem('musicarr:eq:on') === '1');
   const [eqGains, setEqGains] = useState(loadGains);
 
   const current = index >= 0 ? queue[index] : null;
+
+  // Persist volume across reboots.
+  const setVolume = useCallback((v) => {
+    setVolumeState(v);
+    localStorage.setItem('musicarr:volume', String(v));
+  }, []);
 
   // Build the Web Audio graph lazily on first playback (needs a user gesture
   // to start the AudioContext). source -> [filters] -> destination.
@@ -138,12 +147,21 @@ export function PlayerProvider({ children }) {
     }
   }, [index]);
 
-  const playList = useCallback((tracks, start = 0) => {
-    const avail = tracks.filter(t => t.available || t.file_path);
+  const trackId = (t) => t?.deezer_id || t?.id;
+  const playable = (tracks) => tracks.filter(t => t.available || t.file_path);
+
+  const playList = useCallback((tracks, start = 0, { shuffle = false } = {}) => {
+    let avail = playable(tracks);
     if (!avail.length) return;
-    // Map start index from full list to the filtered list.
     const startTrack = tracks[start];
-    const startIdx = Math.max(0, avail.findIndex(t => (t.deezer_id || t.id) === (startTrack?.deezer_id || startTrack?.id)));
+    if (shuffle) {
+      // Fisher–Yates, then float the clicked track to the front if it's in the set.
+      for (let i = avail.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [avail[i], avail[j]] = [avail[j], avail[i]]; }
+      const si = avail.findIndex(t => trackId(t) === trackId(startTrack));
+      if (si > 0) { const [t] = avail.splice(si, 1); avail.unshift(t); }
+      setQueue(avail); setIndex(0); return;
+    }
+    const startIdx = Math.max(0, avail.findIndex(t => trackId(t) === trackId(startTrack)));
     setQueue(avail);
     setIndex(startIdx);
   }, []);
@@ -156,6 +174,54 @@ export function PlayerProvider({ children }) {
     audioCtxRef.current?.resume?.(); // honour autoplay policy on user gesture
     if (a.paused) a.play(); else a.pause();
   }, [index]);
+
+  // Play a track in the context of a list, but if it's already the current
+  // track just toggle play/pause (so clicking the playing row pauses it).
+  const playOrToggle = useCallback((track, tracks, i = 0) => {
+    if (current && trackId(current) === trackId(track)) { toggle(); return; }
+    if (tracks) playList(tracks, i); else playTrack(track);
+  }, [current, toggle, playList, playTrack]);
+
+  // Append tracks to the queue (starts playback if nothing is playing).
+  const enqueue = useCallback((tracks) => {
+    const avail = playable(Array.isArray(tracks) ? tracks : [tracks]);
+    if (!avail.length) return;
+    setQueue(q => {
+      const existing = new Set(q.map(trackId));
+      const fresh = avail.filter(t => !existing.has(trackId(t)));
+      if (!fresh.length) return q;
+      const nextQ = [...q, ...fresh];
+      setIndex(i => (i < 0 ? 0 : i)); // start if idle
+      return nextQ;
+    });
+  }, []);
+
+  // Reorder/remove keep `index` pointing at the currently-playing track.
+  const moveInQueue = useCallback((from, to) => {
+    setQueue(q => {
+      if (to < 0 || to >= q.length || from === to) return q;
+      const curId = trackId(q[index]);
+      const nq = [...q];
+      const [m] = nq.splice(from, 1);
+      nq.splice(to, 0, m);
+      const ni = nq.findIndex(t => trackId(t) === curId);
+      if (ni >= 0) setIndex(ni);
+      return nq;
+    });
+  }, [index]);
+
+  const removeFromQueue = useCallback((pos) => {
+    setQueue(q => {
+      if (pos < 0 || pos >= q.length) return q;
+      const curId = trackId(q[index]);
+      const nq = q.filter((_, i) => i !== pos);
+      if (pos === index) setIndex(Math.min(pos, nq.length - 1)); // removed current -> play next
+      else { const ni = nq.findIndex(t => trackId(t) === curId); setIndex(ni); }
+      return nq;
+    });
+  }, [index]);
+
+  const playAt = useCallback((pos) => setIndex(i => (pos >= 0 ? pos : i)), []);
 
   const next = useCallback(() => setIndex(i => (i < queue.length - 1 ? i + 1 : i)), [queue.length]);
   const prev = useCallback(() => {
@@ -177,8 +243,10 @@ export function PlayerProvider({ children }) {
   }, []);
   const resetEq = useCallback(() => setEqGains([...EQ_ZERO]), []);
 
-  const value = { queue, current, playing, time, duration, volume, setVolume,
-    playList, playTrack, toggle, next, prev, seek, hasNext: index < queue.length - 1, hasPrev: index > 0,
+  const value = { queue, index, current, playing, time, duration, volume, setVolume,
+    playList, playTrack, playOrToggle, toggle, next, prev, seek,
+    enqueue, moveInQueue, removeFromQueue, playAt,
+    hasNext: index < queue.length - 1, hasPrev: index > 0,
     eqEnabled, setEqEnabled, eqGains, setEqBand, applyPreset, resetEq };
   return <PlayerCtx.Provider value={value}>{children}</PlayerCtx.Provider>;
 }

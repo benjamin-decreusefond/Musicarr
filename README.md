@@ -90,9 +90,12 @@ corresponding environment variable**, which only seeds the first-run default. So
 you can run with no Jackett/Transmission env vars at all and configure everything
 from the Settings page after first login.
 
-Each user can change their own password under **Profile** (click the username in
-the sidebar). There's a functional graphic **equalizer** in the player bar
-(Web Audio, with presets) and recent **search history** on the Search page.
+Each user can change their own password under **Profile**. There's a functional
+graphic **equalizer** (player-bar popover and a dedicated **Equalizer** page so
+it works even when nothing is playing; Web Audio, with presets), a **play queue**
+(reorder, remove, jump; clicking a playlist track shuffles the whole playlist
+into the queue), recent **search history** on the Search page, and the volume is
+remembered across reboots.
 
 ## CI / publishing the image
 
