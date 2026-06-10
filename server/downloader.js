@@ -179,10 +179,22 @@ async function importDownload(dl, torrent) {
     const destDir = path.join(config.musicDir, safeName(want.artist), safeName(want.album || 'Singles'));
     fs.mkdirSync(destDir, { recursive: true });
     const dest = path.join(destDir, `${safeName(want.title)}${ext}`);
+    // Hardlink into the root folder (instant, no extra disk space, and the
+    // torrent keeps seeding from the download dir). Falls back to a copy when
+    // the download dir and root folder are on different filesystems.
     try {
-      fs.copyFileSync(match.path, dest);
+      if (fs.existsSync(dest)) fs.unlinkSync(dest);
+      fs.linkSync(match.path, dest);
     } catch (e) {
-      throw new Error(`Copy failed: ${e.message}`);
+      if (e.code === 'EXDEV' || e.code === 'EPERM') {
+        try {
+          fs.copyFileSync(match.path, dest);
+        } catch (e2) {
+          throw new Error(`Copy failed: ${e2.message}`);
+        }
+      } else {
+        throw new Error(`Hardlink failed: ${e.message}`);
+      }
     }
     db.prepare('UPDATE tracks SET file_path = ? WHERE deezer_id = ?').run(dest, want.deezer_id);
     imported++;

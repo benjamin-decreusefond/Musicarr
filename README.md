@@ -49,17 +49,32 @@ docker run -d --name musicarr -p 8686:8686 \
   musicarr:latest
 ```
 
-### The shared-download-path requirement
+### How downloads reach the library (Radarr/Sonarr model)
 
-Musicarr and Transmission must agree on where downloads land. Musicarr reads the
-finished files from `DOWNLOAD_DIR`; it tells Transmission to save them under
-`TRANSMISSION_DOWNLOAD_DIR`. **Mount the same physical volume at the same path
-in both containers** (e.g. `/downloads`) and you can leave
-`TRANSMISSION_DOWNLOAD_DIR` unset (it defaults to `DOWNLOAD_DIR`). If the paths
-differ between the two, set both variables so the mapping is correct.
+The flow is: **Transmission downloads → Musicarr hardlinks into the root
+folder → the library streams from the root folder.**
 
-`/music` is where the permanent library lives and should be a persistent
-volume. `/data` holds the SQLite database and must also persist.
+Two paths, both configurable from **Settings → Media management**:
+
+1. **Transmission download directory** — Musicarr tells Transmission to save
+   each download here (under a `musicarr-<id>` subfolder). When the download
+   finishes, Musicarr scans this folder once to import the files. **Mount the
+   same physical volume at the same path in both containers** so they agree
+   on it.
+2. **Root folder** — the library. On import, Musicarr **hardlinks** the audio
+   files here, organized as `Artist/Album/Track`, and all playback/streaming
+   is served from these paths. Hardlinks are instant, use no extra disk
+   space, and let the torrent keep seeding from the download directory. If
+   the two paths are on different filesystems (where hardlinks are
+   impossible), Musicarr falls back to copying.
+
+For hardlinks to work, keep the download directory and the root folder on the
+same volume — e.g. one shared volume mounted at `/data` in both containers,
+with downloads in `/data/downloads/music` and the library in
+`/data/media/music`.
+
+`/data` (in the example above) should be a persistent volume; `DATA_DIR`
+holds the SQLite database and must also persist.
 
 ## Configuration from the UI
 
@@ -85,8 +100,7 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `PORT` | `8686` | HTTP port |
 | `DATA_DIR` | `/data` | SQLite database location (persist this) |
 | `MUSIC_DIR` | `/music` | Default root folder for the audio library *(UI)* |
-| `DOWNLOAD_DIR` | `/downloads` | Where Musicarr reads completed downloads |
-| `TRANSMISSION_DOWNLOAD_DIR` | = `DOWNLOAD_DIR` | Download path as Transmission sees it *(UI)* |
+| `TRANSMISSION_DOWNLOAD_DIR` | `/downloads` | Shared download path: Transmission writes here, Musicarr reads back from it *(UI)*. `DOWNLOAD_DIR` is accepted as a legacy alias. |
 | `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) *(UI)* |
 | `JACKETT_API_KEY` | — | From Jackett's dashboard *(UI)* |
 | `JACKETT_INDEXER` | `all` | Indexer id, or `all` to query every configured one *(UI)* |

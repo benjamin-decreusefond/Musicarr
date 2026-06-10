@@ -24,7 +24,7 @@ function currentSettings() {
     transmission_url: config.transmissionUrl,
     transmission_user: config.transmissionUser,
     transmission_pass: config.transmissionPass,
-    transmission_download_dir: config.transmissionDownloadDir,
+    transmission_download_dir: config.downloadDir,
   };
 }
 
@@ -73,9 +73,20 @@ api.put('/settings', requireAdmin, (req, res) => {
     }
     if (has('transmission_user')) setSetting('transmission_user', str(b.transmission_user));
     if (has('transmission_pass')) setSetting('transmission_pass', str(b.transmission_pass));
+    // Shared with Transmission: it writes completed downloads here and
+    // Musicarr reads them back from the same path, so it must also exist
+    // and be readable on Musicarr's side of the shared volume.
     if (has('transmission_download_dir')) {
       const dir = str(b.transmission_download_dir);
-      if (dir && !path.isAbsolute(dir)) throw new Error('Transmission download dir must be an absolute path');
+      if (dir && !path.isAbsolute(dir)) throw new Error('Download directory must be an absolute path');
+      if (dir) {
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          fs.accessSync(dir, fs.constants.R_OK);
+        } catch (e) {
+          throw new Error(`Download directory is not accessible from Musicarr: ${e.message}`);
+        }
+      }
       setSetting('transmission_download_dir', dir);
     }
   } catch (e) {
