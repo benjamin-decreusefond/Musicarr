@@ -150,6 +150,13 @@
 .admin-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 10px; }
 .admin-name { flex: 1; font-weight: 600; }
 
+/* ============================ Settings ============================= */
+.settings-hint { color: var(--text-dim); font-size: 13.5px; margin-bottom: 14px; max-width: 560px; }
+.settings-path { min-width: 340px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+.settings-msg { font-size: 13.5px; margin-top: 4px; }
+.settings-msg.ok { color: var(--accent); }
+.settings-msg.err { color: var(--danger); }
+
 /* ============================ Player bar ============================ */
 .player { background: var(--bg-elev); border-radius: var(--radius-lg); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 18px; gap: 16px; }
 .player.empty { display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 13px; }

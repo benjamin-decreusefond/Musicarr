@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Artist, Album, Library, Favorites, Playlist, Downloads, Admin } from './views.jsx';
+import { Home, Search, Artist, Album, Library, Favorites, Playlist, Downloads, Admin, Settings } from './views.jsx';
 import './styles.css';
 
 /* ---------------------------------------------------------------- Login */
@@ -68,6 +68,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="favorites" icon="heart" label="Liked songs" />
         <NavItem view="downloads" icon="download" label="Downloads" />
         {!!me.is_admin && <NavItem view="admin" icon="user" label="Users" />}
+        {!!me.is_admin && <NavItem view="settings" icon="settings" label="Settings" />}
       </nav>
       <div className="pl-head">
         <span>Playlists</span>
@@ -172,6 +173,7 @@ function App() {
     case 'playlist': page = <Playlist id={route.id} />; break;
     case 'downloads': page = <Downloads />; break;
     case 'admin': page = <Admin me={me} />; break;
+    case 'settings': page = <Settings />; break;
     default: page = <Home nav={nav} />;
   }
 
