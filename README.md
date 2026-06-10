@@ -1,4 +1,4 @@
-# Tonearr
+# Musicarr
 
 A self-hosted, Spotify-style music app that browses metadata from **Deezer**
 (free, no API key), finds releases through **Jackett**, and downloads them with
@@ -7,7 +7,7 @@ audio library on disk with file deduplication; built-in streaming with HTTP
 range support. State lives in **SQLite** — no Postgres required.
 
 It does *not* use Lidarr: Lidarr's artist/album model makes single-track
-downloads awkward, so Tonearr talks to Jackett directly and decides per-request
+downloads awkward, so Musicarr talks to Jackett directly and decides per-request
 whether to grab a whole album or a single track.
 
 ## How it works
@@ -28,7 +28,7 @@ whether to grab a whole album or a single track.
 ## Build the image
 
 ```bash
-docker build -t tonearr:latest .
+docker build -t musicarr:latest .
 ```
 
 The build is multi-stage: it bundles the React frontend, compiles
@@ -38,20 +38,20 @@ user and exposes **port 8686**.
 ## Run
 
 ```bash
-docker run -d --name tonearr -p 8686:8686 \
+docker run -d --name musicarr -p 8686:8686 \
   -e JACKETT_URL=http://jackett:9117 \
   -e JACKETT_API_KEY=your_jackett_api_key \
   -e TRANSMISSION_URL=http://transmission:9091/transmission/rpc \
   -e ADMIN_PASSWORD=change-me \
-  -v tonearr-data:/data \
+  -v musicarr-data:/data \
   -v /path/to/music:/music \
   -v /path/to/downloads:/downloads \
-  tonearr:latest
+  musicarr:latest
 ```
 
 ### The shared-download-path requirement
 
-Tonearr and Transmission must agree on where downloads land. Tonearr reads the
+Musicarr and Transmission must agree on where downloads land. Musicarr reads the
 finished files from `DOWNLOAD_DIR`; it tells Transmission to save them under
 `TRANSMISSION_DOWNLOAD_DIR`. **Mount the same physical volume at the same path
 in both containers** (e.g. `/downloads`) and you can leave
@@ -73,7 +73,7 @@ only provides the initial default.
 | `PORT` | `8686` | HTTP port |
 | `DATA_DIR` | `/data` | SQLite database location (persist this) |
 | `MUSIC_DIR` | `/music` | Default root folder for the audio library (persist this) |
-| `DOWNLOAD_DIR` | `/downloads` | Where Tonearr reads completed downloads |
+| `DOWNLOAD_DIR` | `/downloads` | Where Musicarr reads completed downloads |
 | `TRANSMISSION_DOWNLOAD_DIR` | = `DOWNLOAD_DIR` | Download path as Transmission sees it |
 | `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) |
 | `JACKETT_API_KEY` | — | From Jackett's dashboard |
@@ -105,5 +105,5 @@ downloaded audio library.
 - Deezer is used purely for metadata and discovery; no audio comes from Deezer.
 - Streaming reads files directly from `/music` with range requests, so seeking
   works in the browser for FLAC/MP3/M4A/OGG/Opus/WAV/AAC.
-- The Transmission client must allow RPC access from the Tonearr container
+- The Transmission client must allow RPC access from the Musicarr container
   (`rpc-whitelist` / `rpc-host-whitelist`).

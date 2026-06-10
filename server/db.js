@@ -30,7 +30,17 @@ export const config = {
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.downloadDir, { recursive: true });
 
-export const db = new Database(path.join(config.dataDir, 'tonearr.db'));
+// Migrate a pre-rename database (tonearr.db) to the new name in place so
+// existing deployments keep their data. Includes the WAL/SHM sidecar files.
+const dbPath = path.join(config.dataDir, 'musicarr.db');
+const legacyDbPath = path.join(config.dataDir, 'tonearr.db');
+if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
+  for (const suffix of ['', '-wal', '-shm']) {
+    if (fs.existsSync(legacyDbPath + suffix)) fs.renameSync(legacyDbPath + suffix, dbPath + suffix);
+  }
+}
+
+export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 

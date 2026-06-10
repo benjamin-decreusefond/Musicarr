@@ -103,7 +103,7 @@ export function AddToPlaylist({ trackId }) {
     try {
       const pl = await api.post('/api/playlists', { name });
       await api.post(`/api/playlists/${pl.id}/tracks`, { track_id: trackId });
-      window.dispatchEvent(new Event('tonearr:playlists-changed'));
+      window.dispatchEvent(new Event('musicarr:playlists-changed'));
     } catch {}
     setOpen(false);
   };

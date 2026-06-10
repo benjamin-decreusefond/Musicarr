@@ -41,7 +41,7 @@
 .user-name { flex: 1; font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ============================ Pages ============================ */
-.page { padding-top: 4px; max-width: 1200px; }
+.page { padding-top: 4px; }
 .page-h1 { font-family: var(--font-display); font-size: 30px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 22px; }
 .page-block { margin: 28px 0; }
 .row-title { font-family: var(--font-display); font-size: 21px; font-weight: 600; margin-bottom: 14px; letter-spacing: -.01em; }

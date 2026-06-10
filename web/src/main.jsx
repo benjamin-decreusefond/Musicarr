@@ -20,7 +20,7 @@ function Login({ onLogin }) {
   return (
     <div className="login">
       <form className="login-card" onSubmit={submit}>
-        <div className="brand"><span className="brand-mark" /> Tonearr</div>
+        <div className="brand"><span className="brand-mark" /> Musicarr</div>
         <p className="login-tag">Your music, your server.</p>
         <input placeholder="Username" value={u} onChange={e => setU(e.target.value)} autoFocus />
         <input placeholder="Password" type="password" value={p} onChange={e => setP(e.target.value)} />
@@ -38,8 +38,8 @@ function Sidebar({ route, nav, me, onLogout }) {
   useEffect(() => {
     load();
     const h = () => load();
-    window.addEventListener('tonearr:playlists-changed', h);
-    return () => window.removeEventListener('tonearr:playlists-changed', h);
+    window.addEventListener('musicarr:playlists-changed', h);
+    return () => window.removeEventListener('musicarr:playlists-changed', h);
   }, [load]);
 
   const createPlaylist = async () => {
@@ -57,7 +57,7 @@ function Sidebar({ route, nav, me, onLogout }) {
 
   return (
     <aside className="sidebar">
-      <div className="brand" onClick={() => nav({ view: 'home' })}><span className="brand-mark" /> Tonearr</div>
+      <div className="brand" onClick={() => nav({ view: 'home' })}><span className="brand-mark" /> Musicarr</div>
       <nav className="nav-main">
         <NavItem view="home" icon="home" label="Home" />
         <NavItem view="search" icon="search" label="Search" />
@@ -145,8 +145,8 @@ function App() {
   useEffect(() => { api.get('/api/auth/me').then(setMe).catch(() => setMe(null)); }, []);
   useEffect(() => {
     const h = () => setMe(null);
-    window.addEventListener('tonearr:unauth', h);
-    return () => window.removeEventListener('tonearr:unauth', h);
+    window.addEventListener('musicarr:unauth', h);
+    return () => window.removeEventListener('musicarr:unauth', h);
   }, []);
 
   const nav = useCallback((r) => {
