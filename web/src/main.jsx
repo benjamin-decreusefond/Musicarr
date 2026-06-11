@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Artist, Album, Library, Available, Favorites, Playlist, Downloads, Admin, Settings, Profile } from './views.jsx';
+import { Home, Search, Explore, Genre, Artist, Album, Library, Available, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -176,6 +176,7 @@ function Sidebar({ route, nav, me, onLogout }) {
       <nav className="nav-main">
         <NavItem view="home" icon="home" label="Home" />
         <NavItem view="search" icon="search" label="Search" />
+        <NavItem view="explore" icon="compass" label="Explore" />
         <NavItem view="library" icon="library" label="Library" />
         <NavItem view="available" icon="check" label="Available" />
       </nav>
@@ -278,7 +279,7 @@ function PlayerBar() {
 /* ----------------------------------------------------------- URL routing */
 // Keep the current view in the address bar so a refresh restores it (the
 // server serves index.html for any non-API path, so deep links work too).
-const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist']);
+const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre']);
 
 function routeToPath({ view, id }) {
   if (view === 'home') return '/';
@@ -336,6 +337,9 @@ function App() {
   switch (route.view) {
     case 'home': page = <Home nav={nav} />; break;
     case 'search': page = <Search nav={nav} />; break;
+    case 'explore': page = <Explore nav={nav} />; break;
+    case 'genre': page = <Genre id={route.id} nav={nav} />; break;
+    case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
     case 'artist': page = <Artist id={route.id} nav={nav} />; break;
     case 'album': page = <Album id={route.id} nav={nav} />; break;
     case 'library': page = <Library nav={nav} />; break;

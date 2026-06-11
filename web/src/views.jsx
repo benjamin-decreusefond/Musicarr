@@ -71,6 +71,7 @@ export function Home({ nav }) {
         <CardRow title="Trending playlists">
           {data.playlists.map(p => (
             <TileCard key={p.id} cover={p.cover} title={p.title} sub={`${p.nb_tracks} tracks · ${p.by}`}
+              onClick={() => nav({ view: 'dplaylist', id: p.id })}
               actions={<ImportPlaylistButton playlist={p} nav={nav} />} />
           ))}
         </CardRow>
@@ -346,35 +347,37 @@ export function Available() {
   const addToLibrary = async (ids) => {
     try { await api.post('/api/library', Array.isArray(ids) ? { track_ids: ids } : { track_id: ids }); load(); } catch {}
   };
+  const notInLib = data.filter(t => !t.in_library);
   return (
     <div className="page">
       <div className="list-head">
         <h1 className="page-h1">Available tracks</h1>
         <div className="list-head-actions">
-          {!!data.length && <button className="btn-ghost" onClick={() => addToLibrary(data.map(t => t.deezer_id))}>Add all to library</button>}
+          {!!notInLib.length && <button className="btn-ghost" onClick={() => addToLibrary(notInLib.map(t => t.deezer_id))}>Add all to library</button>}
           <button className="btn-primary" disabled={!data.length} onClick={() => player.playList(data, 0, { shuffle: true })}>
             <Icon name="shuffle" size={18} /> Shuffle play
           </button>
         </div>
       </div>
       <p className="settings-hint" style={{ maxWidth: 720 }}>
-        Indexers almost never publish single tracks — they publish whole albums. So when you download
-        one song, Musicarr grabs the album it belongs to and adds only the song you asked for to your
-        library. The album's other tracks land here, already downloaded: add any of them to your
-        library instantly, with no extra download.
+        Everything in your music root folder. Indexers publish whole albums rather than single tracks,
+        so downloading one song (or a playlist) brings its album along — those extra tracks all show up
+        here. Add any of them to your Library instantly, no re-download needed.
       </p>
       {data.length ? (
         <div className="track-list">
           {data.map((t, i) => (
             <div key={t.deezer_id} className="pl-row">
               <TrackRow track={t} i={i} tracks={data} showAlbum />
-              <button className="icon-btn pl-del" title="Add to library" onClick={() => addToLibrary(t.deezer_id)}>
-                <Icon name="plus" size={18} />
-              </button>
+              {t.in_library
+                ? <span className="badge accent" title="Already in your library">In library</span>
+                : <button className="icon-btn pl-del" title="Add to library" onClick={() => addToLibrary(t.deezer_id)}>
+                    <Icon name="plus" size={18} />
+                  </button>}
             </div>
           ))}
         </div>
-      ) : <div className="state faint">No extra tracks yet. They appear when a single-track download pulls in a full album.</div>}
+      ) : <div className="state faint">Nothing in the root folder yet. Download a track or album and it'll appear here.</div>}
     </div>
   );
 }
@@ -452,6 +455,120 @@ export function Playlist({ id }) {
           {!tracks.length && <div className="state faint">This playlist is empty.</div>}
         </div>
       </section>
+    </div>
+  );
+}
+
+/* --------------------------------------------------- Deezer playlist preview */
+export function DeezerPlaylist({ id, nav }) {
+  const player = usePlayer();
+  const { data, err, loading } = useAsync(() => api.get(`/api/deezer-playlist/${id}`), [id]);
+  const [imp, setImp] = useState('idle');
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const tracks = data.tracks || [];
+  const playable = tracks.filter(t => t.available);
+  const doImport = async () => {
+    setImp('busy');
+    try {
+      const r = await api.post('/api/playlists/import-deezer', { deezer_playlist_id: id });
+      window.dispatchEvent(new Event('musicarr:playlists-changed'));
+      nav({ view: 'playlist', id: r.id });
+    } catch (e) { alert(e.message); setImp('idle'); }
+  };
+  return (
+    <div className="page">
+      <header className="hero">
+        <Cover src={data.cover} size={200} alt={data.title} />
+        <div className="hero-meta">
+          <span className="hero-kind">Deezer playlist</span>
+          <h1 className="hero-title">{data.title}</h1>
+          <span className="hero-sub faint">{data.nb_tracks} tracks · {data.by}</span>
+          <div className="hero-actions">
+            <button className="btn-primary" disabled={!playable.length} onClick={() => player.playList(playable, 0, { shuffle: true })}>
+              <Icon name="shuffle" size={18} /> Shuffle play
+            </button>
+            <button className="btn-ghost" onClick={doImport} disabled={imp !== 'idle'}>
+              <Icon name={imp === 'busy' ? 'spinner' : 'plus'} size={18} /> {imp === 'busy' ? 'Adding…' : 'Add & download missing'}
+            </button>
+          </div>
+        </div>
+      </header>
+      <p className="settings-hint" style={{ maxWidth: 720 }}>
+        Adding this playlist saves it to your collection and downloads the tracks you don't have yet.
+        Downloaded tracks land in <strong>Available</strong> (and play right here in the playlist).
+      </p>
+      <section className="page-block">
+        <div className="track-list">
+          {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} showAlbum />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- Explore */
+export function Explore({ nav }) {
+  const { data, err, loading } = useAsync(() => api.get('/api/explore'), []);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  return (
+    <div className="page">
+      <h1 className="page-h1">Explore</h1>
+      <p className="settings-hint">Browse by genre — pick one for trending artists, albums, tracks and playlists.</p>
+      <div className="genre-grid">
+        {(data.genres || []).map(g => (
+          <button key={g.id} className="genre-card" onClick={() => nav({ view: 'genre', id: g.id })}
+            style={{ backgroundImage: g.picture ? `url(${g.picture})` : undefined }}>
+            <span className="genre-name">{g.name}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function Genre({ id, nav }) {
+  const { data, err, loading } = useAsync(() => api.get(`/api/genre/${id}`), [id]);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  return (
+    <div className="page">
+      <span className="hero-kind">Genre</span>
+      <h1 className="page-h1">{data.name}</h1>
+      {!!data.artists?.length && (
+        <CardRow title="Artists">
+          {data.artists.map(a => (
+            <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+              onClick={() => nav({ view: 'artist', id: a.id })} />
+          ))}
+        </CardRow>
+      )}
+      {!!data.albums?.length && (
+        <CardRow title="Albums">
+          {data.albums.map(a => (
+            <TileCard key={a.id} cover={a.cover} title={a.title} sub={a.artist} badge={a.available ? 'In library' : null}
+              onClick={() => nav({ view: 'album', id: a.id })}
+              actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+          ))}
+        </CardRow>
+      )}
+      {!!data.playlists?.length && (
+        <CardRow title="Playlists">
+          {data.playlists.map(p => (
+            <TileCard key={p.id} cover={p.cover} title={p.title} sub={`${p.nb_tracks} tracks · ${p.by}`}
+              onClick={() => nav({ view: 'dplaylist', id: p.id })} />
+          ))}
+        </CardRow>
+      )}
+      {!!data.tracks?.length && (
+        <section className="page-block">
+          <h2 className="row-title">Top tracks</h2>
+          <div className="track-list">
+            {data.tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={data.tracks} showAlbum />)}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

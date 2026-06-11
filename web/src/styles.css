@@ -233,6 +233,13 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .queue-actions .icon-btn { font-size: 15px; line-height: 1; padding: 4px; }
 .queue-actions .icon-btn:disabled { opacity: .3; cursor: default; }
 
+/* ============================ Explore / genres ============================ */
+.genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 8px; }
+.genre-card { position: relative; height: 110px; border-radius: var(--radius); overflow: hidden; background-color: var(--bg-elev-2); background-size: cover; background-position: center; display: flex; align-items: flex-end; padding: 14px; text-align: left; transition: transform .12s; }
+.genre-card::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,12,16,.1), rgba(11,12,16,.8)); }
+.genre-card:hover { transform: scale(1.02); }
+.genre-name { position: relative; z-index: 1; font-family: var(--font-display); font-weight: 700; font-size: 18px; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+
 /* ============================ Search history ============================ */
 .recent-head { display: flex; align-items: center; justify-content: space-between; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
