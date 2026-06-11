@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Router } from 'express';
 import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
-import { deezerGet, testJackett, testTransmission } from './sources.js';
+import { deezerGet, testJackett, testTransmission, testSlskd } from './sources.js';
 import { queueDownload } from './downloader.js';
 import { logger } from './log.js';
 
@@ -28,6 +28,10 @@ function currentSettings() {
     transmission_user: config.transmissionUser,
     transmission_pass: config.transmissionPass,
     transmission_download_dir: config.downloadDir,
+    slskd_url: config.slskdUrl,
+    slskd_api_key: config.slskdApiKey,
+    slskd_download_dir: config.slskdDownloadDir,
+    slskd_enabled: config.slskdEnabled,
   };
 }
 
@@ -92,6 +96,27 @@ api.put('/settings', requireAdmin, (req, res) => {
       }
       setSetting('transmission_download_dir', dir);
     }
+
+    // --- slskd (Soulseek) ---
+    if (has('slskd_url')) {
+      const url = str(b.slskd_url);
+      if (url && !isHttpUrl(url)) throw new Error('slskd URL must start with http:// or https://');
+      setSetting('slskd_url', url.replace(/\/$/, ''));
+    }
+    if (has('slskd_api_key')) setSetting('slskd_api_key', str(b.slskd_api_key));
+    if (has('slskd_download_dir')) {
+      const dir = str(b.slskd_download_dir);
+      if (dir && !path.isAbsolute(dir)) throw new Error('slskd download directory must be an absolute path');
+      if (dir) {
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          fs.accessSync(dir, fs.constants.R_OK);
+        } catch (e) {
+          throw new Error(`slskd download directory is not accessible from Musicarr: ${e.message}`);
+        }
+      }
+      setSetting('slskd_download_dir', dir);
+    }
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }
@@ -106,6 +131,8 @@ api.post('/settings/test', requireAdmin, async (req, res) => {
       await testJackett({ url: b.jackett_url, apiKey: b.jackett_api_key, indexer: b.jackett_indexer });
     } else if (b.section === 'transmission') {
       await testTransmission({ url: b.transmission_url, username: b.transmission_user, password: b.transmission_pass });
+    } else if (b.section === 'slskd') {
+      await testSlskd({ url: b.slskd_url, apiKey: b.slskd_api_key });
     } else {
       return res.status(400).json({ error: 'Unknown section' });
     }

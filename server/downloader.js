@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { db, config, upsertTrack, trackRowFromDeezer } from './db.js';
-import { deezerGet, jackettSearch, scoreResults, tmAdd, tmStatus } from './sources.js';
+import { deezerGet, jackettSearch, scoreResults, tmAdd, tmStatus,
+  slskdSearch, slskdEnqueue, slskdTransfer, scoreSlskdFiles } from './sources.js';
 import { logger } from './log.js';
 
 const log = logger('download');
@@ -84,6 +85,17 @@ async function startSearch(downloadId) {
       }
     }
 
+    // Soulseek (slskd) is the natural way to grab a single track: it shares
+    // individual files, so try it first when configured. If it lands the file,
+    // we're done — no torrent, no album.
+    if (config.slskdEnabled) {
+      try {
+        if (await trySlskd(downloadId, row, tr.duration || null)) return;
+      } catch (e) {
+        log.warn(`#${downloadId} slskd attempt failed, falling back to torrents: ${e.message}`);
+      }
+    }
+
     // Try the track itself first, but trackers almost always carry the full
     // album rather than single tracks — so fall back to the track's album and
     // let the import step keep what it can match.
@@ -160,8 +172,41 @@ async function startSearch(downloadId) {
   });
 }
 
-// downloadId -> import plan, kept in memory while torrents are active.
+// downloadId -> import plan, kept in memory while transfers are active.
 const pendingImports = new Map();
+
+/** Search Soulseek for a single track and enqueue the best file via slskd.
+ *  Returns true if a download was queued, false if nothing matched (so the
+ *  caller falls back to torrents). */
+async function trySlskd(downloadId, row, durationSec) {
+  setStatus(downloadId, 'searching', 'Searching Soulseek');
+  log.info(`#${downloadId} slskd search: "${row.artist} ${row.title}"`);
+  const files = await slskdSearch(`${row.artist} ${row.title}`);
+  const ranked = scoreSlskdFiles(files, row.artist, row.title, durationSec);
+  log.info(`#${downloadId} slskd: ${files.length} audio file(s), ${ranked.length} viable`);
+  if (!ranked.length) return false;
+
+  // Try candidates in order until one peer accepts the request.
+  for (const file of ranked.slice(0, 3)) {
+    try {
+      await slskdEnqueue(file.username, file);
+      const base = file.filename.split(/[\\/]/).pop();
+      log.info(`#${downloadId} slskd queued "${base}" from ${file.username}`);
+      setStatus(downloadId, 'downloading', `Soulseek: ${base}`, {
+        engine: 'soulseek', slskd_user: file.username, slskd_file: file.filename,
+        release_title: base, progress: 0,
+      });
+      pendingImports.set(downloadId, {
+        wantedTracks: [row], kind: 'track', deezerId: row.deezer_id, requiredId: row.deezer_id,
+        engine: 'soulseek', slskdUser: file.username, slskdFile: file.filename,
+      });
+      return true;
+    } catch (e) {
+      log.warn(`#${downloadId} slskd peer ${file.username} rejected the file: ${e.message}`);
+    }
+  }
+  return false;
+}
 
 /** Download folder name: readable in Transmission's UI, and deterministic
  *  from the DB row so the import step can find it again after a reboot. */
@@ -228,7 +273,23 @@ export async function sweepUnimported() {
 }
 
 async function tick() {
-  const active = db.prepare(`SELECT * FROM downloads WHERE status = 'downloading' AND torrent_hash IS NOT NULL`).all();
+  await tickTorrents();
+  await tickSoulseek();
+}
+
+async function finishImport(dl, torrent, srcDirOverride) {
+  setStatus(dl.id, 'importing', 'Importing files', { progress: 1 });
+  try {
+    const n = await importDownload(dl, torrent, srcDirOverride);
+    setStatus(dl.id, 'done', n > 1 ? `Imported ${n} tracks to your library` : 'Added to your library', { progress: 1 });
+  } catch (e) {
+    setStatus(dl.id, 'error', String(e.message || e));
+  }
+  pendingImports.delete(dl.id);
+}
+
+async function tickTorrents() {
+  const active = db.prepare(`SELECT * FROM downloads WHERE status = 'downloading' AND engine = 'torrent' AND torrent_hash IS NOT NULL`).all();
   if (!active.length) return;
   const hashes = active.map(d => d.torrent_hash);
   let torrents = [];
@@ -248,15 +309,29 @@ async function tick() {
       if (Math.abs(t.percentDone - dl.progress) > 0.01) setStatus(dl.id, 'downloading', dl.detail, { progress: t.percentDone });
       continue;
     }
-    // Download finished -> import.
-    setStatus(dl.id, 'importing', 'Importing files', { progress: 1 });
-    try {
-      const n = await importDownload(dl, t);
-      setStatus(dl.id, 'done', n > 1 ? `Imported ${n} tracks to your library` : 'Added to your library', { progress: 1 });
-    } catch (e) {
-      setStatus(dl.id, 'error', String(e.message || e));
+    await finishImport(dl, t);
+  }
+}
+
+async function tickSoulseek() {
+  const active = db.prepare(`SELECT * FROM downloads WHERE status = 'downloading' AND engine = 'soulseek'`).all();
+  for (const dl of active) {
+    let tr;
+    try { tr = await slskdTransfer(dl.slskd_user, dl.slskd_file); }
+    catch (e) { log.warn(`#${dl.id} could not poll slskd: ${e.message}`); continue; }
+    if (!tr) continue; // not visible yet
+    const state = tr.state || '';
+    if (/Errored|Cancelled|Rejected|TimedOut/i.test(state)) {
+      setStatus(dl.id, 'error', `Soulseek transfer ${state}`); pendingImports.delete(dl.id); continue;
     }
-    pendingImports.delete(dl.id);
+    if (!/Completed|Succeeded/i.test(state)) {
+      const pct = tr.percentComplete != null ? tr.percentComplete / 100
+        : (tr.size ? (tr.bytesTransferred || 0) / tr.size : 0);
+      if (Math.abs(pct - dl.progress) > 0.01) setStatus(dl.id, 'downloading', dl.detail, { progress: pct });
+      continue;
+    }
+    // Completed: import the single file from slskd's download dir.
+    await finishImport(dl, null, null);
   }
 }
 
@@ -299,21 +374,34 @@ function titleMatches(fi, wantTitle) {
 
 async function importDownload(dl, torrent, srcDirOverride = null) {
   const plan = pendingImports.get(dl.id);
-  // Downloads queued before the descriptive folder names landed live in the
-  // bare `musicarr-<id>` directory; fall back to it.
-  let srcDir = srcDirOverride || path.join(config.downloadDir, subdirFor(dl));
-  if (!fs.existsSync(srcDir)) {
-    const legacy = path.join(config.downloadDir, `musicarr-${dl.id}`);
-    if (fs.existsSync(legacy)) srcDir = legacy;
-  }
-  log.info(`#${dl.id} importing from ${srcDir}`);
-  const files = walkAudio(srcDir);
-  log.info(`#${dl.id} found ${files.length} audio file(s) in download`);
-  if (!files.length) {
-    const exists = fs.existsSync(srcDir);
-    throw new Error(exists
-      ? `No audio files found in ${srcDir} — check that DOWNLOAD_DIR/Transmission download directory points at the same storage`
-      : `Download directory ${srcDir} does not exist on Musicarr's side — the download dir and Transmission must share the same volume/path`);
+  let files;
+  if ((plan?.engine || dl.engine) === 'soulseek') {
+    // Soulseek: one specific file, somewhere under slskd's download dir.
+    const wantBase = (plan?.slskdFile || dl.slskd_file || '').split(/[\\/]/).pop();
+    log.info(`#${dl.id} importing slskd file "${wantBase}" from ${config.slskdDownloadDir}`);
+    const all = walkAudio(config.slskdDownloadDir);
+    const hit = all.find(f => path.basename(f) === wantBase) || all.find(f => normTitle(path.basename(f)) === normTitle(wantBase));
+    if (!hit) {
+      throw new Error(`Completed Soulseek file "${wantBase}" not found under ${config.slskdDownloadDir} — check SLSKD_DOWNLOAD_DIR points at slskd's downloads volume`);
+    }
+    files = [hit];
+  } else {
+    // Downloads queued before the descriptive folder names landed live in the
+    // bare `musicarr-<id>` directory; fall back to it.
+    let srcDir = srcDirOverride || path.join(config.downloadDir, subdirFor(dl));
+    if (!fs.existsSync(srcDir)) {
+      const legacy = path.join(config.downloadDir, `musicarr-${dl.id}`);
+      if (fs.existsSync(legacy)) srcDir = legacy;
+    }
+    log.info(`#${dl.id} importing from ${srcDir}`);
+    files = walkAudio(srcDir);
+    log.info(`#${dl.id} found ${files.length} audio file(s) in download`);
+    if (!files.length) {
+      const exists = fs.existsSync(srcDir);
+      throw new Error(exists
+        ? `No audio files found in ${srcDir} — check that DOWNLOAD_DIR/Transmission download directory points at the same storage`
+        : `Download directory ${srcDir} does not exist on Musicarr's side — the download dir and Transmission must share the same volume/path`);
+    }
   }
 
   // Read metadata for each downloaded file once. Track number comes from the
@@ -471,12 +559,22 @@ export function resumeOnBoot() {
       startSearch(dl.id).catch(e => setStatus(dl.id, 'error', String(e.message || e)));
     }
   }
-  // Rebuild import plans for active torrents from Deezer lazily on next tick.
-  const active = db.prepare(`SELECT * FROM downloads WHERE status = 'downloading' AND torrent_hash IS NOT NULL`).all();
+  // Rebuild import plans for active transfers (torrent or soulseek) on boot.
+  const active = db.prepare(`SELECT * FROM downloads WHERE status = 'downloading' AND (torrent_hash IS NOT NULL OR engine = 'soulseek')`).all();
   for (const dl of active) rebuildPlan(dl).catch(() => {});
 }
 
 async function rebuildPlan(dl) {
+  if (dl.engine === 'soulseek') {
+    const tr = await deezerGet(`track/${dl.deezer_id}`);
+    const row = trackRowFromDeezer(tr);
+    upsertTrack(row);
+    pendingImports.set(dl.id, {
+      wantedTracks: [row], kind: 'track', deezerId: dl.deezer_id, requiredId: dl.deezer_id,
+      engine: 'soulseek', slskdUser: dl.slskd_user, slskdFile: dl.slskd_file,
+    });
+    return;
+  }
   let wantedTracks;
   if (dl.kind === 'album') {
     const album = await deezerGet(`album/${dl.deezer_id}`);

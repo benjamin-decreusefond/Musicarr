@@ -19,6 +19,11 @@ const envDefaults = {
   transmissionUrl: process.env.TRANSMISSION_URL || 'http://transmission:9091/transmission/rpc',
   transmissionUser: process.env.TRANSMISSION_USER || '',
   transmissionPass: process.env.TRANSMISSION_PASS || '',
+  // slskd (Soulseek) — for downloading individual tracks. URL + API key enable
+  // it; downloadDir is where slskd writes completed files, as Musicarr sees it.
+  slskdUrl: (process.env.SLSKD_URL || '').replace(/\/$/, ''),
+  slskdApiKey: process.env.SLSKD_API_KEY || '',
+  slskdDownloadDir: process.env.SLSKD_DOWNLOAD_DIR || '/slskd-downloads',
 };
 
 // A stored value of '' is meaningful (e.g. clearing Transmission auth), so
@@ -46,6 +51,10 @@ export const config = {
   get transmissionUrl() { return getSetting('transmission_url') || envDefaults.transmissionUrl; },
   get transmissionUser() { return stored('transmission_user', envDefaults.transmissionUser); },
   get transmissionPass() { return stored('transmission_pass', envDefaults.transmissionPass); },
+  get slskdUrl() { return stored('slskd_url', envDefaults.slskdUrl).replace(/\/$/, ''); },
+  get slskdApiKey() { return stored('slskd_api_key', envDefaults.slskdApiKey); },
+  get slskdDownloadDir() { return getSetting('slskd_download_dir') || envDefaults.slskdDownloadDir; },
+  get slskdEnabled() { return !!(this.slskdUrl && this.slskdApiKey); },
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });
@@ -155,6 +164,13 @@ if (!trackCols.includes('in_library')) {
 const dlCols = db.prepare(`PRAGMA table_info(downloads)`).all().map(c => c.name);
 if (!dlCols.includes('to_library')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN to_library INTEGER NOT NULL DEFAULT 1`);
+}
+// Download engine: 'torrent' (Jackett+Transmission) or 'soulseek' (slskd).
+// slskd transfers are identified by the peer username + remote file path.
+if (!dlCols.includes('engine')) {
+  db.exec(`ALTER TABLE downloads ADD COLUMN engine TEXT NOT NULL DEFAULT 'torrent'`);
+  db.exec(`ALTER TABLE downloads ADD COLUMN slskd_user TEXT`);
+  db.exec(`ALTER TABLE downloads ADD COLUMN slskd_file TEXT`);
 }
 
 export function getSetting(key) {

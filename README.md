@@ -121,6 +121,44 @@ Responses from the external APIs are cached in memory to avoid rate limits:
 Deezer metadata for 5 minutes and Jackett searches for 10 minutes, with
 concurrent identical requests de-duplicated into a single upstream call.
 
+## Soulseek (slskd) — single-track downloads
+
+Torrent indexers publish whole albums, so single tracks are awkward. Soulseek
+shares **individual files**, which makes it the natural source for one-off
+songs. When slskd is configured (**Settings → Soulseek**, or `SLSKD_URL` +
+`SLSKD_API_KEY`), Musicarr fetches **single-track** downloads from Soulseek
+first — searching, ranking candidates (prefers FLAC/320, free upload slot,
+short queue, matching duration), and downloading the one best file. If nothing
+suitable is found, it **falls back to the torrent path** (album grab). Album
+downloads always use torrents.
+
+Two directory points to get right:
+
+1. **Download directory** — slskd writes completed files to its own downloads
+   folder; Musicarr imports from there (then hardlinks into the root folder
+   like everything else). Mount slskd's downloads volume so Musicarr can read
+   it, and set **slskd download directory** to that path.
+2. **Sharing back** — Soulseek is a give-and-take community; peers commonly ban
+   users who share nothing. Point slskd's shares at your music root folder so
+   you contribute back. This is slskd-side config, e.g.:
+
+```yaml
+# slskd.yml (or equivalent env)
+shares:
+  directories:
+    - /music            # your Musicarr root folder, mounted read-only into slskd
+directories:
+  downloads: /downloads # mount this same volume into Musicarr as SLSKD_DOWNLOAD_DIR
+web:
+  authentication:
+    api_keys:
+      musicarr:
+        key: <the API key you put in Musicarr>
+```
+
+You'll need a Soulseek account (just a username/password you choose) configured
+in slskd. slskd runs as its own container alongside Jackett/Transmission.
+
 ## Environment variables
 
 All of these are optional seeds for the first-run defaults; the ones marked
@@ -139,6 +177,9 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `TRANSMISSION_URL` | `http://transmission:9091/transmission/rpc` | RPC endpoint *(UI)* |
 | `TRANSMISSION_USER` | — | RPC username (if auth enabled) *(UI)* |
 | `TRANSMISSION_PASS` | — | RPC password *(UI)* |
+| `SLSKD_URL` | — | slskd base URL, e.g. `http://slskd:5030` — enables Soulseek *(UI)* |
+| `SLSKD_API_KEY` | — | slskd API key *(UI)* |
+| `SLSKD_DOWNLOAD_DIR` | `/slskd-downloads` | Where slskd writes completed files, as Musicarr sees it (shared volume) *(UI)* |
 | `ADMIN_USERNAME` | `admin` | Created on first boot only |
 | `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
