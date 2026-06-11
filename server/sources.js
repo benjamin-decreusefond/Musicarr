@@ -209,3 +209,124 @@ export async function tmStatus(hashes) {
 export async function tmRemove(hash) {
   await tmCall('torrent-remove', { ids: [hash], 'delete-local-data': false });
 }
+
+/* ------------------------------------------------------------ slskd (Soulseek) */
+const AUDIO_EXT_RE = /\.(flac|mp3|m4a|ogg|opus|wav|aac|wma)$/i;
+
+async function slskdFetch(pathAndQuery, opts = {}) {
+  if (!config.slskdUrl || !config.slskdApiKey) throw new Error('slskd URL / API key not configured');
+  const r = await fetch(`${config.slskdUrl}/api/v0/${pathAndQuery}`, {
+    ...opts,
+    headers: { 'X-API-Key': config.slskdApiKey, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    signal: AbortSignal.timeout(opts.timeoutMs || 20000),
+  });
+  if (r.status === 401 || r.status === 403) throw new Error('slskd rejected the API key');
+  if (!r.ok) throw new Error(`slskd ${r.status}`);
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
+}
+
+/** Verify a slskd endpoint + API key. */
+export async function testSlskd({ url, apiKey }) {
+  const base = (url || '').replace(/\/$/, '');
+  if (!base || !apiKey) throw new Error('URL and API key are required');
+  let r;
+  try {
+    r = await fetch(`${base}/api/v0/session`, { headers: { 'X-API-Key': apiKey }, signal: AbortSignal.timeout(15000) });
+  } catch (e) {
+    throw new Error(`Could not reach slskd: ${e.message}`);
+  }
+  if (r.status === 401 || r.status === 403) throw new Error('slskd rejected the API key');
+  if (!r.ok) throw new Error(`slskd returned ${r.status}`);
+  return true;
+}
+
+/** Run a Soulseek search and return the flattened candidate audio files,
+ *  each tagged with its peer and the peer's slot/queue info. */
+export async function slskdSearch(query, { timeoutMs = 45000 } = {}) {
+  const search = await slskdFetch('searches', { method: 'POST', body: JSON.stringify({ searchText: query }) });
+  const id = search?.id;
+  if (!id) throw new Error('slskd did not return a search id');
+
+  // Poll until the search completes or we have enough to work with.
+  const deadline = Date.now() + timeoutMs;
+  let state = search;
+  while (Date.now() < deadline) {
+    await new Promise(res => setTimeout(res, 1500));
+    state = await slskdFetch(`searches/${id}`);
+    if (state?.isComplete || (state?.responseCount ?? 0) >= 20) break;
+  }
+  let responses = [];
+  try { responses = await slskdFetch(`searches/${id}/responses`) || []; } catch { /* ignore */ }
+  try { await slskdFetch(`searches/${id}`, { method: 'DELETE' }); } catch { /* best effort cleanup */ }
+
+  const out = [];
+  for (const resp of responses) {
+    for (const f of (resp.files || [])) {
+      if (!AUDIO_EXT_RE.test(f.filename || '')) continue;
+      out.push({
+        username: resp.username,
+        filename: f.filename,
+        size: f.size || 0,
+        bitRate: f.bitRate || 0,
+        length: f.length || 0,                      // seconds
+        hasFreeUploadSlot: !!resp.hasFreeUploadSlot,
+        queueLength: resp.queueLength ?? 0,
+        uploadSpeed: resp.uploadSpeed ?? 0,
+      });
+    }
+  }
+  return out;
+}
+
+/** Enqueue a single file download from a peer. */
+export async function slskdEnqueue(username, file) {
+  await slskdFetch(`transfers/downloads/${encodeURIComponent(username)}`, {
+    method: 'POST',
+    body: JSON.stringify([{ filename: file.filename, size: file.size }]),
+  });
+  return true;
+}
+
+/** Find a specific download transfer's state for a user/file. Returns
+ *  { state, percentComplete, bytesTransferred, size } or null. */
+export async function slskdTransfer(username, filename) {
+  let dirs;
+  try { dirs = await slskdFetch(`transfers/downloads/${encodeURIComponent(username)}`); }
+  catch { return null; }
+  // Response is { username, directories: [{ directory, files: [transfer...] }] }
+  const files = (dirs?.directories || []).flatMap(d => d.files || []);
+  return files.find(f => f.filename === filename) || null;
+}
+
+export async function slskdCancel(username, id) {
+  try { await slskdFetch(`transfers/downloads/${encodeURIComponent(username)}/${id}`, { method: 'DELETE' }); } catch { /* ignore */ }
+}
+
+/** Rank candidate files for one wanted track. Returns them best-first, after
+ *  dropping ones whose filename clearly doesn't match the title/artist. */
+export function scoreSlskdFiles(files, artist, title, durationSec) {
+  const must = norm(artist).split(' ').filter(t => t.length > 1);
+  const want = norm(title).split(' ').filter(t => t.length > 1);
+  const scored = [];
+  for (const f of files) {
+    const base = (f.filename || '').split(/[\\/]/).pop();
+    const hay = ' ' + norm(base) + ' ' + norm(f.filename) + ' ';
+    const titleHits = want.filter(t => hay.includes(t)).length;
+    if (want.length && titleHits === 0) continue;                     // wrong song
+    let score = (titleHits / Math.max(1, want.length)) * 50;
+    const artistHits = must.filter(t => hay.includes(t)).length;
+    score += (artistHits / Math.max(1, must.length)) * 20;
+    if (/\.flac$/i.test(base)) score += 20;
+    else if (f.bitRate >= 320 || /320/.test(base)) score += 12;
+    else if (f.bitRate && f.bitRate < 192) score -= 10;
+    if (f.hasFreeUploadSlot) score += 25;                             // available now
+    score -= Math.min(20, (f.queueLength || 0));                      // long queue is bad
+    score += Math.min(10, (f.uploadSpeed || 0) / 100000);
+    // Duration sanity: within ~15s of the Deezer length when both known.
+    if (durationSec && f.length && Math.abs(f.length - durationSec) > 15) score -= 15;
+    scored.push({ file: f, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map(s => s.file);
+}

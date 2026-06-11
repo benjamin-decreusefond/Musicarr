@@ -658,6 +658,7 @@ export function Profile({ me }) {
 const SETTING_FIELDS = [
   'root_folder', 'jackett_url', 'jackett_api_key', 'jackett_indexer', 'search_categories',
   'transmission_url', 'transmission_user', 'transmission_pass', 'transmission_download_dir',
+  'slskd_url', 'slskd_api_key', 'slskd_download_dir',
 ];
 
 function Field({ label, hint, type = 'text', value, onChange }) {
@@ -699,6 +700,8 @@ export function Settings() {
     setTesting(section); setTested(t => ({ ...t, [section]: null }));
     const body = section === 'jackett'
       ? { section, jackett_url: s.jackett_url, jackett_api_key: s.jackett_api_key, jackett_indexer: s.jackett_indexer }
+      : section === 'slskd'
+      ? { section, slskd_url: s.slskd_url, slskd_api_key: s.slskd_api_key }
       : { section, transmission_url: s.transmission_url, transmission_user: s.transmission_user, transmission_pass: s.transmission_pass };
     try {
       await api.post('/api/settings/test', body);
@@ -763,6 +766,26 @@ export function Settings() {
             {testing === 'transmission' ? 'Testing…' : 'Test connection'}
           </button>
           <TestResult section="transmission" />
+        </div>
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Soulseek (slskd) <span className={`src-pill ${s.slskd_enabled ? 'on' : ''}`}>{s.slskd_enabled ? 'enabled' : 'off'}</span></h2>
+        <p className="settings-hint">
+          Optional. When set, single-track downloads are fetched from the Soulseek network one file at
+          a time (great for singles and rare tracks), falling back to torrents if nothing's found.
+          Point the download directory at slskd's completed-downloads folder, mounted so Musicarr can
+          read it. For good standing on Soulseek, configure slskd to share your music root folder back.
+        </p>
+        <Field label="URL" hint="e.g. http://slskd:5030 (no trailing slash)" value={s.slskd_url} onChange={v => set('slskd_url', v)} />
+        <Field label="API key" type="password" value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
+        <Field label="Download directory" hint="Where slskd writes finished files, as Musicarr sees it (shared volume), e.g. /data/slskd/downloads"
+          value={s.slskd_download_dir} onChange={v => set('slskd_download_dir', v)} />
+        <div className="settings-actions">
+          <button className="btn-ghost" onClick={() => test('slskd')} disabled={testing === 'slskd'}>
+            {testing === 'slskd' ? 'Testing…' : 'Test connection'}
+          </button>
+          <TestResult section="slskd" />
         </div>
       </section>
 
