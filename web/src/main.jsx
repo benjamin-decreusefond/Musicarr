@@ -235,6 +235,11 @@ function PlayerBar() {
           <button className="icon-btn" onClick={p.prev} disabled={!p.hasPrev}><Icon name="prev" size={20} fill="currentColor" /></button>
           <button className="play-btn" onClick={p.toggle}><Icon name={p.playing ? 'pause' : 'play'} size={22} fill="currentColor" /></button>
           <button className="icon-btn" onClick={p.next} disabled={!p.hasNext}><Icon name="next" size={20} fill="currentColor" /></button>
+          <button className={`icon-btn repeat-btn ${p.repeat !== 'off' ? 'on' : ''}`} onClick={p.cycleRepeat}
+            title={p.repeat === 'off' ? 'Repeat: off' : p.repeat === 'all' ? 'Repeat: queue' : 'Repeat: this track'}>
+            <Icon name="repeat" size={16} />
+            {p.repeat === 'one' && <span className="repeat-badge">1</span>}
+          </button>
         </div>
         <div className="player-seek">
           <span className="t">{fmtTime(seekVal ?? p.time)}</span>
