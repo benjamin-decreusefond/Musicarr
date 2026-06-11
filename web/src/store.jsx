@@ -135,7 +135,14 @@ export function PlayerProvider({ children }) {
     const a = audioRef.current;
     const { queue: q, index: i, repeat: r } = stateRef.current;
     if (!q.length || i < 0) return;
-    const replay = () => { a.currentTime = 0; a.play().catch(e => console.warn('[player] replay failed:', e)); };
+    const replay = () => {
+      a.currentTime = 0;
+      // Re-arm end detection: replaying keeps the same track, so the playback
+      // effect won't reset the guard for us (this is what made repeat-one
+      // play only once and then stall).
+      endedGuardRef.current = false;
+      a.play().catch(e => console.warn('[player] replay failed:', e));
+    };
     if (!manual && r === 'one') return replay();
     let ni = i + 1;
     if (ni >= q.length) {
@@ -176,12 +183,19 @@ export function PlayerProvider({ children }) {
       if (skipFailsRef.current >= Math.max(1, q.length)) { setPlaying(false); return; }
       advance(true);
     };
+    // Seeking away from the end re-arms end detection (e.g. the prev-button
+    // restart, or scrubbing backwards after the track already finished).
+    const onSeeking = () => {
+      const d = a.duration;
+      if (Number.isFinite(d) && d > 0 && a.currentTime < d - 1) endedGuardRef.current = false;
+    };
     a.addEventListener('timeupdate', onTime);
     a.addEventListener('durationchange', onDur);
     a.addEventListener('ended', onEnd);
     a.addEventListener('play', onPlay);
     a.addEventListener('pause', onPause);
     a.addEventListener('error', onError);
+    a.addEventListener('seeking', onSeeking);
     return () => {
       a.removeEventListener('timeupdate', onTime);
       a.removeEventListener('durationchange', onDur);
@@ -189,6 +203,7 @@ export function PlayerProvider({ children }) {
       a.removeEventListener('play', onPlay);
       a.removeEventListener('pause', onPause);
       a.removeEventListener('error', onError);
+      a.removeEventListener('seeking', onSeeking);
     };
   }, [advance]);
 

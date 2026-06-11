@@ -214,6 +214,8 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .queue-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 2px; }
 .queue-row:hover { background: var(--surface-hover); }
 .queue-row.current .queue-title { color: var(--accent); }
+.queue-row.played { opacity: .45; }
+.queue-row.played:hover { opacity: .8; }
 .queue-row.dragging { opacity: .4; }
 .queue-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
 .queue-grip { display: flex; align-items: center; color: var(--text-faint); cursor: grab; flex-shrink: 0; padding-left: 2px; }

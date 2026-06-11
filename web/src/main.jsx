@@ -93,7 +93,7 @@ function QueuePanel() {
       <div className="queue-list">
         {p.queue.map((t, i) => (
           <div key={`${t.deezer_id || t.id}-${i}`}
-            className={`queue-row ${i === p.index ? 'current' : ''} ${dragOver === i ? 'drag-over' : ''} ${dragFrom === i ? 'dragging' : ''}`}
+            className={`queue-row ${i === p.index ? 'current' : ''} ${i < p.index ? 'played' : ''} ${dragOver === i ? 'drag-over' : ''} ${dragFrom === i ? 'dragging' : ''}`}
             draggable
             onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; }}
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== i) setDragOver(i); }}
