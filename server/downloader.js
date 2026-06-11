@@ -59,10 +59,12 @@ async function startSearch(downloadId) {
     const row = trackRowFromDeezer(tr);
     upsertTrack(row);
 
-    // If the file already exists from a previous download, finish instantly.
+    // If the file already exists (downloaded, or "Available" from an album
+    // grab), finish instantly — promoting it into the library.
     const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(dl.deezer_id);
     if (have?.file_path && fs.existsSync(have.file_path)) {
-      return setStatus(downloadId, 'done', 'Already in library', { progress: 1 });
+      db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ?').run(dl.deezer_id);
+      return setStatus(downloadId, 'done', 'Added to your library', { progress: 1 });
     }
 
     // Releases are usually full albums, so plan for the whole tracklist: any
@@ -300,6 +302,11 @@ async function importDownload(dl, torrent, srcDirOverride = null) {
   const wanted = plan?.wantedTracks || [];
   let imported = 0;
 
+  // A track joins the Library only if the user actually asked for it: the whole
+  // album for an album download, or just the requested song for a track
+  // download. Sibling tracks dragged in by an album release stay "Available".
+  const requestedInLibrary = (want) => plan?.kind === 'album' || want.deezer_id === plan?.requiredId;
+
   // Link one downloaded file into the library for a wanted track.
   const linkInto = (want, fi) => {
     fi.used = true;
@@ -321,16 +328,22 @@ async function importDownload(dl, torrent, srcDirOverride = null) {
         throw new Error(`Hardlink failed: ${e.message}`);
       }
     }
-    db.prepare('UPDATE tracks SET file_path = ? WHERE deezer_id = ?').run(dest, want.deezer_id);
-    log.info(`#${dl.id} imported "${want.artist} - ${want.title}" -> ${dest}`);
+    // Never demote a track that's already in the library.
+    db.prepare('UPDATE tracks SET file_path = ?, in_library = MAX(in_library, ?) WHERE deezer_id = ?')
+      .run(dest, requestedInLibrary(want) ? 1 : 0, want.deezer_id);
+    log.info(`#${dl.id} imported "${want.artist} - ${want.title}"${requestedInLibrary(want) ? '' : ' (available)'} -> ${dest}`);
     imported++;
   };
 
   const unmatched = [];
   for (const want of wanted) {
-    // If we already have this track's file globally, just reuse it.
+    // If we already have this track's file globally, just reuse it — but if it
+    // was only "Available" and is now explicitly requested, promote it.
     const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id);
-    if (have?.file_path && fs.existsSync(have.file_path)) { imported++; continue; }
+    if (have?.file_path && fs.existsSync(have.file_path)) {
+      if (requestedInLibrary(want)) db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ?').run(want.deezer_id);
+      imported++; continue;
+    }
 
     // Match a downloaded file to this wanted track: prefer track number (tag or
     // filename), then bidirectional title matching.

@@ -152,7 +152,7 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle }) {
         {isCurrent && player.playing
           ? <span className="eq"><i /><i /><i /></span>
           : <span className="num">{(i ?? 0) + 1}</span>}
-        <Icon name="play" size={14} fill="currentColor" />
+        <Icon name={isCurrent && player.playing ? 'pause' : 'play'} size={14} fill="currentColor" />
       </div>
       {showAlbum && <Cover src={track.cover} size={40} />}
       <div className="track-main">

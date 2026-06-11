@@ -42,6 +42,9 @@
 
 /* ============================ Pages ============================ */
 .page { padding-top: 4px; }
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+.list-head .page-h1 { margin-bottom: 0; }
+.list-head-actions { display: flex; align-items: center; gap: 10px; }
 .page-h1 { font-family: var(--font-display); font-size: 30px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 22px; }
 .page-block { margin: 28px 0; }
 .row-title { font-family: var(--font-display); font-size: 21px; font-weight: 600; margin-bottom: 14px; letter-spacing: -.01em; }
@@ -88,22 +91,23 @@
 
 /* ============================ Track list ============================ */
 .track-list { display: flex; flex-direction: column; }
-.track-row { display: grid; grid-template-columns: 28px 1fr auto auto auto; align-items: center; gap: 14px; padding: 8px 12px; border-radius: 7px; cursor: pointer; }
+.track-row { display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-radius: 7px; cursor: pointer; }
 .track-row.dim { opacity: .6; }
 .track-row:hover { background: var(--bg-elev-2); }
 .track-row.current .track-title { color: var(--accent); }
-.track-idx { position: relative; width: 22px; text-align: center; color: var(--text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
+.track-idx { position: relative; width: 22px; flex: none; text-align: center; color: var(--text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
 .track-idx .num { display: inline; }
 .track-idx svg { position: absolute; inset: 0; margin: auto; opacity: 0; color: var(--text); }
 .track-row:hover .track-idx .num { opacity: 0; }
+.track-row:hover .track-idx .eq { opacity: 0; }
 .track-row:hover .track-idx svg { opacity: 1; }
-.track-main { min-width: 0; }
+.track-main { flex: 1 1 auto; min-width: 0; }
 .track-title { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track-sub { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-.track-actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity .15s; }
+.track-actions { display: flex; align-items: center; gap: 2px; flex: none; opacity: 0; transition: opacity .15s; }
 .track-row:hover .track-actions { opacity: 1; }
-.track-time { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; }
-.badge { font-size: 11px; font-weight: 600; color: var(--text-faint); border: 1px solid var(--line); padding: 2px 8px; border-radius: 5px; white-space: nowrap; }
+.track-time { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; min-width: 42px; flex: none; text-align: right; }
+.badge { font-size: 11px; font-weight: 600; color: var(--text-faint); border: 1px solid var(--line); padding: 2px 8px; border-radius: 5px; white-space: nowrap; flex: none; }
 .badge.accent { color: var(--accent); border-color: rgba(201,242,77,.4); }
 
 .eq { display: inline-flex; gap: 2px; align-items: flex-end; height: 14px; }
