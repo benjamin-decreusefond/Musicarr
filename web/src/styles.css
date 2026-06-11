@@ -193,7 +193,7 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border: none; b
 .eq-switch { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
 .eq-bands { display: flex; justify-content: space-between; gap: 4px; }
 .eq-band { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 1; }
-input[type=range].eq-slider { -webkit-appearance: slider-vertical; appearance: none; width: 6px; height: 110px; flex: none; background: var(--bg-elev); border-radius: 3px; padding: 0; }
+input[type=range].eq-slider { -webkit-appearance: slider-vertical; appearance: none; writing-mode: vertical-lr; direction: rtl; width: 6px; height: 110px; flex: none; background: var(--bg-elev); border-radius: 3px; padding: 0; }
 input[type=range].eq-slider:disabled { opacity: .4; cursor: default; }
 input[type=range].eq-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); opacity: 1; }
 input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; background: var(--accent); }
@@ -202,6 +202,27 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .eq-presets { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .eq-presets select { flex: 1; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 8px 10px; font-size: 13px; outline: none; }
 .btn-ghost.sm { padding: 6px 12px; font-size: 12.5px; }
+.eq-page-panel { max-width: 460px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-top: 14px; }
+
+/* ============================ Queue ============================ */
+.queue-panel { position: absolute; bottom: calc(100% + 12px); right: 0; width: 340px; max-height: 60vh; display: flex; flex-direction: column; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; z-index: 60; box-shadow: 0 16px 50px rgba(0,0,0,.6); }
+.queue-count { font-size: 12px; color: var(--text-faint); font-weight: 500; }
+.queue-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.queue-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 2px; }
+.queue-row:hover { background: var(--surface-hover); }
+.queue-row.current .queue-title { color: var(--accent); }
+.queue-row.dragging { opacity: .4; }
+.queue-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.queue-grip { display: flex; align-items: center; color: var(--text-faint); cursor: grab; flex-shrink: 0; padding-left: 2px; }
+.queue-grip:active { cursor: grabbing; }
+.queue-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 6px 8px; text-align: left; }
+.queue-idx { width: 22px; text-align: center; font-size: 13px; color: var(--text-dim); flex-shrink: 0; }
+.queue-meta { min-width: 0; display: flex; flex-direction: column; }
+.queue-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue-artist { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.queue-actions .icon-btn { font-size: 15px; line-height: 1; padding: 4px; }
+.queue-actions .icon-btn:disabled { opacity: .3; cursor: default; }
 
 /* ============================ Search history ============================ */
 .recent-head { display: flex; align-items: center; justify-content: space-between; }

@@ -290,10 +290,13 @@ export function Playlist({ id }) {
   const { data, err, loading, setData } = useAsync(() => api.get(`/api/playlists/${id}`), [id]);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
+  const player = usePlayer();
   const tracks = (data.tracks || []).map(t => ({ ...t, available: !!t.file_path }));
+  const playable = tracks.filter(t => t.available);
   const remove = async (trackId) => {
     await api.del(`/api/playlists/${id}/tracks/${trackId}`);
     setData({ ...data, tracks: data.tracks.filter(t => t.deezer_id !== trackId) });
+    window.dispatchEvent(new Event('musicarr:playlists-changed'));
   };
   return (
     <div className="page">
@@ -303,13 +306,19 @@ export function Playlist({ id }) {
           <span className="hero-kind">Playlist</span>
           <h1 className="hero-title">{data.name}</h1>
           <span className="hero-sub faint">{tracks.length} tracks</span>
+          <div className="hero-actions">
+            <button className="btn-primary" disabled={!playable.length}
+              onClick={() => player.playList(playable, 0, { shuffle: true })}>
+              <Icon name="shuffle" size={18} /> Shuffle play
+            </button>
+          </div>
         </div>
       </header>
       <section className="page-block">
         <div className="track-list">
           {tracks.map((t, i) => (
             <div key={t.deezer_id} className="pl-row">
-              <TrackRow track={t} i={i} tracks={tracks} showAlbum />
+              <TrackRow track={t} i={i} tracks={tracks} showAlbum shuffle />
               <button className="icon-btn pl-del" onClick={() => remove(t.deezer_id)} title="Remove"><Icon name="close" size={16} /></button>
             </div>
           ))}

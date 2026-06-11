@@ -22,6 +22,9 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     vol: 'M5 9v6h4l5 4V5L9 9zM17 8a5 5 0 0 1 0 8',
     sliders: 'M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4M14 4v4M6 10v4M12 16v4',
     lock: 'M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5zM12 14v3',
+    shuffle: 'M16 3h5v5M21 3l-7 7M4 20l7-7M4 4l5 5M16 21h5v-5M15 15l6 6',
+    queue: 'M4 6h12M4 12h12M4 18h8M17 13v6M17 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0M19 11l3-1',
+    grip: 'M9 6h0M9 12h0M9 18h0M15 6h0M15 12h0M15 18h0',
     settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2Z',
     spinner: 'M12 3a9 9 0 1 0 9 9',
   }[name];
@@ -95,7 +98,10 @@ export function AddToPlaylist({ trackId }) {
   };
   const add = async (pid, e) => {
     e.stopPropagation();
-    try { await api.post(`/api/playlists/${pid}/tracks`, { track_id: trackId }); } catch {}
+    try {
+      await api.post(`/api/playlists/${pid}/tracks`, { track_id: trackId });
+      window.dispatchEvent(new Event('musicarr:playlists-changed')); // refresh sidebar counts
+    } catch {}
     setOpen(false);
   };
   const create = async (e) => {
@@ -124,8 +130,9 @@ export function AddToPlaylist({ trackId }) {
   );
 }
 
-/** A single row in a track list. `tracks`/`i` allow play-in-context. */
-export function TrackRow({ track, i, tracks, showAlbum, onFav }) {
+/** A single row in a track list. `tracks`/`i` allow play-in-context.
+ *  `shuffle` (used by playlists) shuffles the whole list into the queue. */
+export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle }) {
   const player = usePlayer();
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
@@ -135,8 +142,8 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav }) {
 
   const onPlay = () => {
     if (!available) return;
-    if (tracks) player.playList(tracks, i ?? 0);
-    else player.playTrack(track);
+    if (shuffle && tracks && !isCurrent) player.playList(tracks, i ?? 0, { shuffle: true });
+    else player.playOrToggle(track, tracks, i ?? 0);
   };
   return (
     <div className={`track-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}>
