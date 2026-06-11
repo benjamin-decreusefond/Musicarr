@@ -150,6 +150,13 @@ if (!trackCols.includes('in_library')) {
   db.exec(`UPDATE tracks SET in_library = 1 WHERE file_path IS NOT NULL`);
 }
 
+// `to_library` = 0 means an import should leave its tracks as "Available"
+// rather than promoting the requested track into the Library (playlist imports).
+const dlCols = db.prepare(`PRAGMA table_info(downloads)`).all().map(c => c.name);
+if (!dlCols.includes('to_library')) {
+  db.exec(`ALTER TABLE downloads ADD COLUMN to_library INTEGER NOT NULL DEFAULT 1`);
+}
+
 export function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 }

@@ -142,7 +142,7 @@ api.get('/library', (req, res) => {
     FROM tracks t
     WHERE (t.file_path IS NOT NULL AND t.in_library = 1)
        OR EXISTS (SELECT 1 FROM downloads d
-            WHERE d.status IN ('searching', 'downloading', 'importing')
+            WHERE d.status IN ('searching', 'downloading', 'importing') AND d.to_library = 1
               AND ((d.kind = 'track' AND d.deezer_id = t.deezer_id)
                 OR (d.kind = 'album' AND d.deezer_id = t.album_id)))
     ORDER BY (t.file_path IS NOT NULL) DESC, t.added_at DESC
@@ -150,15 +150,15 @@ api.get('/library', (req, res) => {
   res.json(rows);
 });
 
-// "Available": tracks on disk that arrived inside an album download but were
-// never explicitly requested. They can be promoted into the library instantly
-// (the file is already here — no re-download).
+// "Available": every track present in the root folder (the on-disk catalog,
+// kept in sync by the boot/library scan). `in_library` flags the ones already
+// added to the Library; the rest can be promoted instantly (no re-download).
 api.get('/available', (req, res) => {
   const rows = db.prepare(`
     SELECT t.*, 1 AS available,
       EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = ? AND f.track_id = t.deezer_id) AS favorite
     FROM tracks t
-    WHERE t.file_path IS NOT NULL AND t.in_library = 0
+    WHERE t.file_path IS NOT NULL
     ORDER BY t.artist, t.album, t.track_position
   `).all(req.user.id);
   res.json(rows);
@@ -281,6 +281,73 @@ api.get('/home', async (req, res) => {
   }
 });
 
+// Preview a Deezer playlist (its tracks) before importing it.
+api.get('/deezer-playlist/:id', async (req, res) => {
+  try {
+    const pl = await deezerGet(`playlist/${req.params.id}`);
+    const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+    res.json({
+      id: pl.id, title: pl.title, cover: pl.picture_big || pl.picture_medium,
+      by: pl.creator?.name || pl.user?.name || 'Deezer', nb_tracks: pl.nb_tracks,
+      tracks: (pl.tracks?.data || []).map(t => ({
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
+        duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
+      })),
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ------------------------------------------------------------- Explore */
+// Music genres for the Explore tab.
+api.get('/explore', async (req, res) => {
+  try {
+    const g = await deezerGet('genre');
+    res.json({
+      genres: (g.data || [])
+        .filter(x => x.id !== 0) // "All"
+        .map(x => ({ id: x.id, name: x.name, picture: x.picture_medium || x.picture })),
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Suggestions for one genre: Deezer's chart scoped to the genre id gives
+// tracks / albums / artists / playlists for it.
+api.get('/genre/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const [genre, chart] = await Promise.all([
+      deezerGet(`genre/${id}`).catch(() => ({})),
+      deezerGet(`chart/${id}`),
+    ]);
+    const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+    const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
+    res.json({
+      id, name: genre.name || 'Genre',
+      artists: (chart.artists?.data || []).map(a => ({ id: a.id, name: a.name, picture: a.picture_medium })),
+      albums: (chart.albums?.data || []).map(a => ({
+        id: a.id, title: a.title, artist: a.artist?.name, artist_id: a.artist?.id,
+        cover: a.cover_medium, available: !!haveAlbum.get(a.id),
+      })),
+      playlists: (chart.playlists?.data || []).map(p => ({
+        id: p.id, title: p.title, cover: p.picture_medium || p.picture,
+        nb_tracks: p.nb_tracks, by: p.user?.name || 'Deezer',
+      })),
+      tracks: (chart.tracks?.data || []).map(t => ({
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
+        duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
+      })),
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 /* ----------------------------------------------------------- Downloads */
 api.post('/download', async (req, res) => {
   const { kind, deezer_id } = req.body || {};
@@ -394,7 +461,8 @@ api.post('/playlists/import-deezer', async (req, res) => {
     let queued = 0;
     for (const rep of byAlbum.values()) {
       if (queued >= IMPORT_QUEUE_CAP) break;
-      queueDownload(req.user.id, 'track', rep.deezer_id, `${rep.artist} – ${rep.title}`, rep.cover);
+      // Available-only: the tracks belong to the playlist, not the main Library.
+      queueDownload(req.user.id, 'track', rep.deezer_id, `${rep.artist} – ${rep.title}`, rep.cover, false);
       queued++;
     }
     log.info(`playlist import "${name}": ${rows.length} tracks, ${missing.length} missing across ${byAlbum.size} album(s), ${queued} download(s) queued`);

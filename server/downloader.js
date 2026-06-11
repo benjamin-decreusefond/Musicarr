@@ -20,14 +20,16 @@ function setStatus(id, status, detail, extra = {}) {
 
 /**
  * Queue a download. `kind` is 'album' or 'track'. Returns the download row id.
+ * `toLibrary` controls whether the requested track is promoted into the
+ * Library (true) or left as "Available" (false — used for playlist imports,
+ * where the tracks live in the playlist and shouldn't flood the Library).
  * The actual work happens asynchronously in startSearch().
  */
-export function queueDownload(userId, kind, deezerId, label, cover) {
-  // Already have the file(s)? Then it's instant for this user.
-  const existing = db.prepare('INSERT INTO downloads (user_id, kind, deezer_id, label, cover) VALUES (?, ?, ?, ?, ?)')
-    .run(userId, kind, deezerId, label, cover || null);
+export function queueDownload(userId, kind, deezerId, label, cover, toLibrary = true) {
+  const existing = db.prepare('INSERT INTO downloads (user_id, kind, deezer_id, label, cover, to_library) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(userId, kind, deezerId, label, cover || null, toLibrary ? 1 : 0);
   const id = existing.lastInsertRowid;
-  log.info(`#${id} queued ${kind} ${deezerId} by user ${userId}: ${label}`);
+  log.info(`#${id} queued ${kind} ${deezerId} by user ${userId}: ${label}${toLibrary ? '' : ' (available only)'}`);
   startSearch(id).catch(e => { log.error(`#${id} startSearch failed`, e); setStatus(id, 'error', String(e.message || e)); });
   return id;
 }
@@ -60,11 +62,12 @@ async function startSearch(downloadId) {
     upsertTrack(row);
 
     // If the file already exists (downloaded, or "Available" from an album
-    // grab), finish instantly — promoting it into the library.
+    // grab), finish instantly — promoting it into the library unless this is
+    // an available-only (playlist) download.
     const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(dl.deezer_id);
     if (have?.file_path && fs.existsSync(have.file_path)) {
-      db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ?').run(dl.deezer_id);
-      return setStatus(downloadId, 'done', 'Added to your library', { progress: 1 });
+      if (dl.to_library) db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ?').run(dl.deezer_id);
+      return setStatus(downloadId, 'done', dl.to_library ? 'Added to your library' : 'Available', { progress: 1 });
     }
 
     // Releases are usually full albums, so plan for the whole tracklist: any
@@ -335,7 +338,9 @@ async function importDownload(dl, torrent, srcDirOverride = null) {
   // A track joins the Library only if the user actually asked for it: the whole
   // album for an album download, or just the requested song for a track
   // download. Sibling tracks dragged in by an album release stay "Available".
-  const requestedInLibrary = (want) => plan?.kind === 'album' || want.deezer_id === plan?.requiredId;
+  // Playlist imports (to_library = 0) keep everything Available.
+  const requestedInLibrary = (want) =>
+    dl.to_library !== 0 && (plan?.kind === 'album' || want.deezer_id === plan?.requiredId);
 
   // Link one downloaded file into the library for a wanted track.
   const linkInto = (want, fi) => {
