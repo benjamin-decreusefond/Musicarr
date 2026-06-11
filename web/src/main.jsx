@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Artist, Album, Library, Favorites, Playlist, Downloads, Admin, Settings, Profile } from './views.jsx';
+import { Home, Search, Artist, Album, Library, Available, Favorites, Playlist, Downloads, Admin, Settings, Profile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -177,6 +177,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="home" icon="home" label="Home" />
         <NavItem view="search" icon="search" label="Search" />
         <NavItem view="library" icon="library" label="Library" />
+        <NavItem view="available" icon="check" label="Available" />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
@@ -337,7 +338,8 @@ function App() {
     case 'search': page = <Search nav={nav} />; break;
     case 'artist': page = <Artist id={route.id} nav={nav} />; break;
     case 'album': page = <Album id={route.id} nav={nav} />; break;
-    case 'library': page = <Library />; break;
+    case 'library': page = <Library nav={nav} />; break;
+    case 'available': page = <Available />; break;
     case 'favorites': page = <Favorites />; break;
     case 'playlist': page = <Playlist id={route.id} />; break;
     case 'downloads': page = <Downloads />; break;

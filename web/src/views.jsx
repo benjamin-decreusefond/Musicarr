@@ -229,6 +229,11 @@ export function Album({ id, nav }) {
           </div>
         </div>
       </header>
+      <p className="settings-hint" style={{ maxWidth: 720 }}>
+        Heads up: indexers publish full albums rather than single tracks, so downloading a single
+        song actually fetches this whole album. Only the song you pick is added to your library —
+        the rest wait under <strong>Available</strong>, ready to add anytime without re-downloading.
+      </p>
       <section className="page-block">
         <div className="track-list">
           {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} />)}
@@ -239,7 +244,8 @@ export function Album({ id, nav }) {
 }
 
 /* -------------------------------------------------------------- Library */
-export function Library() {
+export function Library({ nav }) {
+  const player = usePlayer();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const load = useCallback(() => { api.get('/api/library').then(setData).catch(e => setErr(e.message)); }, []);
@@ -247,9 +253,18 @@ export function Library() {
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
   if (err) return <ErrState msg={err} />;
   if (!data) return <Loading />;
+  const playable = data.filter(t => t.available);
   return (
     <div className="page">
-      <h1 className="page-h1">Your library</h1>
+      <div className="list-head">
+        <h1 className="page-h1">Your library</h1>
+        <div className="list-head-actions">
+          <button className="btn-ghost" onClick={() => nav?.({ view: 'available' })}>Available tracks</button>
+          <button className="btn-primary" disabled={!playable.length} onClick={() => player.playList(playable, 0, { shuffle: true })}>
+            <Icon name="shuffle" size={18} /> Shuffle play
+          </button>
+        </div>
+      </div>
       {data.length ? (
         <div className="track-list">
           {data.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={data} showAlbum />)}
@@ -259,12 +274,59 @@ export function Library() {
   );
 }
 
+/* ------------------------------------------------------------ Available */
+export function Available() {
+  const player = usePlayer();
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = useCallback(() => { api.get('/api/available').then(setData).catch(e => setErr(e.message)); }, []);
+  useEffect(() => { load(); }, [load]);
+  if (err) return <ErrState msg={err} />;
+  if (!data) return <Loading />;
+  const addToLibrary = async (ids) => {
+    try { await api.post('/api/library', Array.isArray(ids) ? { track_ids: ids } : { track_id: ids }); load(); } catch {}
+  };
+  return (
+    <div className="page">
+      <div className="list-head">
+        <h1 className="page-h1">Available tracks</h1>
+        <div className="list-head-actions">
+          {!!data.length && <button className="btn-ghost" onClick={() => addToLibrary(data.map(t => t.deezer_id))}>Add all to library</button>}
+          <button className="btn-primary" disabled={!data.length} onClick={() => player.playList(data, 0, { shuffle: true })}>
+            <Icon name="shuffle" size={18} /> Shuffle play
+          </button>
+        </div>
+      </div>
+      <p className="settings-hint" style={{ maxWidth: 720 }}>
+        Indexers almost never publish single tracks — they publish whole albums. So when you download
+        one song, Musicarr grabs the album it belongs to and adds only the song you asked for to your
+        library. The album's other tracks land here, already downloaded: add any of them to your
+        library instantly, with no extra download.
+      </p>
+      {data.length ? (
+        <div className="track-list">
+          {data.map((t, i) => (
+            <div key={t.deezer_id} className="pl-row">
+              <TrackRow track={t} i={i} tracks={data} showAlbum />
+              <button className="icon-btn pl-del" title="Add to library" onClick={() => addToLibrary(t.deezer_id)}>
+                <Icon name="plus" size={18} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : <div className="state faint">No extra tracks yet. They appear when a single-track download pulls in a full album.</div>}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------ Favorites */
 export function Favorites() {
+  const player = usePlayer();
   const { data, err, loading } = useAsync(() => api.get('/api/favorites'), []);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
   const tracks = (data || []).map(t => ({ ...t, available: !!t.file_path, favorite: true }));
+  const playable = tracks.filter(t => t.available);
   return (
     <div className="page">
       <header className="hero">
@@ -273,6 +335,11 @@ export function Favorites() {
           <span className="hero-kind">Playlist</span>
           <h1 className="hero-title">Liked songs</h1>
           <span className="hero-sub faint">{tracks.length} tracks</span>
+          <div className="hero-actions">
+            <button className="btn-primary" disabled={!playable.length} onClick={() => player.playList(playable, 0, { shuffle: true })}>
+              <Icon name="shuffle" size={18} /> Shuffle play
+            </button>
+          </div>
         </div>
       </header>
       <section className="page-block">

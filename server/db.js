@@ -141,6 +141,15 @@ CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
 `);
 
+// Migration: `in_library` distinguishes tracks the user actually requested
+// (shown in Library) from tracks that only came along inside an album download
+// (shown under "Available"). Existing libraries keep everything they had.
+const trackCols = db.prepare(`PRAGMA table_info(tracks)`).all().map(c => c.name);
+if (!trackCols.includes('in_library')) {
+  db.exec(`ALTER TABLE tracks ADD COLUMN in_library INTEGER NOT NULL DEFAULT 0`);
+  db.exec(`UPDATE tracks SET in_library = 1 WHERE file_path IS NOT NULL`);
+}
+
 export function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 }

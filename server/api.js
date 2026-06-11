@@ -124,9 +124,9 @@ function trackWithFlags(userId) {
   `).pluck(false);
 }
 
-// The library shows every track on disk (file_path set), plus tracks that are
-// currently being fetched so a download shows up the moment it's clicked. Each
-// row carries `available` (file on disk) and the latest `download_status`.
+// The library shows tracks the user requested (in_library) that are on disk,
+// plus tracks currently being fetched so a download shows up the moment it's
+// clicked. Each row carries `available` (file on disk) and `download_status`.
 api.get('/library', (req, res) => {
   const rows = db.prepare(`
     SELECT t.*,
@@ -137,7 +137,7 @@ api.get('/library', (req, res) => {
             OR (d.kind = 'album' AND d.deezer_id = t.album_id)
          ORDER BY d.created_at DESC LIMIT 1) AS download_status
     FROM tracks t
-    WHERE t.file_path IS NOT NULL
+    WHERE (t.file_path IS NOT NULL AND t.in_library = 1)
        OR EXISTS (SELECT 1 FROM downloads d
             WHERE d.status IN ('searching', 'downloading', 'importing')
               AND ((d.kind = 'track' AND d.deezer_id = t.deezer_id)
@@ -145,6 +145,30 @@ api.get('/library', (req, res) => {
     ORDER BY (t.file_path IS NOT NULL) DESC, t.added_at DESC
   `).all(req.user.id);
   res.json(rows);
+});
+
+// "Available": tracks on disk that arrived inside an album download but were
+// never explicitly requested. They can be promoted into the library instantly
+// (the file is already here — no re-download).
+api.get('/available', (req, res) => {
+  const rows = db.prepare(`
+    SELECT t.*, 1 AS available,
+      EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = ? AND f.track_id = t.deezer_id) AS favorite
+    FROM tracks t
+    WHERE t.file_path IS NOT NULL AND t.in_library = 0
+    ORDER BY t.artist, t.album, t.track_position
+  `).all(req.user.id);
+  res.json(rows);
+});
+
+// Promote an Available track (or several) into the library.
+api.post('/library', (req, res) => {
+  const ids = Array.isArray(req.body?.track_ids) ? req.body.track_ids
+    : req.body?.track_id != null ? [req.body.track_id] : [];
+  if (!ids.length) return res.status(400).json({ error: 'track_id or track_ids required' });
+  const stmt = db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ? AND file_path IS NOT NULL');
+  const tx = db.transaction((list) => { let n = 0; for (const id of list) n += stmt.run(id).changes; return n; });
+  res.json({ added: tx(ids) });
 });
 
 /* --------------------------------------------------------------- Search */
