@@ -20,6 +20,31 @@ const Loading = () => <div className="state"><Icon name="spinner" size={28} /></
 const ErrState = ({ msg }) => <div className="state err">{msg}</div>;
 
 /* ----------------------------------------------------------------- Home */
+/** "+" button on a Deezer playlist tile: imports it as a local playlist and
+ *  queues downloads for whatever isn't on disk yet. */
+function ImportPlaylistButton({ playlist, nav }) {
+  const [state, setState] = useState('idle'); // idle | busy | done
+  const go = async (e) => {
+    e.stopPropagation();
+    setState('busy');
+    try {
+      const r = await api.post('/api/playlists/import-deezer', { deezer_playlist_id: playlist.id });
+      window.dispatchEvent(new Event('musicarr:playlists-changed'));
+      setState('done');
+      nav({ view: 'playlist', id: r.id });
+    } catch (err) {
+      alert(err.message);
+      setState('idle');
+    }
+  };
+  return (
+    <button className="icon-btn" onClick={go} disabled={state !== 'idle'}
+      title={`Add "${playlist.title}" to your playlists and download missing tracks`}>
+      <Icon name={state === 'busy' ? 'spinner' : state === 'done' ? 'check' : 'plus'} size={18} />
+    </button>
+  );
+}
+
 export function Home({ nav }) {
   const { data, err, loading } = useAsync(() => api.get('/api/home'), []);
   if (loading) return <Loading />;
@@ -42,6 +67,14 @@ export function Home({ nav }) {
             actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
         ))}
       </CardRow>
+      {!!data.playlists?.length && (
+        <CardRow title="Trending playlists">
+          {data.playlists.map(p => (
+            <TileCard key={p.id} cover={p.cover} title={p.title} sub={`${p.nb_tracks} tracks · ${p.by}`}
+              actions={<ImportPlaylistButton playlist={p} nav={nav} />} />
+          ))}
+        </CardRow>
+      )}
       <section className="page-block">
         <h2 className="row-title">Charts</h2>
         <div className="track-list">
@@ -61,6 +94,10 @@ export function Search({ nav }) {
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState(loadHistory);
+  const [trending, setTrending] = useState(null);
+
+  // Suggestions for the empty state (server-side cached, so this is cheap).
+  useEffect(() => { api.get('/api/home').then(setTrending).catch(() => {}); }, []);
 
   const remember = useCallback((term) => {
     const t = term.trim();
@@ -143,7 +180,30 @@ export function Search({ nav }) {
           )}
         </>
       )}
-      {!res && !loading && !history.length && <div className="state faint">Search anything — if it's not downloaded yet, you can grab it.</div>}
+      {!q.trim() && !loading && trending && (
+        <>
+          {!!trending.artists?.length && (
+            <CardRow title="Trending on Deezer">
+              {trending.artists.slice(0, 12).map(a => (
+                <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+                  onClick={() => nav({ view: 'artist', id: a.id })} />
+              ))}
+            </CardRow>
+          )}
+          {!!trending.albums?.length && (
+            <CardRow title="Popular albums right now">
+              {trending.albums.slice(0, 12).map(a => (
+                <TileCard key={a.id} cover={a.cover} title={a.title} sub={a.artist}
+                  onClick={() => nav({ view: 'album', id: a.id })}
+                  actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+              ))}
+            </CardRow>
+          )}
+        </>
+      )}
+      {!res && !loading && !history.length && !trending && (
+        <div className="state faint">Search anything — if it's not downloaded yet, you can grab it.</div>
+      )}
     </div>
   );
 }

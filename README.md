@@ -97,6 +97,15 @@ it works even when nothing is playing; Web Audio, with presets), a **play queue*
 into the queue), recent **search history** on the Search page, and the volume is
 remembered across reboots.
 
+**Deezer playlists**: the Home page suggests trending Deezer playlists. Adding
+one creates a local playlist with the same tracks and queues downloads for the
+tracks that aren't on disk yet (one download per missing album, capped per run —
+re-add the playlist to continue). Re-adding also refreshes the track list.
+
+**Singles**: when a track was released as a single and no standalone release
+exists on the indexers, Musicarr falls back to alternate albums that contain
+the same song (found via Deezer) before giving up.
+
 ## CI / publishing the image
 
 A GitHub Actions workflow (`.github/workflows/docker.yml`) builds and pushes the
