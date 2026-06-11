@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
-import { db, config, getSetting, setSetting } from './db.js';
+import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testJackett, testTransmission } from './sources.js';
 import { queueDownload } from './downloader.js';
+import { logger } from './log.js';
+
+const log = logger('api');
 
 export const api = Router();
 api.use(requireAuth);
@@ -255,10 +258,11 @@ api.get('/album/:id', async (req, res) => {
 /* ------------------------------------------------------------- Home feed */
 api.get('/home', async (req, res) => {
   try {
-    const [tracks, albums, artists] = await Promise.all([
+    const [tracks, albums, artists, playlists] = await Promise.all([
       deezerGet('chart/0/tracks?limit=20'),
       deezerGet('chart/0/albums?limit=20'),
       deezerGet('chart/0/artists?limit=20'),
+      deezerGet('chart/0/playlists?limit=12').catch(() => ({ data: [] })),
     ]);
     res.json({
       tracks: (tracks.data || []).map(t => ({
@@ -267,6 +271,10 @@ api.get('/home', async (req, res) => {
       })),
       albums: (albums.data || []).map(a => ({ id: a.id, title: a.title, artist: a.artist?.name, artist_id: a.artist?.id, cover: a.cover_medium })),
       artists: (artists.data || []).map(a => ({ id: a.id, name: a.name, picture: a.picture_medium })),
+      playlists: (playlists.data || []).map(p => ({
+        id: p.id, title: p.title, cover: p.picture_medium || p.picture,
+        nb_tracks: p.nb_tracks, by: p.user?.name || 'Deezer',
+      })),
     });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
@@ -340,6 +348,64 @@ api.post('/playlists', (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name required' });
   const info = db.prepare('INSERT INTO playlists (user_id, name) VALUES (?, ?)').run(req.user.id, name);
   res.json({ id: info.lastInsertRowid, name });
+});
+
+// Import a Deezer playlist into the user's collection: create (or refresh) a
+// local playlist with the same tracks, then queue downloads for the tracks we
+// don't have on disk yet so the playlist becomes fully playable. Missing
+// tracks are grouped by album and one download is queued per album (a track
+// download imports its whole album as Available, so siblings arrive with it).
+const IMPORT_QUEUE_CAP = 25; // albums per run; re-import to continue
+api.post('/playlists/import-deezer', async (req, res) => {
+  const deezerId = parseInt(req.body?.deezer_playlist_id, 10);
+  if (!deezerId) return res.status(400).json({ error: 'deezer_playlist_id required' });
+  try {
+    const pl = await deezerGet(`playlist/${deezerId}`);
+    const tracks = (pl.tracks?.data || []).filter(t => t?.id && t?.title);
+    if (!tracks.length) return res.status(400).json({ error: 'Playlist has no tracks' });
+
+    const rows = tracks.map(t => trackRowFromDeezer(t));
+    rows.forEach(upsertTrack);
+
+    // Reuse a same-named playlist (re-import refreshes it), else create one.
+    const name = (pl.title || `Deezer playlist ${deezerId}`).trim();
+    let list = db.prepare('SELECT * FROM playlists WHERE user_id = ? AND name = ?').get(req.user.id, name);
+    if (!list) {
+      const info = db.prepare('INSERT INTO playlists (user_id, name) VALUES (?, ?)').run(req.user.id, name);
+      list = { id: info.lastInsertRowid, name };
+    }
+    db.transaction(() => {
+      db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(list.id);
+      const ins = db.prepare('INSERT OR IGNORE INTO playlist_items (playlist_id, position, track_id) VALUES (?, ?, ?)');
+      rows.forEach((r, i) => ins.run(list.id, i, r.deezer_id));
+    })();
+
+    // Queue what's missing, one representative track per distinct album.
+    const haveFile = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+    const missing = rows.filter(r => {
+      const f = haveFile.get(r.deezer_id)?.file_path;
+      return !(f && fs.existsSync(f));
+    });
+    const byAlbum = new Map();
+    for (const m of missing) {
+      const key = m.album_id || `track-${m.deezer_id}`;
+      if (!byAlbum.has(key)) byAlbum.set(key, m);
+    }
+    let queued = 0;
+    for (const rep of byAlbum.values()) {
+      if (queued >= IMPORT_QUEUE_CAP) break;
+      queueDownload(req.user.id, 'track', rep.deezer_id, `${rep.artist} – ${rep.title}`, rep.cover);
+      queued++;
+    }
+    log.info(`playlist import "${name}": ${rows.length} tracks, ${missing.length} missing across ${byAlbum.size} album(s), ${queued} download(s) queued`);
+    res.json({
+      id: list.id, name, total: rows.length,
+      have: rows.length - missing.length, missing: missing.length,
+      queued, remaining_albums: Math.max(0, byAlbum.size - queued),
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
 });
 
 api.get('/playlists/:id', (req, res) => {

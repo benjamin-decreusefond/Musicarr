@@ -89,7 +89,37 @@ async function startSearch(downloadId) {
       attempts.push({ query: `${artist} ${albumTitle}`, matchTitle: albumTitle });
       attempts.push({ query: albumTitle, matchTitle: albumTitle });
     }
+
+    // Singles often have no standalone release on trackers (and their "album"
+    // is just the single, frequently titled like the track). The same song
+    // usually also appears on a real album or deluxe edition — find those
+    // alternate releases via Deezer and add them as fallback attempts.
+    try {
+      const s = await deezerGet(`search/track?q=${encodeURIComponent(`${artist} ${title}`)}&limit=15`);
+      const seenAlbums = new Set([tr.album?.id]);
+      let added = 0;
+      for (const cand of (s.data || [])) {
+        if (cand.artist?.id !== tr.artist?.id) continue;            // same artist
+        if (normTitle(cand.title) !== normTitle(title)) continue;   // same song
+        if (!cand.album?.id || seenAlbums.has(cand.album.id)) continue;
+        if (normTitle(cand.album.title) === normTitle(albumTitle)) continue; // same release
+        seenAlbums.add(cand.album.id);
+        attempts.push({ query: `${artist} ${cand.album.title}`, matchTitle: cand.album.title });
+        if (++added >= 3) break;
+      }
+      if (added) log.info(`#${downloadId} added ${added} alternate-release fallback(s) for the single`);
+    } catch { /* fallbacks are best-effort */ }
   }
+
+  // Singles where the album shares the track's name produce duplicate queries;
+  // run each distinct query once.
+  const seenQueries = new Set();
+  attempts = attempts.filter(a => {
+    const k = `${a.query}|${a.matchTitle}`.toLowerCase();
+    if (seenQueries.has(k)) return false;
+    seenQueries.add(k);
+    return true;
+  });
 
   // 2. Search Jackett, trying each query until one yields a viable release.
   setStatus(downloadId, 'searching', 'Searching indexers');
