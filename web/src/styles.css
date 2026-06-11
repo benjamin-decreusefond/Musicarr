@@ -211,6 +211,10 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .queue-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 2px; }
 .queue-row:hover { background: var(--surface-hover); }
 .queue-row.current .queue-title { color: var(--accent); }
+.queue-row.dragging { opacity: .4; }
+.queue-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.queue-grip { display: flex; align-items: center; color: var(--text-faint); cursor: grab; flex-shrink: 0; padding-left: 2px; }
+.queue-grip:active { cursor: grabbing; }
 .queue-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 6px 8px; text-align: left; }
 .queue-idx { width: 22px; text-align: center; font-size: 13px; color: var(--text-dim); flex-shrink: 0; }
 .queue-meta { min-width: 0; display: flex; flex-direction: column; }

@@ -79,12 +79,27 @@ function Equalizer() {
 /* ------------------------------------------------------------- Queue */
 function QueuePanel() {
   const p = usePlayer();
+  const [dragFrom, setDragFrom] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+
+  const onDrop = (to) => {
+    if (dragFrom != null && to != null && dragFrom !== to) p.moveInQueue(dragFrom, to);
+    setDragFrom(null); setDragOver(null);
+  };
+
   return (
     <Popover icon="queue" title="Play queue" className="queue-panel">
       <div className="eq-head"><span>Queue</span><span className="queue-count">{p.queue.length} tracks</span></div>
       <div className="queue-list">
         {p.queue.map((t, i) => (
-          <div key={`${t.deezer_id || t.id}-${i}`} className={`queue-row ${i === p.index ? 'current' : ''}`}>
+          <div key={`${t.deezer_id || t.id}-${i}`}
+            className={`queue-row ${i === p.index ? 'current' : ''} ${dragOver === i ? 'drag-over' : ''} ${dragFrom === i ? 'dragging' : ''}`}
+            draggable
+            onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; }}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== i) setDragOver(i); }}
+            onDrop={(e) => { e.preventDefault(); onDrop(i); }}
+            onDragEnd={() => { setDragFrom(null); setDragOver(null); }}>
+            <span className="queue-grip" title="Drag to reorder"><Icon name="grip" size={16} /></span>
             <button className="queue-main" onClick={() => p.playAt(i)} title="Play">
               <span className="queue-idx">{i === p.index && p.playing ? <span className="eq"><i /><i /><i /></span> : i + 1}</span>
               <span className="queue-meta">
