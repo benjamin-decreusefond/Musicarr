@@ -78,7 +78,8 @@ export function PlayerProvider({ children }) {
   // (e.g. "queue stops advancing after the first song").
   const stateRef = useRef({ queue, index, repeat });
   stateRef.current = { queue, index, repeat };
-  const skipFailsRef = useRef(0); // consecutive stream failures, to stop skip loops
+  const skipFailsRef = useRef(0);  // consecutive stream failures, to stop skip loops
+  const endedGuardRef = useRef(false); // de-dupe ended vs near-end fallback per track
 
   // Persist volume across reboots.
   const setVolume = useCallback((v) => {
@@ -151,9 +152,19 @@ export function PlayerProvider({ children }) {
       audioRef.current.preload = 'auto';
     }
     const a = audioRef.current;
-    const onTime = () => setTime(a.currentTime);
+    const onTime = () => {
+      setTime(a.currentTime);
+      // Fallback for formats/streams where 'ended' doesn't fire reliably:
+      // if we're at the very end and playback has stopped progressing, advance.
+      const d = a.duration;
+      if (Number.isFinite(d) && d > 0 && a.currentTime >= d - 0.25 && !endedGuardRef.current) {
+        endedGuardRef.current = true;
+        skipFailsRef.current = 0;
+        advance(false);
+      }
+    };
     const onDur = () => setDuration(a.duration || 0);
-    const onEnd = () => { skipFailsRef.current = 0; advance(false); };
+    const onEnd = () => { skipFailsRef.current = 0; if (!endedGuardRef.current) { endedGuardRef.current = true; advance(false); } };
     const onPlay = () => { skipFailsRef.current = 0; setPlaying(true); };
     const onPause = () => setPlaying(false);
     // A track whose file is missing/broken must not silently stop the queue:
@@ -190,6 +201,7 @@ export function PlayerProvider({ children }) {
     if (!current) { a.pause(); a.removeAttribute('src'); return; } // queue emptied
     ensureGraph();
     audioCtxRef.current?.resume?.();
+    endedGuardRef.current = false; // new track: re-arm end detection
     a.src = `/api/stream/${currentId}`;
     a.play().catch(e => console.warn('[player] play failed:', e));
     if ('mediaSession' in navigator) {
