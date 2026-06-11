@@ -356,24 +356,39 @@ api.get('/stream/:trackId', (req, res) => {
   if (!row?.file_path || !fs.existsSync(row.file_path)) return res.status(404).json({ error: 'Not in library' });
 
   const stat = fs.statSync(row.file_path);
+  const size = stat.size;
   const range = req.headers.range;
   const types = { '.flac': 'audio/flac', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav', '.aac': 'audio/aac' };
   const ext = row.file_path.slice(row.file_path.lastIndexOf('.')).toLowerCase();
   const contentType = types[ext] || 'application/octet-stream';
 
+  const send = (status, headers, start, end) => {
+    res.writeHead(status, headers);
+    if (req.method === 'HEAD' || start > end) return res.end();
+    const stream = fs.createReadStream(row.file_path, { start, end });
+    stream.on('error', (e) => { if (!res.headersSent) res.sendStatus(500); res.destroy(e); });
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+  };
+
   if (range) {
-    const [s, e] = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(s, 10);
-    const end = e ? parseInt(e, 10) : stat.size - 1;
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+    const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+    let start = m && m[1] !== '' ? parseInt(m[1], 10) : 0;
+    let end = m && m[2] !== '' ? parseInt(m[2], 10) : size - 1;
+    // Unsatisfiable range (e.g. browser probing past EOF) -> 416, not a
+    // malformed 206 that stalls the element right at the end of the track.
+    if (!m || Number.isNaN(start) || start >= size || start < 0) {
+      return res.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Accept-Ranges': 'bytes' }).end();
+    }
+    if (Number.isNaN(end) || end >= size) end = size - 1; // clamp to EOF
+    if (end < start) end = start;
+    send(206, {
+      'Content-Range': `bytes ${start}-${end}/${size}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': end - start + 1,
       'Content-Type': contentType,
-    });
-    fs.createReadStream(row.file_path, { start, end }).pipe(res);
+    }, start, end);
   } else {
-    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' });
-    fs.createReadStream(row.file_path).pipe(res);
+    send(200, { 'Content-Length': size, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' }, 0, size - 1);
   }
 });

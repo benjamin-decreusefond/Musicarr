@@ -218,6 +218,19 @@ function Sidebar({ route, nav, me, onLogout }) {
 function PlayerBar() {
   const p = usePlayer();
   const [seekVal, setSeekVal] = useState(null);
+  const scrubbing = useRef(false);
+  // Commit the scrub on release anywhere on the page, so the time display can
+  // never get stuck frozen if the pointer is released off the slider.
+  useEffect(() => {
+    const end = () => {
+      if (!scrubbing.current) return;
+      scrubbing.current = false;
+      setSeekVal(v => { if (v != null) p.seek(v); return null; });
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    return () => { window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
+  }, [p.seek]);
   if (!p.current) return <footer className="player empty">Nothing playing</footer>;
   const t = p.current;
   const pct = p.duration ? ((seekVal ?? p.time) / p.duration) * 100 : 0;
@@ -244,9 +257,8 @@ function PlayerBar() {
         <div className="player-seek">
           <span className="t">{fmtTime(seekVal ?? p.time)}</span>
           <input type="range" min={0} max={p.duration || 0} step="0.5" value={seekVal ?? p.time}
-            onChange={e => setSeekVal(parseFloat(e.target.value))}
-            onMouseUp={e => { p.seek(parseFloat(e.target.value)); setSeekVal(null); }}
-            onTouchEnd={e => { p.seek(parseFloat(e.target.value)); setSeekVal(null); }}
+            onPointerDown={() => { scrubbing.current = true; }}
+            onChange={e => { const v = parseFloat(e.target.value); if (scrubbing.current) setSeekVal(v); else p.seek(v); }}
             style={{ '--pct': `${pct}%` }} />
           <span className="t">{fmtTime(p.duration)}</span>
         </div>
