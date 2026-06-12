@@ -290,11 +290,6 @@ export function Album({ id, nav }) {
           </div>
         </div>
       </header>
-      <p className="settings-hint" style={{ maxWidth: 720 }}>
-        Heads up: indexers publish full albums rather than single tracks, so downloading a single
-        song actually fetches this whole album. Only the song you pick is added to your library —
-        the rest wait under <strong>Available</strong>, ready to add anytime without re-downloading.
-      </p>
       <section className="page-block">
         <div className="track-list">
           {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} />)}
@@ -305,7 +300,7 @@ export function Album({ id, nav }) {
 }
 
 /* -------------------------------------------------------------- Library */
-export function Library({ nav }) {
+export function Library() {
   const player = usePlayer();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -320,7 +315,6 @@ export function Library({ nav }) {
       <div className="list-head">
         <h1 className="page-h1">Your library</h1>
         <div className="list-head-actions">
-          <button className="btn-ghost" onClick={() => nav?.({ view: 'available' })}>Available tracks</button>
           <button className="btn-primary" disabled={!playable.length} onClick={() => player.playList(playable, 0, { shuffle: true })}>
             <Icon name="shuffle" size={18} /> Shuffle play
           </button>
@@ -331,53 +325,6 @@ export function Library({ nav }) {
           {data.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={data} showAlbum />)}
         </div>
       ) : <div className="state faint">Nothing downloaded yet. Search for music and hit the download button.</div>}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------ Available */
-export function Available() {
-  const player = usePlayer();
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState(null);
-  const load = useCallback(() => { api.get('/api/available').then(setData).catch(e => setErr(e.message)); }, []);
-  useEffect(() => { load(); }, [load]);
-  if (err) return <ErrState msg={err} />;
-  if (!data) return <Loading />;
-  const addToLibrary = async (ids) => {
-    try { await api.post('/api/library', Array.isArray(ids) ? { track_ids: ids } : { track_id: ids }); load(); } catch {}
-  };
-  const notInLib = data.filter(t => !t.in_library);
-  return (
-    <div className="page">
-      <div className="list-head">
-        <h1 className="page-h1">Available tracks</h1>
-        <div className="list-head-actions">
-          {!!notInLib.length && <button className="btn-ghost" onClick={() => addToLibrary(notInLib.map(t => t.deezer_id))}>Add all to library</button>}
-          <button className="btn-primary" disabled={!data.length} onClick={() => player.playList(data, 0, { shuffle: true })}>
-            <Icon name="shuffle" size={18} /> Shuffle play
-          </button>
-        </div>
-      </div>
-      <p className="settings-hint" style={{ maxWidth: 720 }}>
-        Everything in your music root folder. Indexers publish whole albums rather than single tracks,
-        so downloading one song (or a playlist) brings its album along — those extra tracks all show up
-        here. Add any of them to your Library instantly, no re-download needed.
-      </p>
-      {data.length ? (
-        <div className="track-list">
-          {data.map((t, i) => (
-            <div key={t.deezer_id} className="pl-row">
-              <TrackRow track={t} i={i} tracks={data} showAlbum />
-              {t.in_library
-                ? <span className="badge accent" title="Already in your library">In library</span>
-                : <button className="icon-btn pl-del" title="Add to library" onClick={() => addToLibrary(t.deezer_id)}>
-                    <Icon name="plus" size={18} />
-                  </button>}
-            </div>
-          ))}
-        </div>
-      ) : <div className="state faint">Nothing in the root folder yet. Download a track or album and it'll appear here.</div>}
     </div>
   );
 }
@@ -495,8 +442,8 @@ export function DeezerPlaylist({ id, nav }) {
         </div>
       </header>
       <p className="settings-hint" style={{ maxWidth: 720 }}>
-        Adding this playlist saves it to your collection and downloads the tracks you don't have yet.
-        Downloaded tracks land in <strong>Available</strong> (and play right here in the playlist).
+        Adding this playlist saves it to your collection and downloads the tracks you don't have yet
+        from Soulseek, one song at a time.
       </p>
       <section className="page-block">
         <div className="track-list">
@@ -655,11 +602,7 @@ export function Profile({ me }) {
 }
 
 /* ------------------------------------------------------------- Settings */
-const SETTING_FIELDS = [
-  'root_folder', 'jackett_url', 'jackett_api_key', 'jackett_indexer', 'search_categories',
-  'transmission_url', 'transmission_user', 'transmission_pass', 'transmission_download_dir',
-  'slskd_url', 'slskd_api_key', 'slskd_download_dir',
-];
+const SETTING_FIELDS = ['root_folder', 'slskd_url', 'slskd_api_key', 'slskd_download_dir'];
 
 function Field({ label, hint, type = 'text', value, onChange }) {
   return (
@@ -698,11 +641,7 @@ export function Settings() {
 
   const test = async (section) => {
     setTesting(section); setTested(t => ({ ...t, [section]: null }));
-    const body = section === 'jackett'
-      ? { section, jackett_url: s.jackett_url, jackett_api_key: s.jackett_api_key, jackett_indexer: s.jackett_indexer }
-      : section === 'slskd'
-      ? { section, slskd_url: s.slskd_url, slskd_api_key: s.slskd_api_key }
-      : { section, transmission_url: s.transmission_url, transmission_user: s.transmission_user, transmission_pass: s.transmission_pass };
+    const body = { section, slskd_url: s.slskd_url, slskd_api_key: s.slskd_api_key };
     try {
       await api.post('/api/settings/test', body);
       setTested(t => ({ ...t, [section]: { ok: true, text: 'Connection successful' } }));
@@ -726,56 +665,23 @@ export function Settings() {
       <section className="page-block settings-section">
         <h2 className="row-title">Media management</h2>
         <p className="settings-hint">
-          Works like Radarr/Sonarr: Transmission downloads into the download directory; when a
-          download finishes, Musicarr hardlinks the files into the root folder (Artist/Album/Track)
-          and the library plays everything from the root folder. Keep both paths on the same volume
-          so hardlinks work — instant, no extra disk space, and torrents keep seeding. On different
-          volumes, files are copied instead.
+          When a download finishes, Musicarr hardlinks the files into the root folder
+          (Artist/Album/Track) and the library plays everything from there. Keep the root folder on
+          the same volume as the slskd download directory so hardlinks work — instant and no extra
+          disk space. On different volumes, files are copied instead.
         </p>
         <Field label="Root folder"
           hint="The library: files are hardlinked here and streamed from here, e.g. /data/media/music."
           value={s.root_folder} onChange={v => set('root_folder', v)} />
-        <Field label="Transmission download directory"
-          hint="Where Transmission saves downloads, e.g. /data/downloads/music. Only scanned when importing finished downloads; mount the shared volume at the same path in both containers."
-          value={s.transmission_download_dir} onChange={v => set('transmission_download_dir', v)} />
-      </section>
-
-      <section className="page-block settings-section">
-        <h2 className="row-title">Jackett</h2>
-        <p className="settings-hint">Indexer aggregator used to find releases.</p>
-        <Field label="URL" hint="e.g. http://jackett:9117 (no trailing slash)" value={s.jackett_url} onChange={v => set('jackett_url', v)} />
-        <Field label="API key" type="password" value={s.jackett_api_key} onChange={v => set('jackett_api_key', v)} />
-        <Field label="Indexer" hint='Indexer id, or "all" to query every configured one' value={s.jackett_indexer} onChange={v => set('jackett_indexer', v)} />
-        <Field label="Search categories" hint="Torznab categories, comma-separated (3000 = Audio)" value={s.search_categories} onChange={v => set('search_categories', v)} />
-        <div className="settings-actions">
-          <button className="btn-ghost" onClick={() => test('jackett')} disabled={testing === 'jackett'}>
-            {testing === 'jackett' ? 'Testing…' : 'Test connection'}
-          </button>
-          <TestResult section="jackett" />
-        </div>
-      </section>
-
-      <section className="page-block settings-section">
-        <h2 className="row-title">Transmission</h2>
-        <p className="settings-hint">BitTorrent client that performs the downloads.</p>
-        <Field label="RPC URL" hint="e.g. http://transmission:9091/transmission/rpc" value={s.transmission_url} onChange={v => set('transmission_url', v)} />
-        <Field label="Username" hint="Leave blank if RPC auth is disabled" value={s.transmission_user} onChange={v => set('transmission_user', v)} />
-        <Field label="Password" type="password" value={s.transmission_pass} onChange={v => set('transmission_pass', v)} />
-        <div className="settings-actions">
-          <button className="btn-ghost" onClick={() => test('transmission')} disabled={testing === 'transmission'}>
-            {testing === 'transmission' ? 'Testing…' : 'Test connection'}
-          </button>
-          <TestResult section="transmission" />
-        </div>
       </section>
 
       <section className="page-block settings-section">
         <h2 className="row-title">Soulseek (slskd) <span className={`src-pill ${s.slskd_enabled ? 'on' : ''}`}>{s.slskd_enabled ? 'enabled' : 'off'}</span></h2>
         <p className="settings-hint">
-          Optional. When set, single-track downloads are fetched from the Soulseek network one file at
-          a time (great for singles and rare tracks), falling back to torrents if nothing's found.
-          Point the download directory at slskd's completed-downloads folder, mounted so Musicarr can
-          read it. For good standing on Soulseek, configure slskd to share your music root folder back.
+          The download engine: tracks are fetched from the Soulseek network one file at a time, and
+          albums as a whole folder from a single peer. Point the download directory at slskd's
+          completed-downloads folder, mounted so Musicarr can read it. For good standing on Soulseek,
+          configure slskd to share your music root folder back.
         </p>
         <Field label="URL" hint="e.g. http://slskd:5030 (no trailing slash)" value={s.slskd_url} onChange={v => set('slskd_url', v)} />
         <Field label="API key" type="password" value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />

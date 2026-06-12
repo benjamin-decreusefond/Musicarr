@@ -1,5 +1,5 @@
-// Simple in-memory TTL cache with a size cap, shared by the external-API
-// clients (Deezer, Jackett) to avoid hammering them and getting rate limited.
+// Simple in-memory TTL cache with a size cap, used by the external-API
+// clients (Deezer) to avoid hammering them and getting rate limited.
 export function createCache({ ttlMs, max = 500 }) {
   const map = new Map(); // key -> { at, val }
 

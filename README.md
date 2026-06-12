@@ -1,27 +1,27 @@
 # Musicarr
 
 A self-hosted, Spotify-style music app that browses metadata from **Deezer**
-(free, no API key), finds releases through **Jackett**, and downloads them with
-**Transmission**. Per-user playlists, favorites, and accounts; a single shared
-audio library on disk with file deduplication; built-in streaming with HTTP
-range support. State lives in **SQLite** — no Postgres required.
+(free, no API key) and downloads music from the **Soulseek** network through
+**slskd**. Per-user playlists, favorites, and accounts; a single shared audio
+library on disk with file deduplication; built-in streaming with HTTP range
+support. State lives in **SQLite** — no Postgres required.
 
-It does *not* use Lidarr: Lidarr's artist/album model makes single-track
-downloads awkward, so Musicarr talks to Jackett directly and decides per-request
-whether to grab a whole album or a single track.
+Soulseek shares **individual files**, so Musicarr downloads exactly what you
+ask for: one song for a track, a whole folder from a single peer for an album.
+No torrent client or indexers needed.
 
 ## How it works
 
 1. You search. The UI shows artists, albums and tracks from Deezer with art.
 2. You hit **download** on an album or a single track.
-3. The server queries Jackett (Torznab), scores the results (artist/title match,
-   FLAC/320 bonus, seeders, discography penalty, dead-torrent rejection) and
-   picks the best release.
-4. It hands the magnet/torrent to Transmission into a per-request subfolder.
+3. The server searches Soulseek via slskd and ranks the results — title/artist
+   match, FLAC/320 bonus, free upload slot, queue length, duration sanity.
+   For an album it ranks per-peer **folders** by how much of the tracklist
+   they cover.
+4. slskd transfers the file(s); Musicarr polls progress.
 5. On completion, audio files are matched to the requested Deezer tracks (by
-   track number, then fuzzy title) and copied into `/music/Artist/Album/`.
-   For a single-track request that lands inside a full-album torrent, only the
-   one matching file is imported.
+   track number, then fuzzy title) and **hardlinked** into
+   `/music/Artist/Album/`.
 6. The track is now streamable by **every** user — a file is only ever stored
    once. Favorites and playlists referencing it are per-user.
 
@@ -39,56 +39,51 @@ user and exposes **port 8686**.
 
 ```bash
 docker run -d --name musicarr -p 8686:8686 \
-  -e JACKETT_URL=http://jackett:9117 \
-  -e JACKETT_API_KEY=your_jackett_api_key \
-  -e TRANSMISSION_URL=http://transmission:9091/transmission/rpc \
+  -e SLSKD_URL=http://slskd:5030 \
+  -e SLSKD_API_KEY=your_slskd_api_key \
   -e ADMIN_PASSWORD=change-me \
   -v musicarr-data:/data \
   -v /path/to/music:/music \
-  -v /path/to/downloads:/downloads \
+  -v /path/to/slskd-downloads:/slskd-downloads \
   musicarr:latest
 ```
 
-### How downloads reach the library (Radarr/Sonarr model)
+### How downloads reach the library
 
-The flow is: **Transmission downloads → Musicarr hardlinks into the root
-folder → the library streams from the root folder.**
+The flow is: **slskd downloads → Musicarr hardlinks into the root folder →
+the library streams from the root folder.**
 
-Two paths, both configurable from **Settings → Media management**:
+Two paths, both configurable from **Settings**:
 
-1. **Transmission download directory** — Musicarr tells Transmission to save
-   each download here (under a `musicarr-<id>` subfolder). When the download
-   finishes, Musicarr scans this folder once to import the files. **Mount the
-   same physical volume at the same path in both containers** so they agree
-   on it.
+1. **slskd download directory** — slskd writes completed files to its own
+   downloads folder; Musicarr imports from there. **Mount slskd's downloads
+   volume into the Musicarr container** and point this setting at it.
 2. **Root folder** — the library. On import, Musicarr **hardlinks** the audio
    files here, organized as `Artist/Album/Track`, and all playback/streaming
-   is served from these paths. Hardlinks are instant, use no extra disk
-   space, and let the torrent keep seeding from the download directory. If
-   the two paths are on different filesystems (where hardlinks are
+   is served from these paths. Hardlinks are instant and use no extra disk
+   space. If the two paths are on different filesystems (where hardlinks are
    impossible), Musicarr falls back to copying.
 
-For hardlinks to work, keep the download directory and the root folder on the
-same volume — e.g. one shared volume mounted at `/data` in both containers,
-with downloads in `/data/downloads/music` and the library in
-`/data/media/music`.
+For hardlinks to work, keep the slskd download directory and the root folder
+on the same volume — e.g. one shared volume mounted at `/data` in both
+containers, with slskd downloads in `/data/slskd/downloads` and the library
+in `/data/media/music`.
 
-`/data` (in the example above) should be a persistent volume; `DATA_DIR`
-holds the SQLite database and must also persist.
+`DATA_DIR` holds the SQLite database and must persist.
 
 ## Configuration from the UI
 
 Most settings can be changed from the UI (admin only, under **Settings**),
 like Radarr/Sonarr — no restart required, and values persist in the database:
 
-- **Media management** — library root folder and the Transmission download directory
-- **Jackett** — URL, API key, indexer, and search categories (with a *Test connection* button)
-- **Transmission** — RPC URL, username, and password (with a *Test connection* button)
+- **Media management** — library root folder
+- **Soulseek (slskd)** — URL, API key, and download directory (with a *Test
+  connection* button and an enabled/off indicator)
 
 Anything set in the UI is stored in the database and **takes precedence over the
 corresponding environment variable**, which only seeds the first-run default. So
-you can run with no Jackett/Transmission env vars at all and configure everything
-from the Settings page after first login.
+you can run with no slskd env vars at all and configure everything from the
+Settings page after first login.
 
 Each user can change their own password under **Profile**. There's a functional
 graphic **equalizer** (player-bar popover and a dedicated **Equalizer** page so
@@ -98,13 +93,9 @@ into the queue), recent **search history** on the Search page, and the volume is
 remembered across reboots.
 
 **Deezer playlists**: the Home page suggests trending Deezer playlists. Adding
-one creates a local playlist with the same tracks and queues downloads for the
-tracks that aren't on disk yet (one download per missing album, capped per run —
-re-add the playlist to continue). Re-adding also refreshes the track list.
-
-**Singles**: when a track was released as a single and no standalone release
-exists on the indexers, Musicarr falls back to alternate albums that contain
-the same song (found via Deezer) before giving up.
+one creates a local playlist with the same tracks and queues a Soulseek
+download for each track that isn't on disk yet (capped per run — re-add the
+playlist to continue). Re-adding also refreshes the track list.
 
 ## CI / publishing the image
 
@@ -117,27 +108,19 @@ push to the default branch. It needs two repository secrets:
 
 ## Caching
 
-Responses from the external APIs are cached in memory to avoid rate limits:
-Deezer metadata for 5 minutes and Jackett searches for 10 minutes, with
-concurrent identical requests de-duplicated into a single upstream call.
+Responses from Deezer are cached in memory for 5 minutes to avoid rate limits,
+with concurrent identical requests de-duplicated into a single upstream call.
 
-## Soulseek (slskd) — single-track downloads
+## Soulseek (slskd) setup
 
-Torrent indexers publish whole albums, so single tracks are awkward. Soulseek
-shares **individual files**, which makes it the natural source for one-off
-songs. When slskd is configured (**Settings → Soulseek**, or `SLSKD_URL` +
-`SLSKD_API_KEY`), Musicarr fetches **single-track** downloads from Soulseek
-first — searching, ranking candidates (prefers FLAC/320, free upload slot,
-short queue, matching duration), and downloading the one best file. If nothing
-suitable is found, it **falls back to the torrent path** (album grab). Album
-downloads always use torrents.
-
-Two directory points to get right:
+slskd is both the search engine and the download client: it connects to the
+Soulseek network with an account you choose, and Musicarr drives it over its
+REST API. Two directory points to get right:
 
 1. **Download directory** — slskd writes completed files to its own downloads
-   folder; Musicarr imports from there (then hardlinks into the root folder
-   like everything else). Mount slskd's downloads volume so Musicarr can read
-   it, and set **slskd download directory** to that path.
+   folder; Musicarr imports from there (then hardlinks into the root folder).
+   Mount slskd's downloads volume so Musicarr can read it, and set **slskd
+   download directory** to that path.
 2. **Sharing back** — Soulseek is a give-and-take community; peers commonly ban
    users who share nothing. Point slskd's shares at your music root folder so
    you contribute back. This is slskd-side config, e.g.:
@@ -153,11 +136,12 @@ web:
   authentication:
     api_keys:
       musicarr:
-        key: <the API key you put in Musicarr>
+        key: <the API key you put in Musicarr>  # 16-255 chars, you choose it
+        role: readwrite
 ```
 
 You'll need a Soulseek account (just a username/password you choose) configured
-in slskd. slskd runs as its own container alongside Jackett/Transmission.
+in slskd (`SLSKD_SLSK_USERNAME` / `SLSKD_SLSK_PASSWORD`).
 
 ## Environment variables
 
@@ -169,22 +153,13 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `PORT` | `8686` | HTTP port |
 | `DATA_DIR` | `/data` | SQLite database location (persist this) |
 | `MUSIC_DIR` | `/music` | Default root folder for the audio library *(UI)* |
-| `TRANSMISSION_DOWNLOAD_DIR` | `/downloads` | Shared download path: Transmission writes here, Musicarr reads back from it *(UI)*. `DOWNLOAD_DIR` is accepted as a legacy alias. |
-| `JACKETT_URL` | — | e.g. `http://jackett:9117` (no trailing slash) *(UI)* |
-| `JACKETT_API_KEY` | — | From Jackett's dashboard *(UI)* |
-| `JACKETT_INDEXER` | `all` | Indexer id, or `all` to query every configured one *(UI)* |
-| `SEARCH_CATEGORIES` | `3000` | Torznab categories (3000 = Audio); comma-separated *(UI)* |
-| `TRANSMISSION_URL` | `http://transmission:9091/transmission/rpc` | RPC endpoint *(UI)* |
-| `TRANSMISSION_USER` | — | RPC username (if auth enabled) *(UI)* |
-| `TRANSMISSION_PASS` | — | RPC password *(UI)* |
-| `SLSKD_URL` | — | slskd base URL, e.g. `http://slskd:5030` — enables Soulseek *(UI)* |
+| `SLSKD_URL` | — | slskd base URL, e.g. `http://slskd:5030` *(UI)* |
 | `SLSKD_API_KEY` | — | slskd API key *(UI)* |
 | `SLSKD_DOWNLOAD_DIR` | `/slskd-downloads` | Where slskd writes completed files, as Musicarr sees it (shared volume) *(UI)* |
 | `ADMIN_USERNAME` | `admin` | Created on first boot only |
 | `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
-| `SWEEP_INTERVAL_MS` | `600000` | How often the download dir is re-scanned for completed-but-unimported files |
-| `JACKETT_TIMEOUT_MS` | `120000` | Search timeout; the `all` aggregate waits for the slowest indexer |
+| `SWEEP_INTERVAL_MS` | `600000` | How often completed-but-unimported downloads are retried |
 
 ## First login
 
@@ -205,5 +180,6 @@ downloaded audio library.
 - Deezer is used purely for metadata and discovery; no audio comes from Deezer.
 - Streaming reads files directly from `/music` with range requests, so seeking
   works in the browser for FLAC/MP3/M4A/OGG/Opus/WAV/AAC.
-- The Transmission client must allow RPC access from the Musicarr container
-  (`rpc-whitelist` / `rpc-host-whitelist`).
+- Soulseek availability is peer-dependent: a file exists as long as a user who
+  shares it is online. Failed transfers are retried against the next-best
+  candidate on the next sweep.
