@@ -84,7 +84,21 @@ export async function testSlskd({ url, apiKey }) {
   }
   if (r.status === 401 || r.status === 403) throw new Error('slskd rejected the API key');
   if (!r.ok) throw new Error(`slskd returned ${r.status}`);
-  return true;
+  // Also report whether slskd is actually logged in to the Soulseek network —
+  // an API that answers but a server connection that's down means searches
+  // will silently return nothing.
+  let serverState = 'unknown';
+  try {
+    const s = await fetch(`${base}/api/v0/server`, { headers: { 'X-API-Key': apiKey }, signal: AbortSignal.timeout(10000) });
+    if (s.ok) serverState = (await s.json())?.state || 'unknown';
+  } catch { /* optional */ }
+  return { serverState };
+}
+
+/** Current slskd <-> Soulseek server connection state (e.g. "Connected, LoggedIn"). */
+export async function slskdServerState() {
+  try { return (await slskdFetch('server'))?.state || 'unknown'; }
+  catch { return 'unreachable'; }
 }
 
 /** Run a Soulseek search and return the flattened candidate audio files,
@@ -118,6 +132,16 @@ export async function slskdSearch(query, { timeoutMs = 45000 } = {}) {
 
   const totalFiles = responses.reduce((n, r) => n + (r.files?.length || 0), 0);
   log.info(`slskd "${query}": state=${state?.state || (state?.isComplete ? 'Completed' : 'Incomplete')}, ${responses.length} response(s), ${totalFiles} file(s)`);
+  if (!responses.length) {
+    // Zero responses for any real-world query almost always means a network
+    // problem, not a missing song: search replies are delivered by peers
+    // connecting back to slskd, so an unreachable listen port (VPN/NAT
+    // without port forwarding) or a dropped server login yields nothing.
+    const serverState = await slskdServerState();
+    log.warn(`slskd returned ZERO responses (server state: ${serverState}). `
+      + `If this happens for popular tracks, slskd's listen port is likely unreachable `
+      + `(VPN/NAT without port forwarding) or slskd is not logged in — check slskd's web UI.`);
+  }
 
   const out = [];
   for (const resp of responses) {
