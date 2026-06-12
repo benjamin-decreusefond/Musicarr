@@ -41,8 +41,6 @@ startPoller();
 app.listen(config.port, () => {
   log.info(`listening on :${config.port}`);
   log.info(`root folder: ${config.musicDir}`);
-  log.info(`download dir: ${config.downloadDir}`);
-  log.info(`jackett: ${config.jackettUrl || 'NOT SET'} (indexer ${config.jackettIndexer}, categories ${config.searchCategories.join(',')})`);
-  log.info(`transmission: ${config.transmissionUrl}`);
-  if (!config.jackettUrl || !config.jackettApiKey) log.warn('Jackett not fully configured — downloads will fail until set under Settings → Jackett');
+  log.info(`slskd: ${config.slskdUrl || 'NOT SET'} (downloads dir ${config.slskdDownloadDir})`);
+  if (!config.slskdEnabled) log.warn('Soulseek (slskd) not configured — downloads will fail until set under Settings');
 });

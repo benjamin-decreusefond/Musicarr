@@ -47,170 +47,16 @@ deezerRouter.get(/^\/(.*)$/, async (req, res) => {
   }
 });
 
-/* --------------------------------------------------------------- Jackett */
-// Cache search results briefly: identical queries (e.g. retrying a download,
-// or several users grabbing the same release) won't re-hit the trackers.
-const jackettCache = createCache({ ttlMs: 10 * 60 * 1000, max: 300 });
-
-// Searching the "all" aggregate fans out to every configured indexer and
-// waits for the slowest one — that routinely takes 1-2 minutes, so the
-// timeout must be generous ("Test connection" uses the instant caps endpoint,
-// which is why it can say OK while a real search times out).
-const JACKETT_TIMEOUT_MS = parseInt(process.env.JACKETT_TIMEOUT_MS || '120000', 10);
-
-export async function jackettSearch(query) {
-  if (!config.jackettUrl || !config.jackettApiKey) {
-    log.warn('Jackett is not configured (URL / API key missing) — set it under Settings → Jackett');
-    throw new Error('Jackett URL / API key not configured');
-  }
-  const params = new URLSearchParams({ apikey: config.jackettApiKey, Query: query });
-  for (const c of config.searchCategories) params.append('Category[]', c);
-  const url = `${config.jackettUrl}/api/v2.0/indexers/${config.jackettIndexer}/results?${params}`;
-  // Key on everything that changes the result, minus the api key.
-  const cacheKey = `${config.jackettUrl}|${config.jackettIndexer}|${config.searchCategories.join(',')}|${query}`;
-  return jackettCache.wrap(cacheKey, async () => {
-    log.debug(`Jackett query "${query}" via indexer ${config.jackettIndexer}`);
-    const started = Date.now();
-    let r;
-    try {
-      r = await fetch(url, { signal: AbortSignal.timeout(JACKETT_TIMEOUT_MS) });
-    } catch (e) {
-      const secs = Math.round((Date.now() - started) / 1000);
-      const reason = e.name === 'TimeoutError' || /abort/i.test(String(e.message))
-        ? `timed out after ${secs}s (indexer "${config.jackettIndexer}" waits for the slowest tracker; try a specific indexer or raise JACKETT_TIMEOUT_MS)`
-        : e.message;
-      log.error(`Jackett request failed for "${query}": ${reason}`);
-      throw new Error(`Could not reach Jackett: ${reason}`);
-    }
-    if (!r.ok) { log.error(`Jackett returned ${r.status} for "${query}"`); throw new Error(`Jackett ${r.status}`); }
-    const data = await r.json();
-    log.debug(`Jackett query "${query}" answered in ${Math.round((Date.now() - started) / 1000)}s with ${(data.Results || []).length} results`);
-    return data.Results || [];
-  });
-}
-
-/** Verify Jackett URL/key/indexer via the Torznab caps endpoint, which
- *  answers instantly without querying any trackers (a real search against the
- *  "all" aggregate can take minutes and made the test time out). */
-export async function testJackett({ url, apiKey, indexer }) {
-  const base = (url || '').replace(/\/$/, '');
-  if (!base || !apiKey) throw new Error('URL and API key are required');
-  const params = new URLSearchParams({ apikey: apiKey, t: 'caps' });
-  const r = await fetch(`${base}/api/v2.0/indexers/${indexer || 'all'}/results/torznab/api?${params}`, { signal: AbortSignal.timeout(15000) });
-  if (r.status === 401 || r.status === 403) throw new Error('Jackett rejected the API key');
-  if (r.status === 404) throw new Error('Indexer not found — check the URL (no /api suffix) and the indexer id');
-  if (!r.ok) throw new Error(`Jackett returned ${r.status}`);
-  const text = await r.text();
-  if (/<error\b/i.test(text)) {
-    const desc = text.match(/description="([^"]*)"/)?.[1];
-    throw new Error(desc || 'Jackett returned an error');
-  }
-  return true;
-}
-
 const norm = s => (s || '')
   .toLowerCase()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim();
 
-/**
- * Score indexer results against what we want. `mustTokens` come from the
- * artist name, `wantTokens` from the album/track title.
- */
-export function scoreResults(results, artist, title) {
-  const mustTokens = norm(artist).split(' ').filter(t => t.length > 1);
-  const wantTokens = norm(title).split(' ').filter(t => t.length > 1);
-  const scored = [];
-  for (const r of results) {
-    const t = ' ' + norm(r.Title) + ' ';
-    let score = 0;
-    const mustHits = mustTokens.filter(tok => t.includes(' ' + tok + ' ') || t.includes(tok)).length;
-    const wantHits = wantTokens.filter(tok => t.includes(tok)).length;
-    if (mustTokens.length && mustHits === 0) continue;          // wrong artist
-    if (wantTokens.length && wantHits === 0) continue;          // wrong title
-    score += (mustHits / Math.max(1, mustTokens.length)) * 50;
-    score += (wantHits / Math.max(1, wantTokens.length)) * 50;
-    if (/flac/i.test(r.Title)) score += 15;
-    else if (/320/.test(r.Title)) score += 10;
-    if (/discography|collection|complete/i.test(r.Title)) score -= 20; // too big
-    const seeders = r.Seeders ?? 0;
-    if (seeders === 0) score -= 100;                            // dead torrent
-    score += Math.min(15, seeders);
-    if (!r.MagnetUri && !r.Link) continue;
-    scored.push({ result: r, score });
-  }
-  scored.sort((a, b) => b.score - a.score);
-  return scored;
-}
-
-/* ---------------------------------------------------------- Transmission */
-let tmSessionId = '';
-
-async function tmCall(method, args) {
-  const headers = { 'Content-Type': 'application/json', 'X-Transmission-Session-Id': tmSessionId };
-  if (config.transmissionUser) {
-    headers.Authorization = 'Basic ' + Buffer.from(`${config.transmissionUser}:${config.transmissionPass}`).toString('base64');
-  }
-  const body = JSON.stringify({ method, arguments: args });
-  let r = await fetch(config.transmissionUrl, { method: 'POST', headers, body, signal: AbortSignal.timeout(20000) });
-  if (r.status === 409) { // refresh CSRF session id and retry once
-    tmSessionId = r.headers.get('x-transmission-session-id') || '';
-    headers['X-Transmission-Session-Id'] = tmSessionId;
-    r = await fetch(config.transmissionUrl, { method: 'POST', headers, body, signal: AbortSignal.timeout(20000) });
-  }
-  if (!r.ok) throw new Error(`Transmission ${r.status}`);
-  const data = await r.json();
-  if (data.result !== 'success') throw new Error(`Transmission: ${data.result}`);
-  return data.arguments;
-}
-
-/** Verify a Transmission RPC endpoint (and optional auth). Throws on failure. */
-export async function testTransmission({ url, username, password }) {
-  if (!url) throw new Error('RPC URL is required');
-  const headers = { 'Content-Type': 'application/json' };
-  if (username) headers.Authorization = 'Basic ' + Buffer.from(`${username}:${password || ''}`).toString('base64');
-  const body = JSON.stringify({ method: 'session-get' });
-  let r;
-  try {
-    r = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) });
-    if (r.status === 409) { // CSRF handshake, retry once with the session id
-      headers['X-Transmission-Session-Id'] = r.headers.get('x-transmission-session-id') || '';
-      r = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) });
-    }
-  } catch (e) {
-    throw new Error(`Could not reach Transmission: ${e.message}`);
-  }
-  if (r.status === 401) throw new Error('Transmission rejected the username/password');
-  if (!r.ok) throw new Error(`Transmission returned ${r.status}`);
-  return true;
-}
-
-/** Add a torrent (magnet URI or .torrent URL). Returns { hashString, name }. */
-export async function tmAdd(magnetOrUrl, subdir) {
-  const args = {
-    filename: magnetOrUrl,
-    'download-dir': `${config.downloadDir}/${subdir}`,
-  };
-  const out = await tmCall('torrent-add', args);
-  const t = out['torrent-added'] || out['torrent-duplicate'];
-  if (!t) throw new Error('Transmission did not accept the torrent');
-  return t;
-}
-
-export async function tmStatus(hashes) {
-  const out = await tmCall('torrent-get', {
-    ids: hashes,
-    fields: ['hashString', 'name', 'percentDone', 'isFinished', 'downloadDir', 'errorString', 'status'],
-  });
-  return out.torrents || [];
-}
-
-export async function tmRemove(hash) {
-  await tmCall('torrent-remove', { ids: [hash], 'delete-local-data': false });
-}
-
 /* ------------------------------------------------------------ slskd (Soulseek) */
+// slskd is both the search engine and the download client: Soulseek peers
+// share individual files, so we can grab exactly one song — or a whole album
+// folder from a single peer.
 const AUDIO_EXT_RE = /\.(flac|mp3|m4a|ogg|opus|wav|aac|wma)$/i;
 
 async function slskdFetch(pathAndQuery, opts = {}) {
@@ -279,24 +125,24 @@ export async function slskdSearch(query, { timeoutMs = 45000 } = {}) {
   return out;
 }
 
-/** Enqueue a single file download from a peer. */
-export async function slskdEnqueue(username, file) {
+/** Enqueue one or more file downloads from a peer. */
+export async function slskdEnqueue(username, files) {
+  const list = (Array.isArray(files) ? files : [files]).map(f => ({ filename: f.filename, size: f.size }));
   await slskdFetch(`transfers/downloads/${encodeURIComponent(username)}`, {
     method: 'POST',
-    body: JSON.stringify([{ filename: file.filename, size: file.size }]),
+    body: JSON.stringify(list),
   });
   return true;
 }
 
-/** Find a specific download transfer's state for a user/file. Returns
- *  { state, percentComplete, bytesTransferred, size } or null. */
-export async function slskdTransfer(username, filename) {
+/** All download transfers for a peer, flattened.
+ *  Each: { id, filename, state, percentComplete, bytesTransferred, size }. */
+export async function slskdTransfers(username) {
   let dirs;
   try { dirs = await slskdFetch(`transfers/downloads/${encodeURIComponent(username)}`); }
-  catch { return null; }
+  catch { return []; }
   // Response is { username, directories: [{ directory, files: [transfer...] }] }
-  const files = (dirs?.directories || []).flatMap(d => d.files || []);
-  return files.find(f => f.filename === filename) || null;
+  return (dirs?.directories || []).flatMap(d => d.files || []);
 }
 
 export async function slskdCancel(username, id) {
@@ -329,4 +175,33 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.map(s => s.file);
+}
+
+/** Group search results into per-peer folders and rank them as album
+ *  candidates: how many of the wanted track titles the folder covers, then
+ *  quality/availability. Returns [{ username, directory, files, matched }]
+ *  best-first; folders covering less than half the album are dropped. */
+export function scoreSlskdFolders(files, wantedTitles) {
+  const wanted = wantedTitles.map(t => norm(t)).filter(Boolean);
+  const folders = new Map(); // username|dir -> { username, directory, files }
+  for (const f of files) {
+    const dir = (f.filename || '').replace(/[\\/][^\\/]+$/, '');
+    const key = `${f.username}|${dir}`;
+    if (!folders.has(key)) folders.set(key, { username: f.username, directory: dir, files: [] });
+    folders.get(key).files.push(f);
+  }
+  const scored = [];
+  for (const folder of folders.values()) {
+    const bases = folder.files.map(f => norm((f.filename || '').split(/[\\/]/).pop()));
+    const matched = wanted.filter(w => bases.some(b => b.includes(w) || (w.length > 6 && w.includes(b)))).length;
+    if (matched < Math.max(1, Math.ceil(wanted.length / 2))) continue;  // too incomplete
+    let score = (matched / Math.max(1, wanted.length)) * 100;
+    const flacShare = folder.files.filter(f => /\.flac$/i.test(f.filename)).length / folder.files.length;
+    score += flacShare * 15;
+    if (folder.files[0]?.hasFreeUploadSlot) score += 20;
+    score -= Math.min(20, folder.files[0]?.queueLength || 0);
+    scored.push({ ...folder, matched, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
 }

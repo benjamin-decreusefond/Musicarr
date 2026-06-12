@@ -2,32 +2,21 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Initial defaults from the environment. The Jackett/Transmission/library
+// Initial defaults from the environment. The slskd/library
 // settings below can all be overridden from the UI (stored in the settings
 // table); these env vars only seed the first-run defaults.
 const envDefaults = {
   musicDir: process.env.MUSIC_DIR || '/music',
-  // Single download path, Radarr/Sonarr-style: Transmission saves completed
-  // downloads here and Musicarr reads them back from the same path, then
-  // hardlinks into the root folder. Mount the shared volume at the same
-  // mount point in both containers.
-  downloadDir: process.env.TRANSMISSION_DOWNLOAD_DIR || process.env.DOWNLOAD_DIR || '/downloads',
-  jackettUrl: (process.env.JACKETT_URL || '').replace(/\/$/, ''),
-  jackettApiKey: process.env.JACKETT_API_KEY || '',
-  jackettIndexer: process.env.JACKETT_INDEXER || 'all',
-  searchCategories: process.env.SEARCH_CATEGORIES || '3000',
-  transmissionUrl: process.env.TRANSMISSION_URL || 'http://transmission:9091/transmission/rpc',
-  transmissionUser: process.env.TRANSMISSION_USER || '',
-  transmissionPass: process.env.TRANSMISSION_PASS || '',
-  // slskd (Soulseek) — for downloading individual tracks. URL + API key enable
-  // it; downloadDir is where slskd writes completed files, as Musicarr sees it.
+  // slskd (Soulseek) is the download engine: it searches the network and
+  // transfers files. slskdDownloadDir is where slskd writes completed files,
+  // as Musicarr sees it — mount slskd's downloads volume into this container.
   slskdUrl: (process.env.SLSKD_URL || '').replace(/\/$/, ''),
   slskdApiKey: process.env.SLSKD_API_KEY || '',
   slskdDownloadDir: process.env.SLSKD_DOWNLOAD_DIR || '/slskd-downloads',
 };
 
-// A stored value of '' is meaningful (e.g. clearing Transmission auth), so
-// only fall back to the env default when nothing has been saved (null).
+// A stored value of '' is meaningful (e.g. clearing a key), so only fall back
+// to the env default when nothing has been saved (null).
 const stored = (key, dflt) => { const v = getSetting(key); return v === null ? dflt : v; };
 
 export const config = {
@@ -36,21 +25,11 @@ export const config = {
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin',
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
-  // How often to re-scan the download dir for completed-but-unimported files.
+  // How often to re-scan for completed-but-unimported downloads.
   sweepIntervalMs: parseInt(process.env.SWEEP_INTERVAL_MS || '600000', 10),
   envDefaults,
 
   get musicDir() { return getSetting('root_folder') || envDefaults.musicDir; },
-  get downloadDir() { return getSetting('transmission_download_dir') || envDefaults.downloadDir; },
-  get jackettUrl() { return stored('jackett_url', envDefaults.jackettUrl).replace(/\/$/, ''); },
-  get jackettApiKey() { return stored('jackett_api_key', envDefaults.jackettApiKey); },
-  get jackettIndexer() { return getSetting('jackett_indexer') || envDefaults.jackettIndexer; },
-  get searchCategories() {
-    return stored('search_categories', envDefaults.searchCategories).split(',').map(s => s.trim()).filter(Boolean);
-  },
-  get transmissionUrl() { return getSetting('transmission_url') || envDefaults.transmissionUrl; },
-  get transmissionUser() { return stored('transmission_user', envDefaults.transmissionUser); },
-  get transmissionPass() { return stored('transmission_pass', envDefaults.transmissionPass); },
   get slskdUrl() { return stored('slskd_url', envDefaults.slskdUrl).replace(/\/$/, ''); },
   get slskdApiKey() { return stored('slskd_api_key', envDefaults.slskdApiKey); },
   get slskdDownloadDir() { return getSetting('slskd_download_dir') || envDefaults.slskdDownloadDir; },
@@ -165,8 +144,7 @@ const dlCols = db.prepare(`PRAGMA table_info(downloads)`).all().map(c => c.name)
 if (!dlCols.includes('to_library')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN to_library INTEGER NOT NULL DEFAULT 1`);
 }
-// Download engine: 'torrent' (Jackett+Transmission) or 'soulseek' (slskd).
-// slskd transfers are identified by the peer username + remote file path.
+// slskd transfers are identified by the peer username + remote file path(s).
 if (!dlCols.includes('engine')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN engine TEXT NOT NULL DEFAULT 'torrent'`);
   db.exec(`ALTER TABLE downloads ADD COLUMN slskd_user TEXT`);
@@ -185,7 +163,6 @@ export function setSetting(key, value) {
 }
 
 fs.mkdirSync(config.musicDir, { recursive: true });
-fs.mkdirSync(config.downloadDir, { recursive: true });
 
 /** Insert or refresh a track's catalog metadata without touching file_path. */
 export function upsertTrack(t) {

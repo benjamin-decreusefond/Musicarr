@@ -28,9 +28,9 @@ COPY --from=web /web/dist ./web/dist
 ENV PORT=8686 \
     DATA_DIR=/data \
     MUSIC_DIR=/music \
-    DOWNLOAD_DIR=/downloads
+    SLSKD_DOWNLOAD_DIR=/slskd-downloads
 
-VOLUME ["/data", "/music", "/downloads"]
+VOLUME ["/data", "/music", "/slskd-downloads"]
 EXPOSE 8686
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

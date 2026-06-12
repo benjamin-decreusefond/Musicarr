@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Router } from 'express';
 import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
-import { deezerGet, testJackett, testTransmission, testSlskd } from './sources.js';
+import { deezerGet, testSlskd } from './sources.js';
 import { queueDownload } from './downloader.js';
 import { logger } from './log.js';
 
@@ -20,14 +20,6 @@ api.use(requireAuth);
 function currentSettings() {
   return {
     root_folder: config.musicDir,
-    jackett_url: config.jackettUrl,
-    jackett_api_key: config.jackettApiKey,
-    jackett_indexer: config.jackettIndexer,
-    search_categories: config.searchCategories.join(', '),
-    transmission_url: config.transmissionUrl,
-    transmission_user: config.transmissionUser,
-    transmission_pass: config.transmissionPass,
-    transmission_download_dir: config.downloadDir,
     slskd_url: config.slskdUrl,
     slskd_api_key: config.slskdApiKey,
     slskd_download_dir: config.slskdDownloadDir,
@@ -61,42 +53,6 @@ api.put('/settings', requireAdmin, (req, res) => {
       setSetting('root_folder', resolved);
     }
 
-    // --- Jackett ---
-    if (has('jackett_url')) {
-      const url = str(b.jackett_url);
-      if (url && !isHttpUrl(url)) throw new Error('Jackett URL must start with http:// or https://');
-      setSetting('jackett_url', url.replace(/\/$/, ''));
-    }
-    if (has('jackett_api_key')) setSetting('jackett_api_key', str(b.jackett_api_key));
-    if (has('jackett_indexer')) setSetting('jackett_indexer', str(b.jackett_indexer) || 'all');
-    if (has('search_categories')) setSetting('search_categories', str(b.search_categories) || '3000');
-
-    // --- Transmission ---
-    if (has('transmission_url')) {
-      const url = str(b.transmission_url);
-      if (!url) throw new Error('Transmission RPC URL is required');
-      if (!isHttpUrl(url)) throw new Error('Transmission URL must start with http:// or https://');
-      setSetting('transmission_url', url);
-    }
-    if (has('transmission_user')) setSetting('transmission_user', str(b.transmission_user));
-    if (has('transmission_pass')) setSetting('transmission_pass', str(b.transmission_pass));
-    // Shared with Transmission: it writes completed downloads here and
-    // Musicarr reads them back from the same path, so it must also exist
-    // and be readable on Musicarr's side of the shared volume.
-    if (has('transmission_download_dir')) {
-      const dir = str(b.transmission_download_dir);
-      if (dir && !path.isAbsolute(dir)) throw new Error('Download directory must be an absolute path');
-      if (dir) {
-        try {
-          fs.mkdirSync(dir, { recursive: true });
-          fs.accessSync(dir, fs.constants.R_OK);
-        } catch (e) {
-          throw new Error(`Download directory is not accessible from Musicarr: ${e.message}`);
-        }
-      }
-      setSetting('transmission_download_dir', dir);
-    }
-
     // --- slskd (Soulseek) ---
     if (has('slskd_url')) {
       const url = str(b.slskd_url);
@@ -127,11 +83,7 @@ api.put('/settings', requireAdmin, (req, res) => {
 api.post('/settings/test', requireAdmin, async (req, res) => {
   const b = req.body || {};
   try {
-    if (b.section === 'jackett') {
-      await testJackett({ url: b.jackett_url, apiKey: b.jackett_api_key, indexer: b.jackett_indexer });
-    } else if (b.section === 'transmission') {
-      await testTransmission({ url: b.transmission_url, username: b.transmission_user, password: b.transmission_pass });
-    } else if (b.section === 'slskd') {
+    if (b.section === 'slskd') {
       await testSlskd({ url: b.slskd_url, apiKey: b.slskd_api_key });
     } else {
       return res.status(400).json({ error: 'Unknown section' });
@@ -154,9 +106,9 @@ function trackWithFlags(userId) {
   `).pluck(false);
 }
 
-// The library shows tracks the user requested (in_library) that are on disk,
-// plus tracks currently being fetched so a download shows up the moment it's
-// clicked. Each row carries `available` (file on disk) and `download_status`.
+// The library shows every track on disk, plus tracks currently being fetched
+// so a download shows up the moment it's clicked. Each row carries `available`
+// (file on disk) and the latest `download_status`.
 api.get('/library', (req, res) => {
   const rows = db.prepare(`
     SELECT t.*,
@@ -167,38 +119,14 @@ api.get('/library', (req, res) => {
             OR (d.kind = 'album' AND d.deezer_id = t.album_id)
          ORDER BY d.created_at DESC LIMIT 1) AS download_status
     FROM tracks t
-    WHERE (t.file_path IS NOT NULL AND t.in_library = 1)
+    WHERE t.file_path IS NOT NULL
        OR EXISTS (SELECT 1 FROM downloads d
-            WHERE d.status IN ('searching', 'downloading', 'importing') AND d.to_library = 1
+            WHERE d.status IN ('searching', 'downloading', 'importing')
               AND ((d.kind = 'track' AND d.deezer_id = t.deezer_id)
                 OR (d.kind = 'album' AND d.deezer_id = t.album_id)))
     ORDER BY (t.file_path IS NOT NULL) DESC, t.added_at DESC
   `).all(req.user.id);
   res.json(rows);
-});
-
-// "Available": every track present in the root folder (the on-disk catalog,
-// kept in sync by the boot/library scan). `in_library` flags the ones already
-// added to the Library; the rest can be promoted instantly (no re-download).
-api.get('/available', (req, res) => {
-  const rows = db.prepare(`
-    SELECT t.*, 1 AS available,
-      EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = ? AND f.track_id = t.deezer_id) AS favorite
-    FROM tracks t
-    WHERE t.file_path IS NOT NULL
-    ORDER BY t.artist, t.album, t.track_position
-  `).all(req.user.id);
-  res.json(rows);
-});
-
-// Promote an Available track (or several) into the library.
-api.post('/library', (req, res) => {
-  const ids = Array.isArray(req.body?.track_ids) ? req.body.track_ids
-    : req.body?.track_id != null ? [req.body.track_id] : [];
-  if (!ids.length) return res.status(400).json({ error: 'track_id or track_ids required' });
-  const stmt = db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ? AND file_path IS NOT NULL');
-  const tx = db.transaction((list) => { let n = 0; for (const id of list) n += stmt.run(id).changes; return n; });
-  res.json({ added: tx(ids) });
 });
 
 /* --------------------------------------------------------------- Search */
@@ -447,9 +375,8 @@ api.post('/playlists', (req, res) => {
 // Import a Deezer playlist into the user's collection: create (or refresh) a
 // local playlist with the same tracks, then queue downloads for the tracks we
 // don't have on disk yet so the playlist becomes fully playable. Missing
-// tracks are grouped by album and one download is queued per album (a track
-// download imports its whole album as Available, so siblings arrive with it).
-const IMPORT_QUEUE_CAP = 25; // albums per run; re-import to continue
+// tracks are queued as individual Soulseek downloads.
+const IMPORT_QUEUE_CAP = 50; // tracks per run; re-import to continue
 api.post('/playlists/import-deezer', async (req, res) => {
   const deezerId = parseInt(req.body?.deezer_playlist_id, 10);
   if (!deezerId) return res.status(400).json({ error: 'deezer_playlist_id required' });
@@ -474,29 +401,24 @@ api.post('/playlists/import-deezer', async (req, res) => {
       rows.forEach((r, i) => ins.run(list.id, i, r.deezer_id));
     })();
 
-    // Queue what's missing, one representative track per distinct album.
+    // Queue what's missing — slskd grabs single tracks natively, so each
+    // missing song is its own download.
     const haveFile = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     const missing = rows.filter(r => {
       const f = haveFile.get(r.deezer_id)?.file_path;
       return !(f && fs.existsSync(f));
     });
-    const byAlbum = new Map();
-    for (const m of missing) {
-      const key = m.album_id || `track-${m.deezer_id}`;
-      if (!byAlbum.has(key)) byAlbum.set(key, m);
-    }
     let queued = 0;
-    for (const rep of byAlbum.values()) {
+    for (const m of missing) {
       if (queued >= IMPORT_QUEUE_CAP) break;
-      // Available-only: the tracks belong to the playlist, not the main Library.
-      queueDownload(req.user.id, 'track', rep.deezer_id, `${rep.artist} – ${rep.title}`, rep.cover, false);
+      queueDownload(req.user.id, 'track', m.deezer_id, `${m.artist} – ${m.title}`, m.cover);
       queued++;
     }
-    log.info(`playlist import "${name}": ${rows.length} tracks, ${missing.length} missing across ${byAlbum.size} album(s), ${queued} download(s) queued`);
+    log.info(`playlist import "${name}": ${rows.length} tracks, ${missing.length} missing, ${queued} download(s) queued`);
     res.json({
       id: list.id, name, total: rows.length,
       have: rows.length - missing.length, missing: missing.length,
-      queued, remaining_albums: Math.max(0, byAlbum.size - queued),
+      queued, remaining: Math.max(0, missing.length - queued),
     });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Artist, Album, Library, Available, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
+import { Home, Search, Explore, Genre, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -178,7 +178,6 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="search" icon="search" label="Search" />
         <NavItem view="explore" icon="compass" label="Explore" />
         <NavItem view="library" icon="library" label="Library" />
-        <NavItem view="available" icon="check" label="Available" />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
@@ -342,8 +341,7 @@ function App() {
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
     case 'artist': page = <Artist id={route.id} nav={nav} />; break;
     case 'album': page = <Album id={route.id} nav={nav} />; break;
-    case 'library': page = <Library nav={nav} />; break;
-    case 'available': page = <Available />; break;
+    case 'library': page = <Library />; break;
     case 'favorites': page = <Favorites />; break;
     case 'playlist': page = <Playlist id={route.id} />; break;
     case 'downloads': page = <Downloads />; break;
