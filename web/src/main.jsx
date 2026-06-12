@@ -178,11 +178,11 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="search" icon="search" label="Search" />
         <NavItem view="explore" icon="compass" label="Explore" />
         <NavItem view="library" icon="library" label="Library" />
+        <NavItem view="favorites" icon="heart" label="Liked songs" />
+        <NavItem view="downloads" icon="download" label="Downloads" />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
-        <NavItem view="favorites" icon="heart" label="Liked songs" />
-        <NavItem view="downloads" icon="download" label="Downloads" />
         <NavItem view="equalizer" icon="sliders" label="Equalizer" />
         <NavItem view="profile" icon="user" label="Profile" />
         {!!me.is_admin && <NavItem view="admin" icon="user" label="Users" />}
