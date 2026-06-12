@@ -27,6 +27,9 @@ export const config = {
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
   // How often to re-scan for completed-but-unimported downloads.
   sweepIntervalMs: parseInt(process.env.SWEEP_INTERVAL_MS || '600000', 10),
+  // A transfer with no progress for this long counts as failed and is retried
+  // with the next candidate (Soulseek peers can leave you queued forever).
+  slskdStallMs: parseInt(process.env.SLSKD_STALL_MS || '900000', 10),
   envDefaults,
 
   get musicDir() { return getSetting('root_folder') || envDefaults.musicDir; },
@@ -149,6 +152,13 @@ if (!dlCols.includes('engine')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN engine TEXT NOT NULL DEFAULT 'torrent'`);
   db.exec(`ALTER TABLE downloads ADD COLUMN slskd_user TEXT`);
   db.exec(`ALTER TABLE downloads ADD COLUMN slskd_file TEXT`);
+}
+// Retry bookkeeping: total transfer attempts and a JSON map of
+// "<user>|<file>" -> failure count, so retries survive restarts and stop
+// re-picking peers that already failed twice.
+if (!dlCols.includes('attempts')) {
+  db.exec(`ALTER TABLE downloads ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`);
+  db.exec(`ALTER TABLE downloads ADD COLUMN failed_candidates TEXT`);
 }
 
 export function getSetting(key) {
