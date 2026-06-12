@@ -84,11 +84,10 @@ api.post('/settings/test', requireAdmin, async (req, res) => {
   const b = req.body || {};
   try {
     if (b.section === 'slskd') {
-      await testSlskd({ url: b.slskd_url, apiKey: b.slskd_api_key });
-    } else {
-      return res.status(400).json({ error: 'Unknown section' });
+      const { serverState } = await testSlskd({ url: b.slskd_url, apiKey: b.slskd_api_key });
+      return res.json({ ok: true, detail: `Soulseek server: ${serverState}` });
     }
-    res.json({ ok: true });
+    return res.status(400).json({ error: 'Unknown section' });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
   }

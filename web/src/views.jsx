@@ -643,8 +643,8 @@ export function Settings() {
     setTesting(section); setTested(t => ({ ...t, [section]: null }));
     const body = { section, slskd_url: s.slskd_url, slskd_api_key: s.slskd_api_key };
     try {
-      await api.post('/api/settings/test', body);
-      setTested(t => ({ ...t, [section]: { ok: true, text: 'Connection successful' } }));
+      const r = await api.post('/api/settings/test', body);
+      setTested(t => ({ ...t, [section]: { ok: true, text: r?.detail ? `Connection successful — ${r.detail}` : 'Connection successful' } }));
     } catch (e) {
       setTested(t => ({ ...t, [section]: { ok: false, text: e.message } }));
     }

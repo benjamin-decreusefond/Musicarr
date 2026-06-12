@@ -114,11 +114,16 @@ async function trackViaSlskd(dl) {
   }
 
   setStatus(dl.id, 'searching', 'Searching Soulseek');
-  // Two queries: the track itself, then artist+album (covers files named only
-  // by track number inside album folders).
+  // Two queries: the track itself, then the album (covers files named only by
+  // track number inside album folders). Don't prepend the artist when the
+  // album title already contains it ("Michael Jackson's This Is It" would
+  // otherwise become "Michael Jackson Michael Jackson's This Is It").
   const queries = [`${row.artist} ${row.title}`];
-  if (tr.album?.title && normTitle(tr.album.title) !== normTitle(row.title)) {
-    queries.push(`${row.artist} ${tr.album.title}`);
+  const albumTitle = tr.album?.title || '';
+  if (albumTitle && normTitle(albumTitle) !== normTitle(row.title)) {
+    queries.push(normTitle(albumTitle).includes(normTitle(row.artist))
+      ? albumTitle
+      : `${row.artist} ${albumTitle}`);
   }
 
   for (const q of queries) {
