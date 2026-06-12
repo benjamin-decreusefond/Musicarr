@@ -325,12 +325,22 @@ api.post('/download', async (req, res) => {
   }
 });
 
+// Admins see everyone's downloads (with the requesting user's name); regular
+// users see only their own.
 api.get('/downloads', (req, res) => {
-  res.json(db.prepare(`SELECT * FROM downloads WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`).all(req.user.id));
+  const rows = req.user.is_admin
+    ? db.prepare(`
+        SELECT d.*, u.username FROM downloads d
+        LEFT JOIN users u ON u.id = d.user_id
+        ORDER BY d.created_at DESC LIMIT 200`).all()
+    : db.prepare(`SELECT * FROM downloads WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`).all(req.user.id);
+  res.json(rows);
 });
 
 api.delete('/downloads/:id', (req, res) => {
-  db.prepare('DELETE FROM downloads WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  // Admins can dismiss any download; users only their own.
+  if (req.user.is_admin) db.prepare('DELETE FROM downloads WHERE id = ?').run(req.params.id);
+  else db.prepare('DELETE FROM downloads WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
   res.json({ ok: true });
 });
 

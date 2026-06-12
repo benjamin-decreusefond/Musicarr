@@ -90,21 +90,34 @@ export async function testSlskd({ url, apiKey }) {
 /** Run a Soulseek search and return the flattened candidate audio files,
  *  each tagged with its peer and the peer's slot/queue info. */
 export async function slskdSearch(query, { timeoutMs = 45000 } = {}) {
-  const search = await slskdFetch('searches', { method: 'POST', body: JSON.stringify({ searchText: query }) });
+  // Give slskd explicit search parameters: a real search window, a generous
+  // response cap, and (crucially) filterResponses:false so peers without a
+  // free slot right now still surface — we rank those ourselves. Without this,
+  // a popular track can come back empty even though the slskd UI finds it.
+  const searchTimeout = Math.max(5000, Math.min(timeoutMs - 5000, 15000));
+  const search = await slskdFetch('searches', {
+    method: 'POST',
+    body: JSON.stringify({ searchText: query, searchTimeout, responseLimit: 250, fileLimit: 20000, filterResponses: false }),
+  });
   const id = search?.id;
   if (!id) throw new Error('slskd did not return a search id');
 
-  // Poll until the search completes or we have enough to work with.
+  // Wait for the search to actually finish (slskd flips isComplete when its
+  // searchTimeout elapses); don't bail early on a transient empty state.
   const deadline = Date.now() + timeoutMs;
   let state = search;
   while (Date.now() < deadline) {
     await new Promise(res => setTimeout(res, 1500));
     state = await slskdFetch(`searches/${id}`);
-    if (state?.isComplete || (state?.responseCount ?? 0) >= 20) break;
+    if (state?.isComplete) break;
+    if ((state?.responseCount ?? 0) >= 50) break; // plenty already
   }
   let responses = [];
   try { responses = await slskdFetch(`searches/${id}/responses`) || []; } catch { /* ignore */ }
   try { await slskdFetch(`searches/${id}`, { method: 'DELETE' }); } catch { /* best effort cleanup */ }
+
+  const totalFiles = responses.reduce((n, r) => n + (r.files?.length || 0), 0);
+  log.info(`slskd "${query}": state=${state?.state || (state?.isComplete ? 'Completed' : 'Incomplete')}, ${responses.length} response(s), ${totalFiles} file(s)`);
 
   const out = [];
   for (const resp of responses) {
