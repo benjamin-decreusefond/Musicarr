@@ -160,6 +160,7 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
 | `SWEEP_INTERVAL_MS` | `600000` | How often completed-but-unimported downloads are retried |
+| `SLSKD_STALL_MS` | `900000` | A transfer with no progress for this long fails over to the next candidate |
 
 ## First login
 

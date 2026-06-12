@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { db, config, upsertTrack, trackRowFromDeezer } from './db.js';
-import { deezerGet, slskdSearch, slskdEnqueue, slskdTransfers, scoreSlskdFiles, scoreSlskdFolders } from './sources.js';
+import { deezerGet, slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel, scoreSlskdFiles, scoreSlskdFolders } from './sources.js';
 import { logger } from './log.js';
 
 const log = logger('download');
@@ -51,6 +51,56 @@ async function startSearch(downloadId) {
   return trackViaSlskd(dl);
 }
 
+/* --------------------------------------------------------------- Retries */
+// A candidate (peer + file/folder) gets PER_CANDIDATE_MAX transfer attempts
+// before being excluded; the download gives up entirely after MAX_ATTEMPTS.
+const PER_CANDIDATE_MAX = 2;
+const MAX_ATTEMPTS = 6;
+
+const candidateKey = (user, firstFile) => `${user}|${firstFile || ''}`;
+function failedCandidatesOf(dl) {
+  try { const v = JSON.parse(dl.failed_candidates || '{}'); return v && typeof v === 'object' ? v : {}; }
+  catch { return {}; }
+}
+function isExcluded(dl, user, firstFile) {
+  return (failedCandidatesOf(dl)[candidateKey(user, firstFile)] || 0) >= PER_CANDIDATE_MAX;
+}
+
+/** A transfer failed (terminal error or stalled): record the candidate,
+ *  cancel leftovers, and either re-search with that candidate excluded or
+ *  give up after MAX_ATTEMPTS. */
+async function handleTransferFailure(dl, reason) {
+  pendingImports.delete(dl.id);
+  progressTrack.delete(dl.id);
+
+  // Best-effort: cancel whatever is still queued at the peer so slskd stops
+  // pulling a candidate we've given up on.
+  try {
+    const transfers = await slskdTransfers(dl.slskd_user);
+    const mine = new Set(slskdFilesOf(dl));
+    for (const t of transfers) {
+      if (mine.has(t.filename) && !TERMINAL.test(t.state || '')) await slskdCancel(dl.slskd_user, t.id);
+    }
+  } catch { /* ignore */ }
+
+  const fails = failedCandidatesOf(dl);
+  const key = candidateKey(dl.slskd_user, slskdFilesOf(dl)[0]);
+  fails[key] = (fails[key] || 0) + 1;
+  const attempts = (dl.attempts || 0) + 1;
+
+  if (attempts >= MAX_ATTEMPTS) {
+    return setStatus(dl.id, 'error', `Soulseek transfer failed (${reason}) — gave up after ${attempts} attempts`, {
+      attempts, failed_candidates: JSON.stringify(fails),
+    });
+  }
+  log.info(`#${dl.id} transfer from ${dl.slskd_user} failed (${reason}); retrying — attempt ${attempts + 1}/${MAX_ATTEMPTS}, candidate strike ${fails[key]}/${PER_CANDIDATE_MAX}`);
+  setStatus(dl.id, 'searching', `Transfer failed (${reason}) — retrying (attempt ${attempts + 1})`, {
+    attempts, failed_candidates: JSON.stringify(fails),
+    slskd_user: null, slskd_file: null, progress: 0,
+  });
+  startSearch(dl.id).catch(e => { log.error(`#${dl.id} retry failed`, e); setStatus(dl.id, 'error', String(e.message || e)); });
+}
+
 /* ------------------------------------------------------------ Track flow */
 async function trackViaSlskd(dl) {
   const tr = await deezerGet(`track/${dl.deezer_id}`);
@@ -76,11 +126,12 @@ async function trackViaSlskd(dl) {
     let files = [];
     try { files = await slskdSearch(q); }
     catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); continue; }
-    const ranked = scoreSlskdFiles(files, row.artist, row.title, tr.duration || null);
+    const ranked = scoreSlskdFiles(files, row.artist, row.title, tr.duration || null)
+      .filter(f => !isExcluded(dl, f.username, f.filename));
     log.info(`#${dl.id} "${q}": ${files.length} audio file(s), ${ranked.length} viable`);
 
     // Try candidates in order until one peer accepts the request.
-    for (const file of ranked.slice(0, 3)) {
+    for (const file of ranked.slice(0, 5)) {
       try {
         await slskdEnqueue(file.username, file);
         const base = file.filename.split(/[\\/]/).pop();
@@ -99,7 +150,9 @@ async function trackViaSlskd(dl) {
       }
     }
   }
-  setStatus(dl.id, 'not_found', 'No matching file found on Soulseek');
+  setStatus(dl.id, 'not_found', dl.attempts > 0
+    ? `No more Soulseek candidates after ${dl.attempts} failed attempt(s)`
+    : 'No matching file found on Soulseek');
 }
 
 /* ------------------------------------------------------------ Album flow */
@@ -128,10 +181,11 @@ async function albumViaSlskd(dl) {
     catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); continue; }
 
     // Rank per-peer folders by how much of the tracklist they cover.
-    const folders = scoreSlskdFolders(files, wantedTracks.map(w => w.title));
+    const folders = scoreSlskdFolders(files, wantedTracks.map(w => w.title))
+      .filter(f => !isExcluded(dl, f.username, f.files[0]?.filename));
     log.info(`#${dl.id} "${q}": ${files.length} file(s) in ${folders.length} viable folder(s)`);
 
-    for (const folder of folders.slice(0, 3)) {
+    for (const folder of folders.slice(0, 5)) {
       try {
         await slskdEnqueue(folder.username, folder.files);
         const dirBase = folder.directory.split(/[\\/]/).pop() || folder.directory;
@@ -151,11 +205,15 @@ async function albumViaSlskd(dl) {
       }
     }
   }
-  setStatus(dl.id, 'not_found', 'No album folder found on Soulseek');
+  setStatus(dl.id, 'not_found', dl.attempts > 0
+    ? `No more Soulseek album folders after ${dl.attempts} failed attempt(s)`
+    : 'No album folder found on Soulseek');
 }
 
 // downloadId -> import plan, kept in memory while transfers are active.
 const pendingImports = new Map();
+// downloadId -> { pct, at } — last observed progress, for the stall guard.
+const progressTrack = new Map();
 
 /* ------------------------------------------------------------ Poll loop */
 export function startPoller() {
@@ -190,11 +248,18 @@ async function tick() {
         return sum + Math.min(1, p);
       }, 0) / wantedFiles.length;
       if (Math.abs(pct - dl.progress) > 0.01) setStatus(dl.id, 'downloading', dl.detail, { progress: pct });
+      // Stall guard: a peer can leave us queued or frozen forever — after
+      // slskdStallMs with no progress, fail over to the next candidate.
+      const prev = progressTrack.get(dl.id);
+      if (!prev || pct > prev.pct + 0.001) {
+        progressTrack.set(dl.id, { pct, at: Date.now() });
+      } else if (Date.now() - prev.at > config.slskdStallMs) {
+        await handleTransferFailure(dl, `stalled at ${Math.round(pct * 100)}% for ${Math.round(config.slskdStallMs / 60000)}min`);
+      }
       continue;
     }
     if (!ok.length) {
-      setStatus(dl.id, 'error', `Soulseek transfer failed (${done[0]?.state || 'unknown state'})`);
-      pendingImports.delete(dl.id);
+      await handleTransferFailure(dl, done[0]?.state || 'unknown state');
       continue;
     }
     // All transfers terminal and at least one succeeded -> import.
@@ -206,6 +271,7 @@ async function tick() {
       setStatus(dl.id, 'error', String(e.message || e));
     }
     pendingImports.delete(dl.id);
+    progressTrack.delete(dl.id);
   }
 }
 
