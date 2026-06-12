@@ -535,7 +535,7 @@ export function Downloads() {
           <div key={d.id} className="dl-item">
             <Cover src={d.cover} size={52} />
             <div className="dl-main">
-              <div className="dl-label">{d.label}</div>
+              <div className="dl-label">{d.label}{d.username ? <span className="dl-by"> · {d.username}</span> : ''}</div>
               <div className="dl-detail">{d.detail || statusLabel[d.status]}</div>
               {d.status === 'downloading' && (
                 <div className="dl-bar"><div className="dl-bar-fill" style={{ width: `${Math.round(d.progress * 100)}%` }} /></div>

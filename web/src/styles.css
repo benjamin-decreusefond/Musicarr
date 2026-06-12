@@ -138,6 +138,7 @@
 .dl-main { flex: 1; min-width: 0; }
 .dl-label { font-weight: 600; font-size: 14.5px; }
 .dl-detail { font-size: 12.5px; color: var(--text-dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-by { color: var(--text-faint); font-weight: 500; }
 .dl-bar { height: 4px; background: var(--bg-elev-2); border-radius: 3px; margin-top: 8px; overflow: hidden; }
 .dl-bar-fill { height: 100%; background: var(--accent); transition: width .4s; }
 .dl-status { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; background: var(--bg-elev-2); color: var(--text-dim); white-space: nowrap; }
