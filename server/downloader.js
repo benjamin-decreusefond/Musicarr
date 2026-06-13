@@ -114,17 +114,13 @@ async function trackViaSlskd(dl) {
   }
 
   setStatus(dl.id, 'searching', 'Searching Soulseek');
-  // Two queries: the track itself, then the album (covers files named only by
-  // track number inside album folders). Don't prepend the artist when the
-  // album title already contains it ("Michael Jackson's This Is It" would
-  // otherwise become "Michael Jackson Michael Jackson's This Is It").
-  const queries = [`${row.artist} ${row.title}`];
-  const albumTitle = tr.album?.title || '';
-  if (albumTitle && normTitle(albumTitle) !== normTitle(row.title)) {
-    queries.push(normTitle(albumTitle).includes(normTitle(row.artist))
-      ? albumTitle
-      : `${row.artist} ${albumTitle}`);
-  }
+  // Soulseek requires EVERY search term to appear in the file path, and peers
+  // often file tracks in folders that don't name the artist (e.g. soundtracks,
+  // "Skyfall (Single)"). So "artist title" can return nothing while "title"
+  // alone finds it. Try from specific to broad, stopping at the first query
+  // that yields a candidate; scoreSlskdFiles filters wrong songs out via the
+  // artist name and the Deezer duration.
+  const queries = searchVariants(row.artist, row.title);
 
   for (const q of queries) {
     log.info(`#${dl.id} slskd search: "${q}"`);
@@ -178,7 +174,7 @@ async function albumViaSlskd(dl) {
   if (!missing.length) return setStatus(dl.id, 'done', 'Already in library', { progress: 1 });
 
   setStatus(dl.id, 'searching', 'Searching Soulseek');
-  const queries = [`${artist} ${title}`, title];
+  const queries = searchVariants(artist, title);
   for (const q of queries) {
     log.info(`#${dl.id} slskd album search: "${q}"`);
     let files = [];
@@ -329,6 +325,25 @@ function safeName(s) {
 }
 
 const normTitle = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+
+// Drop parentheticals/featurings that often differ between Deezer's title and
+// a peer's filename (and would over-constrain a Soulseek search).
+function cleanForSearch(s) {
+  return (s || '')
+    .replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(feat\.?|ft\.?|featuring)\b.*$/i, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+/** Ordered, de-duplicated Soulseek queries from most specific to broadest.
+ *  Soulseek requires every term to be present in the path, so we fall back to
+ *  the bare title — peers often don't name the artist in the folder. */
+function searchVariants(artist, title) {
+  const withArtist = t => (normTitle(t).includes(normTitle(artist)) || !artist) ? t : `${artist} ${t}`;
+  const ct = cleanForSearch(title);
+  const out = [withArtist(title), withArtist(ct), title, ct];
+  return [...new Set(out.map(s => s.trim()).filter(Boolean))];
+}
 
 /** Best-effort track number from a filename: handles "03 - x", "03. x",
  *  "03_x", "3 x", and disc-prefixed "1-03 x" / "1.03 x". */
