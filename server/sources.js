@@ -197,17 +197,26 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
     const hay = ' ' + norm(base) + ' ' + norm(f.filename) + ' ';
     const titleHits = want.filter(t => hay.includes(t)).length;
     if (want.length && titleHits === 0) continue;                     // wrong song
-    let score = (titleHits / Math.max(1, want.length)) * 50;
     const artistHits = must.filter(t => hay.includes(t)).length;
-    score += (artistHits / Math.max(1, must.length)) * 20;
+    const durKnown = durationSec && f.length;
+    const durClose = durKnown && Math.abs(f.length - durationSec) <= 12;
+    // Broad ("title only") searches can return a different artist's song with
+    // the same title. If the artist name isn't anywhere in the path, only trust
+    // the file when its duration matches the Deezer track; if we can't even
+    // check the duration, drop it rather than risk the wrong recording.
+    if (must.length && artistHits === 0) {
+      if (!durKnown || !durClose) continue;
+    }
+    let score = (titleHits / Math.max(1, want.length)) * 50;
+    score += (artistHits / Math.max(1, must.length)) * 30;
     if (/\.flac$/i.test(base)) score += 20;
     else if (f.bitRate >= 320 || /320/.test(base)) score += 12;
     else if (f.bitRate && f.bitRate < 192) score -= 10;
     if (f.hasFreeUploadSlot) score += 25;                             // available now
     score -= Math.min(20, (f.queueLength || 0));                      // long queue is bad
     score += Math.min(10, (f.uploadSpeed || 0) / 100000);
-    // Duration sanity: within ~15s of the Deezer length when both known.
-    if (durationSec && f.length && Math.abs(f.length - durationSec) > 15) score -= 15;
+    if (durClose) score += 10;                                        // duration confirms it
+    else if (durKnown && Math.abs(f.length - durationSec) > 15) score -= 15;
     scored.push({ file: f, score });
   }
   scored.sort((a, b) => b.score - a.score);
