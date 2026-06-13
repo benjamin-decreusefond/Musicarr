@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { db, config, upsertTrack, trackRowFromDeezer } from './db.js';
-import { deezerGet, slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel, scoreSlskdFiles, scoreSlskdFolders } from './sources.js';
+import { deezerGet, slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel, scoreSlskdFiles, scoreSlskdFolders,
+  slskdReady, isTransientSlskdError } from './sources.js';
 import { logger } from './log.js';
 
 const log = logger('download');
@@ -49,6 +50,39 @@ async function startSearch(downloadId) {
   }
   if (dl.kind === 'album') return albumViaSlskd(dl);
   return trackViaSlskd(dl);
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Wait until slskd is connected and logged in to Soulseek (it briefly isn't
+ *  right after a VPN reconnect, which makes enqueues fail with a 500). */
+async function ensureSlskdReady(dlId, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  let waited = false;
+  while (Date.now() < deadline) {
+    if (await slskdReady()) { if (waited) log.info(`#${dlId} slskd reconnected to Soulseek`); return true; }
+    waited = true;
+    log.info(`#${dlId} waiting for slskd to (re)connect to Soulseek…`);
+    await sleep(3000);
+  }
+  return false;
+}
+
+/** Enqueue, retrying the SAME candidate through transient slskd states (e.g.
+ *  a reconnect in progress). Throws only on a genuine rejection. */
+async function enqueueWithRetry(dlId, username, files) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await slskdEnqueue(username, files); }
+    catch (e) {
+      if (isTransientSlskdError(e) && attempt <= 3) {
+        log.info(`#${dlId} enqueue from ${username} hit transient slskd state (${e.message}); waiting to retry`);
+        await ensureSlskdReady(dlId, 15000);
+        await sleep(1500);
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 /* --------------------------------------------------------------- Retries */
@@ -131,10 +165,11 @@ async function trackViaSlskd(dl) {
       .filter(f => !isExcluded(dl, f.username, f.filename));
     log.info(`#${dl.id} "${q}": ${files.length} audio file(s), ${ranked.length} viable`);
 
+    if (ranked.length) await ensureSlskdReady(dl.id);
     // Try candidates in order until one peer accepts the request.
     for (const file of ranked.slice(0, 5)) {
       try {
-        await slskdEnqueue(file.username, file);
+        await enqueueWithRetry(dl.id, file.username, file);
         const base = file.filename.split(/[\\/]/).pop();
         log.info(`#${dl.id} slskd queued "${base}" from ${file.username}`);
         setStatus(dl.id, 'downloading', `Soulseek: ${base}`, {
@@ -186,9 +221,10 @@ async function albumViaSlskd(dl) {
       .filter(f => !isExcluded(dl, f.username, f.files[0]?.filename));
     log.info(`#${dl.id} "${q}": ${files.length} file(s) in ${folders.length} viable folder(s)`);
 
+    if (folders.length) await ensureSlskdReady(dl.id);
     for (const folder of folders.slice(0, 5)) {
       try {
-        await slskdEnqueue(folder.username, folder.files);
+        await enqueueWithRetry(dl.id, folder.username, folder.files);
         const dirBase = folder.directory.split(/[\\/]/).pop() || folder.directory;
         log.info(`#${dl.id} slskd queued folder "${dirBase}" (${folder.files.length} files, covers ${folder.matched}/${wantedTracks.length}) from ${folder.username}`);
         setStatus(dl.id, 'downloading', `Soulseek: ${dirBase} (${folder.files.length} files)`, {
