@@ -67,9 +67,28 @@ async function slskdFetch(pathAndQuery, opts = {}) {
     signal: AbortSignal.timeout(opts.timeoutMs || 20000),
   });
   if (r.status === 401 || r.status === 403) throw new Error('slskd rejected the API key');
-  if (!r.ok) throw new Error(`slskd ${r.status}`);
+  if (!r.ok) {
+    let body = ''; try { body = await r.text(); } catch { /* ignore */ }
+    const err = new Error(`slskd ${r.status}${body ? ': ' + body.slice(0, 200) : ''}`);
+    err.status = r.status;
+    throw err;
+  }
   const text = await r.text();
   return text ? JSON.parse(text) : null;
+}
+
+/** True when an slskd error is transient — slskd is briefly not connected to
+ *  the Soulseek server (e.g. just after a VPN reconnect) and the same call
+ *  will likely succeed once it finishes logging in. */
+export function isTransientSlskdError(e) {
+  return e?.status === 500 || e?.status === 503
+    || /must be connected|logged ?in|connecting|not connected/i.test(e?.message || '');
+}
+
+/** True when slskd is connected to and logged in to the Soulseek network. */
+export async function slskdReady() {
+  const st = await slskdServerState();
+  return /connected/i.test(st) && /logged ?in/i.test(st);
 }
 
 /** Verify a slskd endpoint + API key. */
