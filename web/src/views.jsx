@@ -455,6 +455,17 @@ export function DeezerPlaylist({ id, nav }) {
 }
 
 /* ------------------------------------------------------------- Explore */
+const MOOD_GRADIENTS = {
+  happy: 'linear-gradient(135deg,#ffb347,#ffcc33)',
+  chill: 'linear-gradient(135deg,#2193b0,#6dd5ed)',
+  sad: 'linear-gradient(135deg,#4b6cb7,#182848)',
+  energetic: 'linear-gradient(135deg,#f7411f,#fc5c7d)',
+  romantic: 'linear-gradient(135deg,#e55d87,#5fc3e4)',
+  focus: 'linear-gradient(135deg,#0f2027,#2c5364)',
+  party: 'linear-gradient(135deg,#8e2de2,#e94057)',
+  sleep: 'linear-gradient(135deg,#141e30,#243b55)',
+};
+
 export function Explore({ nav }) {
   const { data, err, loading } = useAsync(() => api.get('/api/explore'), []);
   if (loading) return <Loading />;
@@ -462,15 +473,73 @@ export function Explore({ nav }) {
   return (
     <div className="page">
       <h1 className="page-h1">Explore</h1>
-      <p className="settings-hint">Browse by genre — pick one for trending artists, albums, tracks and playlists.</p>
-      <div className="genre-grid">
-        {(data.genres || []).map(g => (
-          <button key={g.id} className="genre-card" onClick={() => nav({ view: 'genre', id: g.id })}
-            style={{ backgroundImage: g.picture ? `url(${g.picture})` : undefined }}>
-            <span className="genre-name">{g.name}</span>
-          </button>
-        ))}
+
+      {!!data.moods?.length && (
+        <section className="page-block">
+          <h2 className="row-title">Moods</h2>
+          <div className="genre-grid">
+            {data.moods.map(m => (
+              <button key={m.slug} className="genre-card" onClick={() => nav({ view: 'mood', id: m.slug })}
+                style={{ background: MOOD_GRADIENTS[m.slug] || 'var(--bg-elev-2)' }}>
+                <span className="genre-name">{m.name}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="page-block">
+        <h2 className="row-title">Genres</h2>
+        <div className="genre-grid">
+          {(data.genres || []).map(g => (
+            <button key={g.id} className="genre-card" onClick={() => nav({ view: 'genre', id: g.id })}
+              style={{ backgroundImage: g.picture ? `url(${g.picture})` : undefined }}>
+              <span className="genre-name">{g.name}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function Mood({ slug, nav }) {
+  const player = usePlayer();
+  const { data, err, loading } = useAsync(() => api.get(`/api/mood/${encodeURIComponent(slug)}`), [slug]);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const tracks = data.tracks || [];
+  const playable = tracks.filter(t => t.available);
+  return (
+    <div className="page">
+      <span className="hero-kind">Mood</span>
+      <div className="list-head">
+        <h1 className="page-h1">{data.name}</h1>
+        {!!playable.length && (
+          <div className="list-head-actions">
+            <button className="btn-primary" onClick={() => player.playList(playable, 0, { shuffle: true })}>
+              <Icon name="shuffle" size={18} /> Shuffle play
+            </button>
+          </div>
+        )}
       </div>
+      {!!data.playlists?.length && (
+        <CardRow title="Playlists">
+          {data.playlists.map(p => (
+            <TileCard key={p.id} cover={p.cover} title={p.title} sub={`${p.nb_tracks} tracks · ${p.by}`}
+              onClick={() => nav({ view: 'dplaylist', id: p.id })} />
+          ))}
+        </CardRow>
+      )}
+      {!!tracks.length && (
+        <section className="page-block">
+          <h2 className="row-title">Songs</h2>
+          <div className="track-list">
+            {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} showAlbum />)}
+          </div>
+        </section>
+      )}
+      {!tracks.length && !data.playlists?.length && <div className="state faint">Nothing found for this mood.</div>}
     </div>
   );
 }
@@ -521,18 +590,32 @@ export function Genre({ id, nav }) {
 }
 
 /* ------------------------------------------------------------ Downloads */
-export function Downloads() {
+export function Downloads({ nav }) {
+  const player = usePlayer();
   const [items, setItems] = useState([]);
   const load = useCallback(async () => { try { setItems(await api.get('/api/downloads')); } catch {} }, []);
   useEffect(() => { load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
   const remove = async (id) => { await api.del(`/api/downloads/${id}`); load(); };
   const statusLabel = { searching: 'Searching', downloading: 'Downloading', importing: 'Importing', done: 'Done', not_found: 'Not found', error: 'Error' };
+
+  // Click a finished download: play the track and jump to the library; for an
+  // album, open the album page. Label is "Artist – Title".
+  const open = (d) => {
+    if (d.status !== 'done') return;
+    if (d.kind === 'album') { nav?.({ view: 'album', id: d.deezer_id }); return; }
+    const [artist, title] = String(d.label || '').split(' – ');
+    player.playTrack({ deezer_id: d.deezer_id, title: title || d.label, artist: artist || '', cover: d.cover, available: true });
+    nav?.({ view: 'library' });
+  };
+
   return (
     <div className="page">
       <h1 className="page-h1">Downloads</h1>
       <div className="dl-list">
         {items.map(d => (
-          <div key={d.id} className="dl-item">
+          <div key={d.id} className={`dl-item ${d.status === 'done' ? 'playable' : ''}`}
+            onClick={d.status === 'done' ? () => open(d) : undefined}
+            title={d.status === 'done' ? (d.kind === 'album' ? 'Open album' : 'Play in library') : undefined}>
             <Cover src={d.cover} size={52} />
             <div className="dl-main">
               <div className="dl-label">{d.label}{d.username ? <span className="dl-by"> · {d.username}</span> : ''}</div>
@@ -542,7 +625,7 @@ export function Downloads() {
               )}
             </div>
             <span className={`dl-status s-${d.status}`}>{statusLabel[d.status] || d.status}</span>
-            <button className="icon-btn" onClick={() => remove(d.id)} title="Dismiss"><Icon name="trash" size={16} /></button>
+            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Dismiss"><Icon name="trash" size={16} /></button>
           </div>
         ))}
         {!items.length && <div className="state faint">No downloads yet.</div>}
