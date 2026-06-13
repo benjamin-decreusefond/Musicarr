@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -279,15 +279,17 @@ function PlayerBar() {
 // Keep the current view in the address bar so a refresh restores it (the
 // server serves index.html for any non-API path, so deep links work too).
 const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre']);
+const VIEWS_WITH_SLUG = new Set(['mood']); // string id rather than numeric
 
 function routeToPath({ view, id }) {
   if (view === 'home') return '/';
-  return VIEWS_WITH_ID.has(view) && id != null ? `/${view}/${id}` : `/${view}`;
+  return (VIEWS_WITH_ID.has(view) || VIEWS_WITH_SLUG.has(view)) && id != null ? `/${view}/${id}` : `/${view}`;
 }
 
 function parsePath(pathname) {
   const [, view, rawId] = pathname.split('/');
   if (!view) return { view: 'home' };
+  if (VIEWS_WITH_SLUG.has(view)) return rawId ? { view, id: decodeURIComponent(rawId) } : { view: 'home' };
   if (VIEWS_WITH_ID.has(view)) {
     const id = Number(rawId);
     return Number.isFinite(id) ? { view, id } : { view: 'home' };
@@ -338,13 +340,14 @@ function App() {
     case 'search': page = <Search nav={nav} />; break;
     case 'explore': page = <Explore nav={nav} />; break;
     case 'genre': page = <Genre id={route.id} nav={nav} />; break;
+    case 'mood': page = <Mood slug={route.id} nav={nav} />; break;
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
     case 'artist': page = <Artist id={route.id} nav={nav} />; break;
     case 'album': page = <Album id={route.id} nav={nav} />; break;
     case 'library': page = <Library />; break;
     case 'favorites': page = <Favorites />; break;
     case 'playlist': page = <Playlist id={route.id} />; break;
-    case 'downloads': page = <Downloads />; break;
+    case 'downloads': page = <Downloads nav={nav} />; break;
     case 'admin': page = <Admin me={me} />; break;
     case 'settings': page = <Settings />; break;
     case 'profile': page = <Profile me={me} />; break;

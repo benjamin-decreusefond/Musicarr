@@ -263,7 +263,47 @@ api.get('/explore', async (req, res) => {
       genres: (g.data || [])
         .filter(x => x.id !== 0) // "All"
         .map(x => ({ id: x.id, name: x.name, picture: x.picture_medium || x.picture })),
+      moods: MOODS.map(m => ({ slug: m.slug, name: m.name })),
     });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Moods don't exist as a Deezer API primitive, so each maps to a search term
+// for curated playlists; the top playlist's tracks give the "songs for <mood>".
+const MOODS = [
+  { slug: 'happy', name: 'Happy', q: 'happy' },
+  { slug: 'chill', name: 'Chill', q: 'chill' },
+  { slug: 'sad', name: 'Melancholy', q: 'sad songs' },
+  { slug: 'energetic', name: 'Energetic', q: 'workout energy' },
+  { slug: 'romantic', name: 'Romantic', q: 'love songs' },
+  { slug: 'focus', name: 'Focus', q: 'focus concentration' },
+  { slug: 'party', name: 'Party', q: 'party hits' },
+  { slug: 'sleep', name: 'Sleep', q: 'sleep calm' },
+];
+
+api.get('/mood/:slug', async (req, res) => {
+  const mood = MOODS.find(m => m.slug === req.params.slug.toLowerCase());
+  const q = mood?.q || req.params.slug;
+  try {
+    const pl = await deezerGet(`search/playlist?q=${encodeURIComponent(q)}&limit=12`);
+    const playlists = (pl.data || []).filter(p => p?.id).map(p => ({
+      id: p.id, title: p.title, cover: p.picture_medium || p.picture,
+      nb_tracks: p.nb_tracks, by: p.user?.name || 'Deezer',
+    }));
+    // Songs for the mood = the tracks of the top matching playlist.
+    let tracks = [];
+    if (playlists[0]) {
+      const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+      const full = await deezerGet(`playlist/${playlists[0].id}`);
+      tracks = (full.tracks?.data || []).slice(0, 40).map(t => ({
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
+        duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
+      }));
+    }
+    res.json({ slug: mood?.slug || req.params.slug, name: mood?.name || q, playlists, tracks });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
