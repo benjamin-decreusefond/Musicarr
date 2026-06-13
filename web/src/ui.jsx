@@ -26,6 +26,7 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     queue: 'M4 6h12M4 12h12M4 18h8M17 13v6M17 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0M19 11l3-1',
     grip: 'M9 6h0M9 12h0M9 18h0M15 6h0M15 12h0M15 18h0',
     repeat: 'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3',
+    radio: 'M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6M5.6 5.6a9 9 0 0 0 0 12.7M18.4 5.6a9 9 0 0 1 0 12.7M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7',
     compass: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM16 8l-2 6-6 2 2-6 6-2Z',
     settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2Z',
     spinner: 'M12 3a9 9 0 1 0 9 9',
@@ -64,14 +65,38 @@ export function DownloadButton({ kind, id, label }) {
   );
 }
 
-export function HeartButton({ trackId, initial, onChange }) {
+// Radio downloads upcoming songs, so warn about disk use once per session.
+export function confirmRadioDownloads() {
+  if (sessionStorage.getItem('musicarr:radio:ok') === '1') return true;
+  const ok = window.confirm('Radio automatically downloads the upcoming songs from Soulseek so they can be played — this uses disk space. Continue?');
+  if (ok) sessionStorage.setItem('musicarr:radio:ok', '1');
+  return ok;
+}
+
+export function RadioButton({ seed }) {
+  const player = usePlayer();
+  const go = async (e) => {
+    e.stopPropagation();
+    if (!confirmRadioDownloads()) return;
+    try { await player.startRadio(seed); } catch (err) { alert(err.message); }
+  };
+  return (
+    <button className="icon-btn" onClick={go} title="Start radio (auto-downloads similar songs)">
+      <Icon name="radio" size={18} />
+    </button>
+  );
+}
+
+export function HeartButton({ trackId, track, initial, onChange }) {
   const [fav, setFav] = useState(!!initial);
   useEffect(() => setFav(!!initial), [initial]);
   const toggle = async (e) => {
     e.stopPropagation();
     const nv = !fav; setFav(nv);
     try {
-      if (nv) await api.put(`/api/favorites/${trackId}`);
+      // Send the track metadata so the server can catalog it first (search
+      // results aren't in the catalog yet).
+      if (nv) await api.put(`/api/favorites/${trackId}`, track || {});
       else await api.del(`/api/favorites/${trackId}`);
       onChange?.(nv);
     } catch { setFav(!nv); }
@@ -84,7 +109,7 @@ export function HeartButton({ trackId, initial, onChange }) {
   );
 }
 
-export function AddToPlaylist({ trackId }) {
+export function AddToPlaylist({ trackId, track }) {
   const [open, setOpen] = useState(false);
   const [lists, setLists] = useState([]);
   const ref = useRef(null);
@@ -101,7 +126,7 @@ export function AddToPlaylist({ trackId }) {
   const add = async (pid, e) => {
     e.stopPropagation();
     try {
-      await api.post(`/api/playlists/${pid}/tracks`, { track_id: trackId });
+      await api.post(`/api/playlists/${pid}/tracks`, { track_id: trackId, track });
       window.dispatchEvent(new Event('musicarr:playlists-changed')); // refresh sidebar counts
     } catch {}
     setOpen(false);
@@ -112,7 +137,7 @@ export function AddToPlaylist({ trackId }) {
     if (!name) return;
     try {
       const pl = await api.post('/api/playlists', { name });
-      await api.post(`/api/playlists/${pl.id}/tracks`, { track_id: trackId });
+      await api.post(`/api/playlists/${pl.id}/tracks`, { track_id: trackId, track });
       window.dispatchEvent(new Event('musicarr:playlists-changed'));
     } catch {}
     setOpen(false);
@@ -134,7 +159,7 @@ export function AddToPlaylist({ trackId }) {
 
 /** A single row in a track list. `tracks`/`i` allow play-in-context.
  *  `shuffle` (used by playlists) shuffles the whole list into the queue. */
-export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle }) {
+export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete }) {
   const player = usePlayer();
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
@@ -162,9 +187,16 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle }) {
       </div>
       {pending ? <span className="badge">{pending}</span> : (!available && <span className="badge">Not downloaded</span>)}
       <div className="track-actions" onClick={e => e.stopPropagation()}>
-        <HeartButton trackId={id} initial={track.favorite} onChange={onFav} />
-        <AddToPlaylist trackId={id} />
+        <RadioButton seed={`track:${id}`} />
+        <HeartButton trackId={id} track={track} initial={track.favorite} onChange={onFav} />
+        <AddToPlaylist trackId={id} track={track} />
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
+        {available && onDelete && (
+          <button className="icon-btn" title="Delete from disk"
+            onClick={() => { if (confirm(`Delete "${track.title}" from disk? This removes the file.`)) onDelete(id); }}>
+            <Icon name="trash" size={16} />
+          </button>
+        )}
       </div>
       <span className="track-time">{fmtTime(track.duration)}</span>
     </div>

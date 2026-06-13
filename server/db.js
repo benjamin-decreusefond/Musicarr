@@ -24,6 +24,13 @@ export const config = {
   dataDir: process.env.DATA_DIR || '/data',
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin',
+  // Session cookies are marked Secure by default (the app is meant to sit behind
+  // TLS). Set COOKIE_SECURE=false only for a plain-HTTP/LAN deployment.
+  cookieSecure: process.env.COOKIE_SECURE !== 'false',
+  sessionTtlDays: parseInt(process.env.SESSION_TTL_DAYS || '90', 10),
+  // Cap how many downloads actively search/transfer at once so a big playlist
+  // import doesn't stampede slskd or the event loop.
+  maxConcurrentDownloads: parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '3', 10),
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
   // How often to re-scan for completed-but-unimported downloads.
   sweepIntervalMs: parseInt(process.env.SWEEP_INTERVAL_MS || '600000', 10),
@@ -72,7 +79,17 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT
+);
+
+-- Per-user listening history: powers "recently played", "your top tracks",
+-- and seeds personalized recommendations ("you might like").
+CREATE TABLE IF NOT EXISTS plays (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  track_id INTEGER NOT NULL,
+  played_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Catalog of known tracks (Deezer metadata). file_path is set once the audio
@@ -130,7 +147,20 @@ CREATE TABLE IF NOT EXISTS playlist_items (
 
 CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
+CREATE INDEX IF NOT EXISTS idx_plays_user ON plays(user_id, played_at);
 `);
+
+// Migration: force a password change for the seeded default-credential admin,
+// and add it to any pre-existing schema.
+const userCols = db.prepare(`PRAGMA table_info(users)`).all().map(c => c.name);
+if (!userCols.includes('must_change_password')) {
+  db.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
+}
+// Migration: session expiry (older rows get a TTL lazily on next login).
+const sessCols = db.prepare(`PRAGMA table_info(sessions)`).all().map(c => c.name);
+if (!sessCols.includes('expires_at')) {
+  db.exec(`ALTER TABLE sessions ADD COLUMN expires_at TEXT`);
+}
 
 // Migration: `in_library` distinguishes tracks the user actually requested
 // (shown in Library) from tracks that only came along inside an album download

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from './store.jsx';
-import { Icon, Cover, TrackRow, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist } from './ui.jsx';
+import { Icon, Cover, TrackRow, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
 
 function useAsync(fn, deps) {
   const [data, setData] = useState(null);
@@ -47,6 +47,12 @@ function ImportPlaylistButton({ playlist, nav }) {
 
 export function Home({ nav }) {
   const { data, err, loading } = useAsync(() => api.get('/api/home'), []);
+  const [recs, setRecs] = useState(null);
+  const [history, setHistory] = useState(null);
+  useEffect(() => {
+    api.get('/api/recommendations').then(setRecs).catch(() => {});
+    api.get('/api/history').then(h => setHistory(h.map(t => ({ ...t, available: !!t.file_path }))) ).catch(() => {});
+  }, []);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
   const hour = new Date().getHours();
@@ -54,6 +60,34 @@ export function Home({ nav }) {
   return (
     <div className="page">
       <h1 className="page-h1">{greet}</h1>
+      {!!history?.length && (
+        <CardRow title="Recently played">
+          {history.slice(0, 12).map(t => (
+            <TileCard key={t.deezer_id} cover={t.cover} title={t.title} sub={t.artist}
+              onClick={() => t.album_id && nav({ view: 'album', id: t.album_id })}
+              actions={<RadioButton seed={`track:${t.deezer_id}`} />} />
+          ))}
+        </CardRow>
+      )}
+      {!!recs?.tracks?.length && (
+        <section className="page-block">
+          <h2 className="row-title">{recs.personalized ? 'You might like' : 'Popular right now'}</h2>
+          {recs.personalized && !!recs.basedOn?.length && (
+            <p className="settings-hint" style={{ marginTop: -4 }}>Based on {recs.basedOn.map(a => a.name).slice(0, 3).join(', ')}</p>
+          )}
+          <div className="track-list">
+            {recs.tracks.slice(0, 15).map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={recs.tracks} showAlbum />)}
+          </div>
+        </section>
+      )}
+      {!!recs?.artists?.length && (
+        <CardRow title="Artists for you">
+          {recs.artists.map(a => (
+            <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+              onClick={() => nav({ view: 'artist', id: a.id })} />
+          ))}
+        </CardRow>
+      )}
       <CardRow title="Trending artists">
         {data.artists.map(a => (
           <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
@@ -230,6 +264,12 @@ export function Artist({ id, nav }) {
               onClick={() => player.playList(top, 0)}>
               <Icon name="play" size={18} fill="currentColor" /> Play
             </button>
+            <button className="btn-ghost" onClick={async () => {
+              if (!confirmRadioDownloads()) return;
+              try { await player.startRadio(`artist:${artist.id}`); } catch (e) { alert(e.message); }
+            }}>
+              <Icon name="radio" size={18} /> Start radio
+            </button>
           </div>
         </div>
       </header>
@@ -300,13 +340,17 @@ export function Album({ id, nav }) {
 }
 
 /* -------------------------------------------------------------- Library */
-export function Library() {
+export function Library({ me }) {
   const player = usePlayer();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const load = useCallback(() => { api.get('/api/library').then(setData).catch(e => setErr(e.message)); }, []);
   // Poll so freshly-queued downloads and their status changes show up live.
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  const onDelete = me?.is_admin ? async (id) => {
+    try { await api.del(`/api/library/${id}`); setData(d => d.filter(t => t.deezer_id !== id)); }
+    catch (e) { alert(e.message); }
+  } : undefined;
   if (err) return <ErrState msg={err} />;
   if (!data) return <Loading />;
   const playable = data.filter(t => t.available);
@@ -322,7 +366,7 @@ export function Library() {
       </div>
       {data.length ? (
         <div className="track-list">
-          {data.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={data} showAlbum />)}
+          {data.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={data} showAlbum onDelete={onDelete} />)}
         </div>
       ) : <div className="state faint">Nothing downloaded yet. Search for music and hit the download button.</div>}
     </div>
@@ -650,7 +694,7 @@ export function Profile({ me }) {
   const submit = async (e) => {
     e.preventDefault();
     setMsg(null);
-    if (next.length < 4) return setMsg({ err: true, text: 'New password must be at least 4 characters' });
+    if (next.length < 8) return setMsg({ err: true, text: 'New password must be at least 8 characters' });
     if (next !== confirm) return setMsg({ err: true, text: 'New passwords do not match' });
     setBusy(true);
     try {

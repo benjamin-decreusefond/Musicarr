@@ -33,13 +33,48 @@ function slskdFilesOf(dl) {
  * Queue a download. `kind` is 'album' or 'track'. Returns the download row id.
  * The actual work happens asynchronously in startSearch().
  */
+/** True when a single track is already present on disk (avoids re-downloading
+ *  the same content). Albums are checked track-by-track in albumViaSlskd. */
+function trackOnDisk(deezerId) {
+  const f = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(deezerId)?.file_path;
+  return !!(f && fs.existsSync(f));
+}
+
 export function queueDownload(userId, kind, deezerId, label, cover) {
+  // Dedupe: if a single track is already on disk, record it as done instead of
+  // searching Soulseek for a copy we already have.
+  if (kind === 'track' && trackOnDisk(deezerId)) {
+    const done = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, status, detail, progress) VALUES (?, ?, ?, ?, ?, 'soulseek', 'done', 'Already in library', 1)`)
+      .run(userId, kind, deezerId, label, cover || null);
+    log.info(`#${done.lastInsertRowid} ${kind} ${deezerId} already on disk — skipped download`);
+    return done.lastInsertRowid;
+  }
   const existing = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine) VALUES (?, ?, ?, ?, ?, 'soulseek')`)
     .run(userId, kind, deezerId, label, cover || null);
   const id = existing.lastInsertRowid;
   log.info(`#${id} queued ${kind} ${deezerId} by user ${userId}: ${label}`);
-  startSearch(id).catch(e => { log.error(`#${id} startSearch failed`, e); setStatus(id, 'error', String(e.message || e)); });
+  runSearch(id);
   return id;
+}
+
+/* ---------------------------------------------------- Search concurrency gate */
+// Limit how many downloads actively search/enqueue at once. Excess work waits
+// in a FIFO queue rather than hammering slskd all at once (e.g. a 50-track
+// playlist import).
+let activeSearches = 0;
+const searchQueue = [];
+function runSearch(downloadId) {
+  searchQueue.push(downloadId);
+  pumpSearches();
+}
+function pumpSearches() {
+  while (activeSearches < config.maxConcurrentDownloads && searchQueue.length) {
+    const id = searchQueue.shift();
+    activeSearches++;
+    startSearch(id)
+      .catch(e => { log.error(`#${id} startSearch failed`, e); setStatus(id, 'error', String(e.message || e)); })
+      .finally(() => { activeSearches--; pumpSearches(); });
+  }
 }
 
 async function startSearch(downloadId) {
@@ -132,7 +167,7 @@ async function handleTransferFailure(dl, reason) {
     attempts, failed_candidates: JSON.stringify(fails),
     slskd_user: null, slskd_file: null, progress: 0,
   });
-  startSearch(dl.id).catch(e => { log.error(`#${dl.id} retry failed`, e); setStatus(dl.id, 'error', String(e.message || e)); });
+  runSearch(dl.id);
 }
 
 /* ------------------------------------------------------------ Track flow */
@@ -357,7 +392,10 @@ function walkAudio(dir) {
 }
 
 function safeName(s) {
-  return (s || 'unknown').replace(/[/\\:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120);
+  let out = (s || 'unknown').replace(/[/\\:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120);
+  // Never let a metadata value become a path-traversal component ("." / "..").
+  if (out === '.' || out === '..' || out === '') out = '_';
+  return out;
 }
 
 const normTitle = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
@@ -405,14 +443,30 @@ function titleMatches(fi, wantTitle) {
  *  slskd download dir) and hardlink the matching tracks into the root folder. */
 async function importDownload(dl) {
   const plan = pendingImports.get(dl.id);
-  const wantedNames = (plan?.slskdFiles || slskdFilesOf(dl)).map(f => f.split(/[\\/]/).pop());
+  const remotePaths = plan?.slskdFiles || slskdFilesOf(dl);
+  const wantedNames = remotePaths.map(f => f.split(/[\\/]/).pop());
   log.info(`#${dl.id} importing ${wantedNames.length} slskd file(s) from ${config.slskdDownloadDir}`);
-  const all = walkAudio(config.slskdDownloadDir);
+
+  // Search the peer's own download subfolder(s) first — slskd writes each
+  // transfer under a directory named after the remote folder — and only fall
+  // back to the whole tree. This avoids grabbing an identically-named file that
+  // belongs to a different download.
+  const remoteDirs = [...new Set(remotePaths
+    .map(f => f.split(/[\\/]/).slice(-2, -1)[0])  // immediate parent folder name
+    .filter(Boolean))];
+  let scoped = [];
+  for (const d of remoteDirs) {
+    const dir = path.join(config.slskdDownloadDir, safeName(d));
+    if (fs.existsSync(dir)) scoped.push(...walkAudio(dir));
+  }
+  const all = scoped.length ? scoped : walkAudio(config.slskdDownloadDir);
   const files = [];
   for (const name of wantedNames) {
     const hit = all.find(f => path.basename(f) === name)
-      || all.find(f => normTitle(path.basename(f)) === normTitle(name));
-    if (hit) files.push(hit);
+      || all.find(f => normTitle(path.basename(f)) === normTitle(name))
+      // Last resort: widen to the full tree if a scoped search missed it.
+      || (scoped.length && walkAudio(config.slskdDownloadDir).find(f => path.basename(f) === name));
+    if (hit && !files.includes(hit)) files.push(hit);
   }
   if (!files.length) {
     throw new Error(`Completed Soulseek file(s) not found under ${config.slskdDownloadDir} — check the slskd download directory points at slskd's downloads volume`);
@@ -553,12 +607,44 @@ export function scanLibrary() {
 /** On boot, resume polling for anything that was mid-flight. */
 export function resumeOnBoot() {
   const stuck = db.prepare(`SELECT * FROM downloads WHERE status = 'searching'`).all();
-  for (const dl of stuck) {
-    startSearch(dl.id).catch(e => setStatus(dl.id, 'error', String(e.message || e)));
-  }
+  for (const dl of stuck) runSearch(dl.id);
   // Rebuild import plans for active transfers from Deezer.
   const active = db.prepare(`SELECT * FROM downloads WHERE status = 'downloading' AND slskd_user IS NOT NULL`).all();
   for (const dl of active) rebuildPlan(dl).catch(() => {});
+}
+
+/** Delete a track's audio from disk. Because import hardlinks the file into the
+ *  library, the same bytes usually exist under both the root folder and slskd's
+ *  download dir — remove both names so the space is actually reclaimed. Returns
+ *  a summary of what was removed. */
+export function deleteTrackFile(deezerId) {
+  const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(deezerId);
+  if (!row) return { removed: [], notFound: true };
+  const removed = [];
+  const tryUnlink = (p) => {
+    try { if (p && fs.existsSync(p)) { fs.unlinkSync(p); removed.push(p); } } catch (e) { log.warn(`delete: could not remove ${p}: ${e.message}`); }
+  };
+
+  // 1) The library copy.
+  tryUnlink(row.file_path);
+
+  // 2) The original slskd download(s) for this track, located by basename under
+  // the slskd download dir (the other end of the hardlink).
+  const dls = db.prepare(`SELECT slskd_file FROM downloads WHERE deezer_id = ? AND slskd_file IS NOT NULL`).all(deezerId);
+  const wantBases = new Set();
+  for (const d of dls) for (const f of slskdFilesOf({ slskd_file: d.slskd_file })) wantBases.add(f.split(/[\\/]/).pop());
+  // Also match the library file's own basename, covering album downloads where
+  // slskd_file lists every track on one row.
+  if (row.file_path) wantBases.add(path.basename(row.file_path));
+  if (wantBases.size) {
+    for (const f of walkAudio(config.slskdDownloadDir)) {
+      if (wantBases.has(path.basename(f)) && !removed.includes(f)) tryUnlink(f);
+    }
+  }
+
+  db.prepare('UPDATE tracks SET file_path = NULL, in_library = 0 WHERE deezer_id = ?').run(deezerId);
+  log.info(`#del track ${deezerId}: removed ${removed.length} file(s)`);
+  return { removed, notFound: false };
 }
 
 async function rebuildPlan(dl) {

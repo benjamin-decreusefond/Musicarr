@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { config } from './db.js';
-import { authMiddleware, authRouter, usersRouter, bootstrapAdmin } from './auth.js';
+import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth } from './auth.js';
 import { deezerRouter } from './sources.js';
 import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
@@ -12,13 +12,30 @@ const log = logger('http');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+// Behind nginx/ingress: trust the proxy so req.ip reflects the real client
+// (used for login rate limiting).
+app.set('trust proxy', true);
+app.disable('x-powered-by');
+
+// Baseline security headers for an internet-exposed app (no extra deps).
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
-app.use('/api/deezer', deezerRouter);
+// The Deezer proxy is metadata-only but must still require a signed-in user
+// (it was previously reachable unauthenticated).
+app.use('/api/deezer', requireAuth, deezerRouter);
 app.use('/api', api);
 
 // Surface server-side API errors in the logs instead of swallowing them.

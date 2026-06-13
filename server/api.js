@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testSlskd } from './sources.js';
-import { queueDownload } from './downloader.js';
+import { queueDownload, deleteTrackFile } from './downloader.js';
 import { logger } from './log.js';
 
 const log = logger('api');
@@ -344,11 +344,19 @@ api.get('/genre/:id', async (req, res) => {
 
 /* ----------------------------------------------------------- Downloads */
 api.post('/download', async (req, res) => {
-  const { kind, deezer_id } = req.body || {};
-  if (!['album', 'track'].includes(kind) || !deezer_id) {
-    return res.status(400).json({ error: 'kind (album|track) and deezer_id required' });
+  const { kind } = req.body || {};
+  const deezer_id = parseInt(req.body?.deezer_id, 10);
+  if (!['album', 'track'].includes(kind) || !Number.isFinite(deezer_id) || deezer_id <= 0) {
+    return res.status(400).json({ error: 'kind (album|track) and a numeric deezer_id are required' });
   }
   try {
+    // Dedupe: a single track already on disk needs no download.
+    if (kind === 'track') {
+      const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(deezer_id);
+      if (have?.file_path && fs.existsSync(have.file_path)) {
+        return res.json({ alreadyHave: true });
+      }
+    }
     let label, cover;
     if (kind === 'album') {
       const a = await deezerGet(`album/${deezer_id}`);
@@ -391,8 +399,35 @@ api.get('/favorites', (req, res) => {
   `).all(req.user.id));
 });
 
+// A track must exist in the catalog before it can be favorited (FK). Search
+// results aren't in the catalog yet, so accept the track metadata in the body
+// and upsert it first — otherwise the favorite would be silently dropped.
+function ensureTrack(trackId, body) {
+  const id = parseInt(trackId, 10);
+  if (!Number.isFinite(id)) return null;
+  const exists = db.prepare('SELECT 1 FROM tracks WHERE deezer_id = ?').get(id);
+  // The client sends a flat track shape (artist is a string, not a Deezer
+  // object), so map it directly rather than via trackRowFromDeezer.
+  if (!exists && body && body.title) {
+    upsertTrack({
+      deezer_id: id,
+      title: body.title,
+      artist: body.artist || 'Unknown',
+      artist_id: body.artist_id || null,
+      album: body.album || null,
+      album_id: body.album_id || null,
+      track_position: body.track_position || null,
+      duration: body.duration || null,
+      cover: body.cover || null,
+    });
+  }
+  return db.prepare('SELECT 1 FROM tracks WHERE deezer_id = ?').get(id) ? id : null;
+}
+
 api.put('/favorites/:trackId', (req, res) => {
-  db.prepare('INSERT OR IGNORE INTO favorites (user_id, track_id) VALUES (?, ?)').run(req.user.id, req.params.trackId);
+  const id = ensureTrack(req.params.trackId, req.body);
+  if (!id) return res.status(400).json({ error: 'Unknown track — open it once so its details are known, then favorite it' });
+  db.prepare('INSERT OR IGNORE INTO favorites (user_id, track_id) VALUES (?, ?)').run(req.user.id, id);
   res.json({ ok: true });
 });
 
@@ -492,8 +527,8 @@ api.delete('/playlists/:id', (req, res) => {
 api.post('/playlists/:id/tracks', (req, res) => {
   const list = db.prepare('SELECT * FROM playlists WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!list) return res.status(404).json({ error: 'Not found' });
-  const trackId = req.body?.track_id;
-  if (!trackId) return res.status(400).json({ error: 'track_id required' });
+  const trackId = ensureTrack(req.body?.track_id, req.body?.track);
+  if (!trackId) return res.status(400).json({ error: 'Unknown track — open it once so its details are known, then add it' });
   const pos = (db.prepare('SELECT MAX(position) AS m FROM playlist_items WHERE playlist_id = ?').get(list.id).m ?? -1) + 1;
   db.prepare('INSERT OR IGNORE INTO playlist_items (playlist_id, position, track_id) VALUES (?, ?, ?)').run(list.id, pos, trackId);
   res.json({ ok: true });
@@ -504,6 +539,147 @@ api.delete('/playlists/:id/tracks/:trackId', (req, res) => {
   if (!list) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM playlist_items WHERE playlist_id = ? AND track_id = ?').run(list.id, req.params.trackId);
   res.json({ ok: true });
+});
+
+/* --------------------------------------------------- Plays / history / recs */
+// Map a Deezer track object to our wire shape, flagging on-disk availability.
+const haveTrackStmt = () => db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+function mapTrack(t, have) {
+  return {
+    id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+    album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
+    duration: t.duration, available: !!have.get(t.id)?.file_path,
+  };
+}
+
+// Record that the user played a track (drives history + recommendations).
+api.post('/plays', (req, res) => {
+  const id = parseInt(req.body?.track_id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'track_id required' });
+  // Only log tracks we actually know about; ignore unknown ids quietly.
+  if (db.prepare('SELECT 1 FROM tracks WHERE deezer_id = ?').get(id)) {
+    db.prepare('INSERT INTO plays (user_id, track_id) VALUES (?, ?)').run(req.user.id, id);
+  }
+  res.json({ ok: true });
+});
+
+// Recently played, most-recent-first, de-duplicated by track.
+api.get('/history', (req, res) => {
+  res.json(db.prepare(`
+    SELECT t.*, (t.file_path IS NOT NULL) AS available, MAX(p.played_at) AS last_played
+    FROM plays p JOIN tracks t ON t.deezer_id = p.track_id
+    WHERE p.user_id = ?
+    GROUP BY p.track_id ORDER BY last_played DESC LIMIT 30
+  `).all(req.user.id));
+});
+
+// "You might like": seed from the user's favorites + listening history, pull
+// related artists from Deezer and surface their popular tracks (those not in
+// the seed set). Falls back to the global chart for brand-new accounts.
+api.get('/recommendations', async (req, res) => {
+  try {
+    const have = haveTrackStmt();
+    const seeds = db.prepare(`
+      SELECT t.artist_id, t.artist, COUNT(*) AS n FROM (
+        SELECT track_id AS tid FROM favorites WHERE user_id = @u
+        UNION ALL SELECT track_id AS tid FROM plays WHERE user_id = @u
+      ) x JOIN tracks t ON t.deezer_id = x.tid
+      WHERE t.artist_id IS NOT NULL
+      GROUP BY t.artist_id ORDER BY n DESC LIMIT 4
+    `).all({ u: req.user.id });
+
+    if (!seeds.length) {
+      const chart = await deezerGet('chart/0/tracks?limit=25');
+      return res.json({ personalized: false, basedOn: [], artists: [], tracks: (chart.data || []).map(t => mapTrack(t, have)) });
+    }
+
+    // Gather related artists from each seed (cached), de-duplicated and
+    // excluding artists the user already listens to.
+    const seedIds = new Set(seeds.map(s => s.artist_id));
+    const relMap = new Map();
+    const relatedLists = await Promise.all(seeds.map(s => deezerGet(`artist/${s.artist_id}/related?limit=8`).catch(() => ({ data: [] }))));
+    for (const rl of relatedLists) for (const a of (rl.data || [])) {
+      if (!seedIds.has(a.id) && !relMap.has(a.id)) relMap.set(a.id, a);
+    }
+    const related = [...relMap.values()].slice(0, 12);
+
+    // Popular tracks from a handful of those related artists.
+    const picks = related.slice(0, 6);
+    const tops = await Promise.all(picks.map(a => deezerGet(`artist/${a.id}/top?limit=5`).catch(() => ({ data: [] }))));
+    const seen = new Set();
+    const tracks = [];
+    for (const tr of tops) for (const t of (tr.data || [])) {
+      if (seen.has(t.id)) continue; seen.add(t.id);
+      tracks.push(mapTrack(t, have));
+    }
+    res.json({
+      personalized: true,
+      basedOn: seeds.map(s => ({ id: s.artist_id, name: s.artist })),
+      artists: related.map(a => ({ id: a.id, name: a.name, picture: a.picture_medium })),
+      tracks,
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Radio: an endless-style queue seeded from a track or an artist. Because we
+// can only play files we have on disk, the client pre-downloads upcoming
+// tracks; this endpoint just supplies the ordered candidate list.
+api.get('/radio', async (req, res) => {
+  const seed = String(req.query.seed || '');
+  const m = /^(track|artist):(\d+)$/.exec(seed);
+  if (!m) return res.status(400).json({ error: 'seed must be "track:<id>" or "artist:<id>"' });
+  const [, kind, rawId] = m;
+  try {
+    const have = haveTrackStmt();
+    let artistId = parseInt(rawId, 10);
+    const out = [];
+    if (kind === 'track') {
+      const t = await deezerGet(`track/${rawId}`);
+      artistId = t.artist?.id || artistId;
+      out.push(mapTrack(t, have)); // start with the seed track itself
+    }
+    // Deezer's artist radio is a ready-made "if you like this, here's more" flow.
+    const radio = await deezerGet(`artist/${artistId}/radio`);
+    const seen = new Set(out.map(t => t.id));
+    for (const t of (radio.data || [])) {
+      if (seen.has(t.id)) continue; seen.add(t.id);
+      out.push(mapTrack(t, have));
+    }
+    res.json({ seed, tracks: out });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Lightweight availability/status lookup for a set of track ids, so the radio
+// pre-fetcher can tell when a queued download has landed on disk.
+api.get('/track-status', (req, res) => {
+  const ids = String(req.query.ids || '').split(',').map(x => parseInt(x, 10)).filter(Number.isFinite).slice(0, 100);
+  if (!ids.length) return res.json({});
+  const out = {};
+  const fileStmt = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+  const statusStmt = db.prepare(`
+    SELECT status FROM downloads
+    WHERE (kind = 'track' AND deezer_id = ?) OR (kind = 'album' AND deezer_id = (SELECT album_id FROM tracks WHERE deezer_id = ?))
+    ORDER BY created_at DESC LIMIT 1`);
+  for (const id of ids) {
+    out[id] = { available: !!fileStmt.get(id)?.file_path, status: statusStmt.get(id, id)?.status || null };
+  }
+  res.json(out);
+});
+
+/* ----------------------------------------------------------- Delete files */
+// Permanently remove a track's audio from disk (both the library hardlink and
+// the original slskd download). Destructive + affects the shared library, so
+// it's admin-only.
+api.delete('/library/:trackId', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.trackId, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid track id' });
+  const result = deleteTrackFile(id);
+  if (result.notFound) return res.status(404).json({ error: 'Track not found' });
+  res.json({ ok: true, removed: result.removed.length });
 });
 
 /* ------------------------------------------------------------- Streaming */
