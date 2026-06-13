@@ -465,36 +465,42 @@ const MOOD_GRADIENTS = {
   party: 'linear-gradient(135deg,#8e2de2,#e94057)',
   sleep: 'linear-gradient(135deg,#141e30,#243b55)',
 };
+// Deterministic gradient for genres that have no artwork, so no card is blank.
+function hueGradient(seed) {
+  let h = 0;
+  for (const ch of String(seed)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `linear-gradient(135deg, hsl(${h} 62% 38%), hsl(${(h + 45) % 360} 58% 24%))`;
+}
 
 export function Explore({ nav }) {
   const { data, err, loading } = useAsync(() => api.get('/api/explore'), []);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
   return (
-    <div className="page">
+    <div className="page explore">
       <h1 className="page-h1">Explore</h1>
 
       {!!data.moods?.length && (
-        <section className="page-block">
+        <section className="explore-section">
           <h2 className="row-title">Moods</h2>
-          <div className="genre-grid">
+          <div className="explore-grid">
             {data.moods.map(m => (
-              <button key={m.slug} className="genre-card" onClick={() => nav({ view: 'mood', id: m.slug })}
-                style={{ background: MOOD_GRADIENTS[m.slug] || 'var(--bg-elev-2)' }}>
-                <span className="genre-name">{m.name}</span>
+              <button key={m.slug} className="explore-card mood" onClick={() => nav({ view: 'mood', id: m.slug })}
+                style={{ background: MOOD_GRADIENTS[m.slug] || hueGradient(m.slug) }}>
+                <span className="explore-label">{m.name}</span>
               </button>
             ))}
           </div>
         </section>
       )}
 
-      <section className="page-block">
+      <section className="explore-section">
         <h2 className="row-title">Genres</h2>
-        <div className="genre-grid">
+        <div className="explore-grid">
           {(data.genres || []).map(g => (
-            <button key={g.id} className="genre-card" onClick={() => nav({ view: 'genre', id: g.id })}
-              style={{ backgroundImage: g.picture ? `url(${g.picture})` : undefined }}>
-              <span className="genre-name">{g.name}</span>
+            <button key={g.id} className="explore-card" onClick={() => nav({ view: 'genre', id: g.id })}
+              style={g.picture ? { backgroundImage: `url(${g.picture})` } : { background: hueGradient(g.name) }}>
+              <span className="explore-label">{g.name}</span>
             </button>
           ))}
         </div>
