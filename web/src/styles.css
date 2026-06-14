@@ -268,6 +268,19 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 }
 @media (max-width: 760px) { .explore-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; } }
 
+/* "All categories" — compact name + thumbnail cards (Deezer-style channels). */
+.cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.cat-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0 0 0 14px; height: 64px; overflow: hidden; cursor: pointer; text-align: left;
+  transition: transform .14s ease, background .14s ease;
+}
+.cat-card:hover { transform: translateY(-2px); background: var(--bg-elev); }
+.cat-name { font-weight: 600; font-size: 14px; color: var(--text); line-height: 1.2; }
+.cat-thumb { width: 64px; height: 64px; flex: none; background-size: cover; background-position: center; }
+@media (max-width: 760px) { .cat-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
+
 /* ============================ Search history ============================ */
 .recent-head { display: flex; align-items: center; justify-content: space-between; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
