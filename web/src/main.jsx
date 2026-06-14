@@ -481,7 +481,7 @@ function App() {
     case 'playlist': page = <Playlist id={route.id} nav={nav} />; break;
     case 'downloads': page = <Downloads nav={nav} />; break;
     case 'user': page = <UserProfile id={route.id} nav={nav} />; break;
-    case 'admin': page = <Admin me={me} />; break;
+    case 'admin': page = <Admin me={me} nav={nav} />; break;
     case 'settings': page = <Settings />; break;
     case 'profile': page = <Profile me={me} nav={nav} />; break;
     case 'equalizer': page = <EqualizerPage />; break;
