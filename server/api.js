@@ -258,8 +258,27 @@ api.get('/deezer-playlist/:id', async (req, res) => {
 /* ------------------------------------------------------------- Explore */
 // Music genres for the Explore tab.
 api.get('/explore', async (req, res) => {
+  const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
+  const mapAlbum = a => ({
+    id: a.id, title: a.title, artist: a.artist?.name, artist_id: a.artist?.id,
+    cover: a.cover_medium || a.cover, nb_tracks: a.nb_tracks, release_date: a.release_date,
+    available: !!haveAlbum.get(a.id),
+  });
+  const mapPlaylist = p => ({
+    id: p.id, title: p.title, cover: p.picture_medium || p.picture,
+    nb_tracks: p.nb_tracks, by: p.user?.name || p.creator?.name || 'Deezer',
+  });
+  const mapArtist = a => ({ id: a.id, name: a.name, picture: a.picture_medium });
+
   try {
-    const g = await deezerGet('genre');
+    // Each section is best-effort so one failing endpoint doesn't blank the page.
+    const [genreR, releases, topAlbums, topPlaylists, topArtists] = await Promise.all([
+      deezerGet('genre').catch(() => ({ data: [] })),
+      deezerGet('editorial/0/releases?limit=20').catch(() => ({ data: [] })),
+      deezerGet('chart/0/albums?limit=20').catch(() => ({ data: [] })),
+      deezerGet('chart/0/playlists?limit=20').catch(() => ({ data: [] })),
+      deezerGet('chart/0/artists?limit=20').catch(() => ({ data: [] })),
+    ]);
     // Give each mood a real cover image from the top matching Deezer playlist
     // (cached). Falls back to no image -> the UI shows a gradient.
     const moods = await Promise.all(MOODS.map(async m => {
@@ -272,10 +291,14 @@ api.get('/explore', async (req, res) => {
       return { slug: m.slug, name: m.name, image };
     }));
     res.json({
-      genres: (g.data || [])
+      releases: (releases.data || []).map(mapAlbum),
+      topAlbums: (topAlbums.data || []).map(mapAlbum),
+      topPlaylists: (topPlaylists.data || []).map(mapPlaylist),
+      topArtists: (topArtists.data || []).map(mapArtist),
+      moods,
+      genres: (genreR.data || [])
         .filter(x => x.id !== 0) // "All"
         .map(x => ({ id: x.id, name: x.name, picture: x.picture_medium || x.picture })),
-      moods,
     });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });

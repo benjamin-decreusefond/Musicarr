@@ -536,6 +536,47 @@ export function Explore({ nav }) {
     <div className="page explore">
       <h1 className="page-h1">Explore</h1>
 
+      {!!data.releases?.length && (
+        <CardRow title="New releases">
+          {data.releases.map(a => (
+            <TileCard key={a.id} cover={a.cover} title={a.title} sub={a.artist}
+              badge={a.available ? 'In library' : null}
+              onClick={() => nav({ view: 'album', id: a.id })}
+              actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+          ))}
+        </CardRow>
+      )}
+
+      {!!data.topAlbums?.length && (
+        <CardRow title="Top albums">
+          {data.topAlbums.map(a => (
+            <TileCard key={a.id} cover={a.cover} title={a.title} sub={a.artist}
+              badge={a.available ? 'In library' : null}
+              onClick={() => nav({ view: 'album', id: a.id })}
+              actions={<DownloadButton kind="album" id={a.id} label={a.title} />} />
+          ))}
+        </CardRow>
+      )}
+
+      {!!data.topPlaylists?.length && (
+        <CardRow title="Popular playlists">
+          {data.topPlaylists.map(p => (
+            <TileCard key={p.id} cover={p.cover} title={p.title} sub={`${p.nb_tracks} tracks · ${p.by}`}
+              onClick={() => nav({ view: 'dplaylist', id: p.id })}
+              actions={<ImportPlaylistButton playlist={p} nav={nav} />} />
+          ))}
+        </CardRow>
+      )}
+
+      {!!data.topArtists?.length && (
+        <CardRow title="Trending artists">
+          {data.topArtists.map(a => (
+            <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Artist"
+              onClick={() => nav({ view: 'artist', id: a.id })} />
+          ))}
+        </CardRow>
+      )}
+
       {!!data.moods?.length && (
         <section className="explore-section">
           <h2 className="row-title">Moods</h2>
@@ -555,17 +596,21 @@ export function Explore({ nav }) {
         </section>
       )}
 
-      <section className="explore-section">
-        <h2 className="row-title">Genres</h2>
-        <div className="explore-grid">
-          {(data.genres || []).map(g => (
-            <button key={g.id} className="explore-card" onClick={() => nav({ view: 'genre', id: g.id })}
-              style={g.picture ? { backgroundImage: `url(${g.picture})` } : { background: hueGradient(g.name) }}>
-              <span className="explore-label">{g.name}</span>
-            </button>
-          ))}
-        </div>
-      </section>
+      {!!data.genres?.length && (
+        <section className="explore-section">
+          <h2 className="row-title">All categories</h2>
+          <div className="cat-grid">
+            {data.genres.map(g => (
+              <button key={g.id} className="cat-card" onClick={() => nav({ view: 'genre', id: g.id })}>
+                <span className="cat-name">{g.name}</span>
+                <span className="cat-thumb" style={g.picture
+                  ? { backgroundImage: `url(${g.picture})` }
+                  : { background: hueGradient(g.name) }} />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
