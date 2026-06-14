@@ -161,6 +161,13 @@ const sessCols = db.prepare(`PRAGMA table_info(sessions)`).all().map(c => c.name
 if (!sessCols.includes('expires_at')) {
   db.exec(`ALTER TABLE sessions ADD COLUMN expires_at TEXT`);
 }
+// Migration: remember the exact downloaded source file for each imported track
+// so deletion can remove it precisely (the on-disk name can differ from the
+// remote/library name, and the download row may be gone).
+const trackColsEarly = db.prepare(`PRAGMA table_info(tracks)`).all().map(c => c.name);
+if (!trackColsEarly.includes('source_path')) {
+  db.exec(`ALTER TABLE tracks ADD COLUMN source_path TEXT`);
+}
 
 // Migration: `in_library` distinguishes tracks the user actually requested
 // (shown in Library) from tracks that only came along inside an album download
