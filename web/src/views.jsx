@@ -340,35 +340,134 @@ export function Album({ id, nav }) {
 }
 
 /* -------------------------------------------------------------- Library */
-export function Library({ me }) {
+/* -------------------------------------------------------------- Library */
+function PlaylistsGrid({ playlists, nav, onCreate }) {
+  return (
+    <div className="card-grid">
+      <button className="tile create-tile" onClick={onCreate}>
+        <div className="tile-art"><div className="create-art"><Icon name="plus" size={32} /></div></div>
+        <div className="tile-title">Create playlist</div>
+      </button>
+      {playlists.map(pl => (
+        <TileCard key={pl.id} cover={pl.cover} title={pl.name} sub={`${pl.count || 0} tracks`}
+          onClick={() => nav({ view: 'playlist', id: pl.id })} />
+      ))}
+    </div>
+  );
+}
+
+const LIB_TABS = [
+  ['overview', 'Overview'], ['songs', 'Songs'], ['liked', 'Liked songs'],
+  ['playlists', 'Playlists'], ['albums', 'Albums'], ['artists', 'Artists'], ['history', 'History'],
+];
+
+export function Library({ me, nav }) {
   const player = usePlayer();
-  const [data, setData] = useState(null);
+  const [tab, setTab] = useState('overview');
+  const [lib, setLib] = useState(null);
+  const [playlists, setPlaylists] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [favs, setFavs] = useState([]);
   const [err, setErr] = useState(null);
-  const load = useCallback(() => { api.get('/api/library').then(setData).catch(e => setErr(e.message)); }, []);
-  // Poll so freshly-queued downloads and their status changes show up live.
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
-  const onDelete = me?.is_admin ? async (id) => {
-    try { await api.del(`/api/library/${id}`); setData(d => d.filter(t => t.deezer_id !== id)); }
-    catch (e) { alert(e.message); }
-  } : undefined;
+
+  const loadLib = useCallback(() => api.get('/api/library').then(setLib).catch(e => setErr(e.message)), []);
+  const loadPlaylists = useCallback(() => api.get('/api/playlists').then(setPlaylists).catch(() => {}), []);
+  useEffect(() => {
+    loadLib(); loadPlaylists();
+    api.get('/api/history').then(h => setHistory((h || []).map(t => ({ ...t, available: !!t.file_path })))).catch(() => {});
+    api.get('/api/favorites').then(f => setFavs((f || []).map(t => ({ ...t, available: !!t.file_path, favorite: true })))).catch(() => {});
+    const poll = setInterval(loadLib, 5000); // keep download status fresh
+    const h = () => loadPlaylists();
+    window.addEventListener('musicarr:playlists-changed', h);
+    return () => { clearInterval(poll); window.removeEventListener('musicarr:playlists-changed', h); };
+  }, [loadLib, loadPlaylists]);
+
   if (err) return <ErrState msg={err} />;
-  if (!data) return <Loading />;
-  const playable = data.filter(t => t.available);
+  if (!lib) return <Loading />;
+
+  const playable = lib.filter(t => t.available);
+  // Group the downloaded tracks into albums and artists.
+  const albumMap = new Map(), artistMap = new Map();
+  for (const t of playable) {
+    if (t.album_id) {
+      if (!albumMap.has(t.album_id)) albumMap.set(t.album_id, { id: t.album_id, title: t.album, artist: t.artist, cover: t.cover, count: 0 });
+      albumMap.get(t.album_id).count++;
+    }
+    if (t.artist_id) {
+      if (!artistMap.has(t.artist_id)) artistMap.set(t.artist_id, { id: t.artist_id, name: t.artist, cover: t.cover, count: 0 });
+      artistMap.get(t.artist_id).count++;
+    }
+  }
+  const albums = [...albumMap.values()], artists = [...artistMap.values()];
+
+  const createPlaylist = async () => {
+    const name = prompt('New playlist name');
+    if (!name) return;
+    try { const pl = await api.post('/api/playlists', { name }); window.dispatchEvent(new Event('musicarr:playlists-changed')); nav?.({ view: 'playlist', id: pl.id }); }
+    catch (e) { alert(e.message); }
+  };
+
   return (
     <div className="page">
       <div className="list-head">
-        <h1 className="page-h1">Your library</h1>
+        <h1 className="page-h1">Library</h1>
         <div className="list-head-actions">
           <button className="btn-primary" disabled={!playable.length} onClick={() => player.playList(playable, 0, { shuffle: true })}>
-            <Icon name="shuffle" size={18} /> Shuffle play
+            <Icon name="shuffle" size={18} /> Shuffle all
           </button>
         </div>
       </div>
-      {data.length ? (
-        <div className="track-list">
-          {data.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={data} showAlbum onDelete={onDelete} />)}
-        </div>
-      ) : <div className="state faint">Nothing downloaded yet. Search for music and hit the download button.</div>}
+      <div className="tabbar">
+        {LIB_TABS.map(([k, label]) => (
+          <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{label}</button>
+        ))}
+      </div>
+
+      {tab === 'overview' && (
+        <>
+          {!!history.length && (
+            <CardRow title="Recently played">
+              {history.slice(0, 12).map(t => (
+                <TileCard key={t.deezer_id} cover={t.cover} title={t.title} sub={t.artist}
+                  onClick={() => t.album_id && nav({ view: 'album', id: t.album_id })}
+                  actions={<RadioButton seed={`track:${t.deezer_id}`} />} />
+              ))}
+            </CardRow>
+          )}
+          <section className="page-block">
+            <h2 className="row-title">Playlists</h2>
+            <PlaylistsGrid playlists={playlists} nav={nav} onCreate={createPlaylist} />
+          </section>
+          {!history.length && !playlists.length && !lib.length &&
+            <div className="state faint">Your library is empty — download some music or create a playlist.</div>}
+        </>
+      )}
+
+      {tab === 'songs' && (lib.length
+        ? <TrackTable tracks={lib} nav={nav} />
+        : <div className="state faint">Nothing downloaded yet. Search for music and hit download.</div>)}
+
+      {tab === 'liked' && (favs.length
+        ? <TrackTable tracks={favs} nav={nav} />
+        : <div className="state faint">Tap the heart on any track to save it here.</div>)}
+
+      {tab === 'playlists' && <PlaylistsGrid playlists={playlists} nav={nav} onCreate={createPlaylist} />}
+
+      {tab === 'albums' && (albums.length
+        ? <div className="card-grid">{albums.map(a => (
+            <TileCard key={a.id} cover={a.cover} title={a.title} sub={`${a.artist} · ${a.count} song${a.count > 1 ? 's' : ''}`}
+              onClick={() => nav({ view: 'album', id: a.id })} />))}</div>
+        : <div className="state faint">No full albums in your library yet.</div>)}
+
+      {tab === 'artists' && (artists.length
+        ? <div className="card-grid">{artists.map(a => (
+            <TileCard key={a.id} cover={a.cover} round title={a.name} sub={`${a.count} song${a.count > 1 ? 's' : ''}`}
+              onClick={() => nav({ view: 'artist', id: a.id })} />))}</div>
+        : <div className="state faint">No artists yet.</div>)}
+
+      {tab === 'history' && (history.length
+        ? <TrackTable tracks={history} nav={nav} />
+        : <div className="state faint">No listening history yet.</div>)}
     </div>
   );
 }
