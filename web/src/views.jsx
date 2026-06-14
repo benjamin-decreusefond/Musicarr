@@ -75,9 +75,7 @@ export function Home({ nav }) {
           {recs.personalized && !!recs.basedOn?.length && (
             <p className="settings-hint" style={{ marginTop: -4 }}>Based on {recs.basedOn.map(a => a.name).slice(0, 3).join(', ')}</p>
           )}
-          <div className="track-list">
-            {recs.tracks.slice(0, 15).map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={recs.tracks} showAlbum />)}
-          </div>
+          <TrackTable tracks={recs.tracks.slice(0, 15)} nav={nav} showAdded={false} />
         </section>
       )}
       {!!recs?.artists?.length && (
@@ -112,9 +110,7 @@ export function Home({ nav }) {
       )}
       <section className="page-block">
         <h2 className="row-title">Charts</h2>
-        <div className="track-list">
-          {data.tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={data.tracks} showAlbum />)}
-        </div>
+        <TrackTable tracks={data.tracks} nav={nav} showAdded={false} />
       </section>
     </div>
   );
@@ -205,9 +201,7 @@ export function Search({ nav }) {
           {!!res.tracks.length && (
             <section className="page-block">
               <h2 className="row-title">Tracks</h2>
-              <div className="track-list">
-                {res.tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={res.tracks} showAlbum />)}
-              </div>
+              <TrackTable tracks={res.tracks} nav={nav} showAdded={false} />
             </section>
           )}
           {!res.artists.length && !res.albums.length && !res.tracks.length && (
@@ -275,9 +269,7 @@ export function Artist({ id, nav }) {
       </header>
       <section className="page-block">
         <h2 className="row-title">Popular</h2>
-        <div className="track-list">
-          {top.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={top} />)}
-        </div>
+        <TrackTable tracks={top} nav={nav} showAdded={false} />
       </section>
       <CardRow title="Discography">
         {albums.map(a => (
@@ -331,9 +323,7 @@ export function Album({ id, nav }) {
         </div>
       </header>
       <section className="page-block">
-        <div className="track-list">
-          {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} />)}
-        </div>
+        <TrackTable tracks={tracks} nav={nav} showAlbum={false} showAdded={false} />
       </section>
     </div>
   );
@@ -368,10 +358,14 @@ export function Library({ me, nav }) {
   const [playlists, setPlaylists] = useState([]);
   const [history, setHistory] = useState([]);
   const [favs, setFavs] = useState([]);
+  const [artistsData, setArtistsData] = useState(null);
   const [err, setErr] = useState(null);
 
   const loadLib = useCallback(() => api.get('/api/library').then(setLib).catch(e => setErr(e.message)), []);
   const loadPlaylists = useCallback(() => api.get('/api/playlists').then(setPlaylists).catch(() => {}), []);
+  useEffect(() => {
+    if (tab === 'artists' && !artistsData) api.get('/api/library/artists').then(setArtistsData).catch(() => setArtistsData([]));
+  }, [tab, artistsData]);
   useEffect(() => {
     loadLib(); loadPlaylists();
     api.get('/api/history').then(h => setHistory((h || []).map(t => ({ ...t, available: !!t.file_path })))).catch(() => {});
@@ -459,11 +453,13 @@ export function Library({ me, nav }) {
               onClick={() => nav({ view: 'album', id: a.id })} />))}</div>
         : <div className="state faint">No full albums in your library yet.</div>)}
 
-      {tab === 'artists' && (artists.length
-        ? <div className="card-grid">{artists.map(a => (
-            <TileCard key={a.id} cover={a.cover} round title={a.name} sub={`${a.count} song${a.count > 1 ? 's' : ''}`}
-              onClick={() => nav({ view: 'artist', id: a.id })} />))}</div>
-        : <div className="state faint">No artists yet.</div>)}
+      {tab === 'artists' && (
+        artistsData === null ? <Loading />
+        : artistsData.length
+          ? <div className="card-grid">{artistsData.map(a => (
+              <TileCard key={a.id} cover={a.picture} round title={a.name} sub={`${a.count} song${a.count > 1 ? 's' : ''}`}
+                onClick={() => nav({ view: 'artist', id: a.id })} />))}</div>
+          : <div className="state faint">No artists yet.</div>)}
 
       {tab === 'history' && (history.length
         ? <TrackTable tracks={history} nav={nav} />
@@ -473,7 +469,7 @@ export function Library({ me, nav }) {
 }
 
 /* ------------------------------------------------------------ Favorites */
-export function Favorites() {
+export function Favorites({ nav }) {
   const player = usePlayer();
   const { data, err, loading } = useAsync(() => api.get('/api/favorites'), []);
   if (loading) return <Loading />;
@@ -496,10 +492,9 @@ export function Favorites() {
         </div>
       </header>
       <section className="page-block">
-        <div className="track-list">
-          {tracks.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={tracks} showAlbum />)}
-          {!tracks.length && <div className="state faint">Tap the heart on any track to save it here.</div>}
-        </div>
+        {tracks.length
+          ? <TrackTable tracks={tracks} nav={nav} />
+          : <div className="state faint">Tap the heart on any track to save it here.</div>}
       </section>
     </div>
   );
@@ -587,9 +582,7 @@ export function DeezerPlaylist({ id, nav }) {
         from Soulseek, one song at a time.
       </p>
       <section className="page-block">
-        <div className="track-list">
-          {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} showAlbum />)}
-        </div>
+        <TrackTable tracks={tracks} nav={nav} showAdded={false} />
       </section>
     </div>
   );
@@ -743,9 +736,7 @@ export function Mood({ slug, nav }) {
       {!!tracks.length && (
         <section className="page-block">
           <h2 className="row-title">Songs</h2>
-          <div className="track-list">
-            {tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={tracks} showAlbum />)}
-          </div>
+          <TrackTable tracks={tracks} nav={nav} showAdded={false} />
         </section>
       )}
       {!tracks.length && !data.playlists?.length && <div className="state faint">Nothing found for this mood.</div>}
@@ -789,9 +780,7 @@ export function Genre({ id, nav }) {
       {!!data.tracks?.length && (
         <section className="page-block">
           <h2 className="row-title">Top tracks</h2>
-          <div className="track-list">
-            {data.tracks.map((t, i) => <TrackRow key={t.id} track={t} i={i} tracks={data.tracks} showAlbum />)}
-          </div>
+          <TrackTable tracks={data.tracks} nav={nav} showAdded={false} />
         </section>
       )}
     </div>
@@ -1149,13 +1138,13 @@ export function UserProfile({ id, nav }) {
       {!!recent.length && (
         <section className="page-block">
           <h2 className="row-title">Recently played</h2>
-          <div className="track-list">{recent.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={recent} showAlbum />)}</div>
+          <TrackTable tracks={recent} nav={nav} showAdded={false} />
         </section>
       )}
       {!!favs.length && (
         <section className="page-block">
           <h2 className="row-title">Liked songs</h2>
-          <div className="track-list">{favs.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={favs} showAlbum />)}</div>
+          <TrackTable tracks={favs} nav={nav} showAdded={false} />
         </section>
       )}
       {!recent.length && !favs.length && <div className="state faint">No public activity yet.</div>}

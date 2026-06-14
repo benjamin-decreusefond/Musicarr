@@ -228,7 +228,7 @@ function fmtDate(s) {
 }
 
 /** One row of the columnar TrackTable. */
-function TrackTableRow({ track, i, tracks, nav, onRemove }) {
+function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid }) {
   const player = usePlayer();
   const me = useMe();
   const id = track.deezer_id || track.id;
@@ -248,7 +248,7 @@ function TrackTableRow({ track, i, tracks, nav, onRemove }) {
   if (hidden) return null;
 
   return (
-    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}>
+    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} style={grid} onClick={onPlay}>
       <div className="tt-idx">
         {isCurrent && player.playing
           ? <span className="eq"><i /><i /><i /></span>
@@ -267,12 +267,14 @@ function TrackTableRow({ track, i, tracks, nav, onRemove }) {
           ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'artist', id: track.artist_id }); }}>{track.artist}</span>
           : track.artist}
       </div>
-      <div className="tt-album">
-        {nav && track.album_id
-          ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'album', id: track.album_id }); }}>{track.album}</span>
-          : track.album}
-      </div>
-      <div className="tt-added">{fmtDate(track.added_at)}</div>
+      {showAlbum && (
+        <div className="tt-album">
+          {nav && track.album_id
+            ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'album', id: track.album_id }); }}>{track.album}</span>
+            : track.album}
+        </div>
+      )}
+      {showAdded && <div className="tt-added">{fmtDate(track.added_at)}</div>}
       <div className="tt-actions" onClick={e => e.stopPropagation()}>
         <HeartButton trackId={id} track={track} initial={track.favorite} />
         <AddToPlaylist trackId={id} track={track} />
@@ -291,22 +293,31 @@ function TrackTableRow({ track, i, tracks, nav, onRemove }) {
 }
 
 /** Deezer-style columnar track table (Title · Artist · Album · Added · Duration)
- *  with per-row actions on hover. `onRemove` adds a remove-from-playlist button. */
-export function TrackTable({ tracks, nav, onRemove }) {
+ *  with per-row actions on hover. Columns Album/Added can be turned off for
+ *  browse contexts. `onRemove` adds a remove-from-playlist button. */
+export function TrackTable({ tracks, nav, onRemove, showAlbum = true, showAdded = true }) {
   if (!tracks.length) return <div className="state faint">Nothing here yet.</div>;
+  // Build the grid so header and rows always line up regardless of which
+  // optional columns are shown.
+  const cols = ['32px', 'minmax(0,2.4fr)', 'minmax(0,1.3fr)'];      // idx, title, artist
+  if (showAlbum) cols.push('minmax(0,1.3fr)');
+  if (showAdded) cols.push('110px');
+  cols.push('minmax(96px,132px)', '52px');                          // actions, time
+  const grid = { gridTemplateColumns: cols.join(' ') };
   return (
     <div className="tracktable">
-      <div className="tt-head">
+      <div className="tt-head" style={grid}>
         <div className="tt-idx">#</div>
         <div>Title</div>
         <div className="tt-artist">Artist</div>
-        <div className="tt-album">Album</div>
-        <div className="tt-added">Added</div>
+        {showAlbum && <div className="tt-album">Album</div>}
+        {showAdded && <div className="tt-added">Added</div>}
         <div />
         <div className="tt-time"><Icon name="clock" size={15} /></div>
       </div>
       {tracks.map((t, i) => (
-        <TrackTableRow key={t.deezer_id || t.id} track={t} i={i} tracks={tracks} nav={nav} onRemove={onRemove} />
+        <TrackTableRow key={t.deezer_id || t.id} track={t} i={i} tracks={tracks} nav={nav}
+          onRemove={onRemove} showAlbum={showAlbum} showAdded={showAdded} grid={grid} />
       ))}
     </div>
   );

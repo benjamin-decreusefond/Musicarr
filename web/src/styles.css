@@ -122,8 +122,7 @@
 /* ===================== Track table (Deezer-style) ===================== */
 .tracktable { display: flex; flex-direction: column; }
 .tt-head, .tt-row {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 2.4fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 110px 132px 56px;
+  display: grid; /* grid-template-columns is set inline so optional columns stay aligned */
   align-items: center; gap: 14px;
 }
 .tt-head {
@@ -152,14 +151,6 @@
 .tt-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity .15s; }
 .tt-row:hover .tt-actions { opacity: 1; }
 .tt-time { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
-@media (max-width: 900px) {
-  .tt-head, .tt-row { grid-template-columns: 28px minmax(0, 2.4fr) minmax(0, 1.3fr) 120px 56px; }
-  .tt-album, .tt-added { display: none; }
-}
-@media (max-width: 620px) {
-  .tt-head, .tt-row { grid-template-columns: 24px minmax(0, 1fr) 110px 48px; }
-  .tt-artist { display: none; }
-}
 
 /* ============================ Library hub ============================ */
 .tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 22px; overflow-x: auto; }

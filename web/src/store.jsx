@@ -274,6 +274,19 @@ export function PlayerProvider({ children }) {
     if (a.paused) a.play(); else a.pause();
   }, [index]);
 
+  // Spacebar toggles play/pause (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code !== 'Space' && e.key !== ' ') return;
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      e.preventDefault();
+      toggle();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggle]);
+
   // Play a track in the context of a list, but if it's already the current
   // track just toggle play/pause (so clicking the playing row pauses it).
   const playOrToggle = useCallback((track, tracks, i = 0) => {
