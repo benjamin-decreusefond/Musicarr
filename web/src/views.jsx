@@ -508,6 +508,18 @@ const MOOD_GRADIENTS = {
   focus: 'linear-gradient(135deg,#0f2027,#2c5364)',
   party: 'linear-gradient(135deg,#8e2de2,#e94057)',
   sleep: 'linear-gradient(135deg,#141e30,#243b55)',
+  workout: 'linear-gradient(135deg,#f12711,#f5af19)',
+  study: 'linear-gradient(135deg,#355c7d,#6c5b7b)',
+  feelgood: 'linear-gradient(135deg,#11998e,#38ef7d)',
+  throwback: 'linear-gradient(135deg,#cc2b5e,#753a88)',
+  summer: 'linear-gradient(135deg,#ff8008,#ffc837)',
+  rainy: 'linear-gradient(135deg,#3a6073,#16222a)',
+  dance: 'linear-gradient(135deg,#fc466b,#3f5efb)',
+  rnb: 'linear-gradient(135deg,#5f2c82,#49a09d)',
+  heartbreak: 'linear-gradient(135deg,#93291e,#ed213a)',
+  roadtrip: 'linear-gradient(135deg,#2980b9,#2c3e50)',
+  jazz: 'linear-gradient(135deg,#42275a,#734b6d)',
+  motivation: 'linear-gradient(135deg,#f7971e,#ffd200)',
 };
 // Deterministic gradient for genres that have no artwork, so no card is blank.
 function hueGradient(seed) {
@@ -529,8 +541,13 @@ export function Explore({ nav }) {
           <h2 className="row-title">Moods</h2>
           <div className="explore-grid">
             {data.moods.map(m => (
-              <button key={m.slug} className="explore-card mood" onClick={() => nav({ view: 'mood', id: m.slug })}
-                style={{ background: MOOD_GRADIENTS[m.slug] || hueGradient(m.slug) }}>
+              // With a cover photo use the stronger default scrim for legibility;
+              // without one, fall back to a gradient (lighter "mood" scrim).
+              <button key={m.slug} className={`explore-card ${m.image ? '' : 'mood'}`}
+                onClick={() => nav({ view: 'mood', id: m.slug })}
+                style={m.image
+                  ? { backgroundImage: `url(${m.image})` }
+                  : { background: MOOD_GRADIENTS[m.slug] || hueGradient(m.slug) }}>
                 <span className="explore-label">{m.name}</span>
               </button>
             ))}
