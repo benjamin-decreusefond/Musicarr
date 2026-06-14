@@ -145,9 +145,26 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   PRIMARY KEY (playlist_id, position)
 );
 
+-- Social graph: who follows whom (all server users can see each other).
+CREATE TABLE IF NOT EXISTS follows (
+  follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  following_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (follower_id, following_id)
+);
+
+-- Live "now playing": refreshed by the player heartbeat; considered active only
+-- when updated within the last minute.
+CREATE TABLE IF NOT EXISTS now_playing (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  track_id INTEGER,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
 CREATE INDEX IF NOT EXISTS idx_plays_user ON plays(user_id, played_at);
+CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
 `);
 
 // Migration: force a password change for the seeded default-credential admin,

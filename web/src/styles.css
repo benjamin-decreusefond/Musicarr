@@ -161,6 +161,20 @@
   .tt-artist { display: none; }
 }
 
+/* ============================ Social ============================ */
+.user-list { display: flex; flex-direction: column; gap: 4px; }
+.user-row { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+.user-row:hover { background: var(--bg-elev-2); }
+.user-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--bg-elev-2); display: grid; place-items: center; color: var(--text-dim); flex: none; }
+.user-row-meta { flex: 1; min-width: 0; }
+.user-row-name { font-weight: 600; font-size: 15px; }
+.user-row-sub { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn-ghost.sm { padding: 6px 14px; font-size: 13px; }
+.btn-ghost.sm.on { border-color: var(--accent); color: var(--accent); }
+.np-live { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-weight: 600; }
+.np-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent); animation: np-pulse 1.6s ease-out infinite; flex: none; }
+@keyframes np-pulse { 0% { box-shadow: 0 0 0 0 rgba(201,242,77,.5); } 70% { box-shadow: 0 0 0 6px rgba(201,242,77,0); } 100% { box-shadow: 0 0 0 0 rgba(201,242,77,0); } }
+
 /* ============================ Search ============================ */
 .search-box { display: flex; align-items: center; gap: 12px; background: var(--bg-elev-2); border-radius: 999px; padding: 13px 20px; max-width: 480px; margin-bottom: 12px; color: var(--text-dim); }
 .search-box input { flex: 1; background: none; border: none; outline: none; color: var(--text); font-size: 15px; }
