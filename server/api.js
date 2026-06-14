@@ -259,11 +259,22 @@ api.get('/deezer-playlist/:id', async (req, res) => {
 api.get('/explore', async (req, res) => {
   try {
     const g = await deezerGet('genre');
+    // Give each mood a real cover image from the top matching Deezer playlist
+    // (cached). Falls back to no image -> the UI shows a gradient.
+    const moods = await Promise.all(MOODS.map(async m => {
+      let image = null;
+      try {
+        const r = await deezerGet(`search/playlist?q=${encodeURIComponent(m.q)}&limit=1`);
+        const p = r.data?.[0];
+        image = p?.picture_xl || p?.picture_big || p?.picture_medium || p?.picture || null;
+      } catch { /* gradient fallback in the UI */ }
+      return { slug: m.slug, name: m.name, image };
+    }));
     res.json({
       genres: (g.data || [])
         .filter(x => x.id !== 0) // "All"
         .map(x => ({ id: x.id, name: x.name, picture: x.picture_medium || x.picture })),
-      moods: MOODS.map(m => ({ slug: m.slug, name: m.name })),
+      moods,
     });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
@@ -271,16 +282,29 @@ api.get('/explore', async (req, res) => {
 });
 
 // Moods don't exist as a Deezer API primitive, so each maps to a search term
-// for curated playlists; the top playlist's tracks give the "songs for <mood>".
+// for curated playlists; the top playlist's tracks give the "songs for <mood>"
+// and its cover art the mood-card image.
 const MOODS = [
-  { slug: 'happy', name: 'Happy', q: 'happy' },
+  { slug: 'happy', name: 'Happy', q: 'happy hits' },
   { slug: 'chill', name: 'Chill', q: 'chill' },
   { slug: 'sad', name: 'Melancholy', q: 'sad songs' },
-  { slug: 'energetic', name: 'Energetic', q: 'workout energy' },
+  { slug: 'energetic', name: 'Energetic', q: 'energy boost' },
   { slug: 'romantic', name: 'Romantic', q: 'love songs' },
   { slug: 'focus', name: 'Focus', q: 'focus concentration' },
   { slug: 'party', name: 'Party', q: 'party hits' },
   { slug: 'sleep', name: 'Sleep', q: 'sleep calm' },
+  { slug: 'workout', name: 'Workout', q: 'workout motivation' },
+  { slug: 'study', name: 'Study', q: 'study lofi' },
+  { slug: 'feelgood', name: 'Feel good', q: 'feel good' },
+  { slug: 'throwback', name: 'Throwback', q: 'throwback hits' },
+  { slug: 'summer', name: 'Summer', q: 'summer hits' },
+  { slug: 'rainy', name: 'Rainy day', q: 'rainy day' },
+  { slug: 'dance', name: 'Dance', q: 'dance hits' },
+  { slug: 'rnb', name: 'R&B', q: 'rnb soul' },
+  { slug: 'heartbreak', name: 'Heartbreak', q: 'heartbreak' },
+  { slug: 'roadtrip', name: 'Road trip', q: 'road trip' },
+  { slug: 'jazz', name: 'Jazz', q: 'jazz lounge' },
+  { slug: 'motivation', name: 'Motivation', q: 'motivation' },
 ];
 
 api.get('/mood/:slug', async (req, res) => {
