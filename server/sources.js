@@ -213,12 +213,30 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
   const scored = [];
   for (const f of files) {
     const base = (f.filename || '').split(/[\\/]/).pop();
-    const hay = ' ' + norm(base) + ' ' + norm(f.filename) + ' ';
-    const titleHits = want.filter(t => hay.includes(t)).length;
-    if (want.length && titleHits === 0) continue;                     // wrong song
-    const artistHits = must.filter(t => hay.includes(t)).length;
+    const baseNorm = norm(base);
+    const baseHay = ' ' + baseNorm + ' ';
+    const baseJoined = baseNorm.replace(/ /g, '');          // space-insensitive: "high way" ~ "highway"
+    const pathHay = ' ' + norm(f.filename) + ' ';
+    // The song title must be in the FILE NAME, not merely somewhere in the path.
+    // Otherwise every track inside an album folder named after the song (e.g.
+    // ".../Pyramide/01 - Intro.flac") matches equally and the wrong track wins
+    // on quality tiebreakers. Space-insensitive so "Highway" matches "High Way".
+    const titleHits = want.filter(t => baseHay.includes(t) || baseJoined.includes(t)).length;
+    const titleInPath = want.filter(t => pathHay.includes(t)).length;
+    // Artist can legitimately appear only in the folder path.
+    const artistHits = must.filter(t => pathHay.includes(t)).length;
     const durKnown = durationSec && f.length;
     const durClose = durKnown && Math.abs(f.length - durationSec) <= 12;
+
+    if (want.length && titleHits === 0) {
+      // Title not in the filename. Only trust it when the filename carries no
+      // real words at all (e.g. "07.flac") AND the duration matches — a
+      // poorly-named file we can still identify by length. Otherwise it's a
+      // different track that just happens to sit in a matching folder.
+      const nameWords = baseNorm.replace(/\b(flac|mp3|m4a|ogg|opus|wav|aac|wma)\b/g, '').replace(/[0-9]+/g, '').trim();
+      const nameless = nameWords.length < 3;
+      if (!(nameless && titleInPath && durClose)) continue;
+    }
     // Broad ("title only") searches can return a different artist's song with
     // the same title. If the artist name isn't anywhere in the path, only trust
     // the file when its duration matches the Deezer track; if we can't even
@@ -236,6 +254,11 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
     score += Math.min(10, (f.uploadSpeed || 0) / 100000);
     if (durClose) score += 10;                                        // duration confirms it
     else if (durKnown && Math.abs(f.length - durationSec) > 15) score -= 15;
+    // Prefer the canonical studio recording: penalize live/remix/etc. unless the
+    // requested title itself asks for that variant.
+    const wantNorm = norm(title);
+    const bad = pathHay.match(/\b(live|bootleg|concert|remix|instrumental|karaoke|acoustic|nightcore|sped|slowed)\b/);
+    if (bad && !wantNorm.includes(bad[1])) score -= 12;
     scored.push({ file: f, score });
   }
   scored.sort((a, b) => b.score - a.score);

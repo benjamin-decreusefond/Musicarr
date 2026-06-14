@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { api, fmtTime, usePlayer } from './store.jsx';
+import { api, fmtTime, usePlayer, useMe } from './store.jsx';
 
 /* Inline icon set (no dependency). */
 export const Icon = ({ name, size = 20, fill = 'none' }) => {
@@ -161,6 +161,8 @@ export function AddToPlaylist({ trackId, track }) {
  *  `shuffle` (used by playlists) shuffles the whole list into the queue. */
 export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete }) {
   const player = usePlayer();
+  const me = useMe();
+  const [hidden, setHidden] = useState(false);
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
   const available = track.available || track.file_path;
@@ -172,6 +174,19 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
     if (shuffle && tracks && !isCurrent) player.playList(tracks, i ?? 0, { shuffle: true });
     else player.playOrToggle(track, tracks, i ?? 0);
   };
+  // Delete the file from disk (admins only). Lets a parent update its own list
+  // via onDelete; otherwise the row hides itself optimistically.
+  const canDelete = available && me?.is_admin;
+  const doDelete = async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${track.title}" from disk? This removes the file from your library.`)) return;
+    try {
+      await api.del(`/api/library/${id}`);
+      window.dispatchEvent(new Event('musicarr:library-changed'));
+      if (onDelete) onDelete(id); else setHidden(true);
+    } catch (err) { alert(err.message); }
+  };
+  if (hidden) return null;
   return (
     <div className={`track-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}>
       <div className="track-idx">
@@ -191,9 +206,8 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
         <HeartButton trackId={id} track={track} initial={track.favorite} onChange={onFav} />
         <AddToPlaylist trackId={id} track={track} />
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
-        {available && onDelete && (
-          <button className="icon-btn" title="Delete from disk"
-            onClick={() => { if (confirm(`Delete "${track.title}" from disk? This removes the file.`)) onDelete(id); }}>
+        {canDelete && (
+          <button className="icon-btn" title="Delete from disk" onClick={doDelete}>
             <Icon name="trash" size={16} />
           </button>
         )}
