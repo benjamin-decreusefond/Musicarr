@@ -91,9 +91,16 @@ socialRouter.get('/users/:id', (req, res) => {
            (t.file_path IS NOT NULL) AS available
     FROM favorites f JOIN tracks t ON t.deezer_id = f.track_id WHERE f.user_id = ?
     ORDER BY f.added_at DESC LIMIT 50`).all(id);
+  const playlists = db.prepare('SELECT * FROM playlists WHERE user_id = ? ORDER BY created_at').all(id);
+  for (const l of playlists) {
+    l.count = db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?').get(l.id).n;
+    l.cover = db.prepare(`
+      SELECT t.cover FROM playlist_items pi JOIN tracks t ON t.deezer_id = pi.track_id
+      WHERE pi.playlist_id = ? AND t.cover IS NOT NULL ORDER BY pi.position LIMIT 1`).get(l.id)?.cover || null;
+  }
   res.json({
     ...userCard(u, req.user.id),
     following_count: db.prepare('SELECT COUNT(*) AS n FROM follows WHERE follower_id = ?').get(id).n,
-    recent, favorites,
+    recent, favorites, playlists,
   });
 });

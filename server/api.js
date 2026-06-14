@@ -593,8 +593,11 @@ api.post('/playlists/import-deezer', async (req, res) => {
 });
 
 api.get('/playlists/:id', (req, res) => {
-  const list = db.prepare('SELECT * FROM playlists WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  // Any signed-in user can view a playlist (visibility is open within the
+  // server); only the owner can modify it.
+  const list = db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id);
   if (!list) return res.status(404).json({ error: 'Not found' });
+  list.is_owner = list.user_id === req.user.id;
   list.tracks = db.prepare(`
     SELECT t.*, pi.position FROM playlist_items pi JOIN tracks t ON t.deezer_id = pi.track_id
     WHERE pi.playlist_id = ? ORDER BY pi.position
