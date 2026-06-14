@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from './store.jsx';
-import { Icon, Cover, TrackRow, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
+import { Icon, Cover, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
 
 function useAsync(fn, deps) {
   const [data, setData] = useState(null);
@@ -407,11 +407,11 @@ export function Favorites() {
 }
 
 /* ------------------------------------------------------------- Playlist */
-export function Playlist({ id }) {
+export function Playlist({ id, nav }) {
   const { data, err, loading, setData } = useAsync(() => api.get(`/api/playlists/${id}`), [id]);
+  const player = usePlayer();
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
-  const player = usePlayer();
   const tracks = (data.tracks || []).map(t => ({ ...t, available: !!t.file_path }));
   const playable = tracks.filter(t => t.available);
   const remove = async (trackId) => {
@@ -429,22 +429,20 @@ export function Playlist({ id }) {
           <span className="hero-sub faint">{tracks.length} tracks</span>
           <div className="hero-actions">
             <button className="btn-primary" disabled={!playable.length}
+              onClick={() => player.playList(playable, 0)}>
+              <Icon name="play" size={18} fill="currentColor" /> Play
+            </button>
+            <button className="btn-ghost" disabled={!playable.length}
               onClick={() => player.playList(playable, 0, { shuffle: true })}>
-              <Icon name="shuffle" size={18} /> Shuffle play
+              <Icon name="shuffle" size={18} /> Shuffle
             </button>
           </div>
         </div>
       </header>
       <section className="page-block">
-        <div className="track-list">
-          {tracks.map((t, i) => (
-            <div key={t.deezer_id} className="pl-row">
-              <TrackRow track={t} i={i} tracks={tracks} showAlbum shuffle />
-              <button className="icon-btn pl-del" onClick={() => remove(t.deezer_id)} title="Remove"><Icon name="close" size={16} /></button>
-            </div>
-          ))}
-          {!tracks.length && <div className="state faint">This playlist is empty.</div>}
-        </div>
+        {tracks.length
+          ? <TrackTable tracks={tracks} nav={nav} onRemove={remove} />
+          : <div className="state faint">This playlist is empty.</div>}
       </section>
     </div>
   );
