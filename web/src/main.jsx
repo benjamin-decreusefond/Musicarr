@@ -146,6 +146,41 @@ function Login({ onLogin }) {
   );
 }
 
+/* ------------------------------------------- Forced password change */
+// Shown when a user (the seeded default-credential admin) must rotate their
+// password before using the app.
+function ForcePasswordChange({ onDone }) {
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault(); setErr('');
+    if (next.length < 8) return setErr('New password must be at least 8 characters');
+    if (next !== confirm) return setErr('Passwords do not match');
+    setBusy(true);
+    try { await api.post('/api/auth/password', { current: cur, next }); onDone(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="login">
+      <form className="login-card" onSubmit={submit}>
+        <div className="brand"><span className="brand-mark" /> Musicarr</div>
+        <p className="login-tag">Choose a new password to continue</p>
+        <p className="settings-hint" style={{ textAlign: 'center' }}>
+          You're using the default password. Set a new one (at least 8 characters) to secure your server.
+        </p>
+        <input type="password" placeholder="Current password" value={cur} onChange={e => setCur(e.target.value)} autoFocus />
+        <input type="password" placeholder="New password" value={next} onChange={e => setNext(e.target.value)} />
+        <input type="password" placeholder="Confirm new password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+        {err && <div className="login-err">{err}</div>}
+        <button className="btn-primary lg" disabled={busy}>{busy ? 'Saving…' : 'Set password'}</button>
+      </form>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------- Sidebar */
 function Sidebar({ route, nav, me, onLogout }) {
   const [playlists, setPlaylists] = useState([]);
@@ -333,6 +368,7 @@ function App() {
 
   if (me === undefined) return <div className="login"><Icon name="spinner" size={32} /></div>;
   if (me === null) return <Login onLogin={setMe} />;
+  if (me.must_change_password) return <ForcePasswordChange onDone={() => setMe({ ...me, must_change_password: false })} />;
 
   let page;
   switch (route.view) {
@@ -344,7 +380,7 @@ function App() {
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
     case 'artist': page = <Artist id={route.id} nav={nav} />; break;
     case 'album': page = <Album id={route.id} nav={nav} />; break;
-    case 'library': page = <Library />; break;
+    case 'library': page = <Library me={me} />; break;
     case 'favorites': page = <Favorites />; break;
     case 'playlist': page = <Playlist id={route.id} />; break;
     case 'downloads': page = <Downloads nav={nav} />; break;

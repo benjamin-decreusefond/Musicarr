@@ -225,6 +225,8 @@ export function PlayerProvider({ children }) {
         artwork: current.cover ? [{ src: current.cover, sizes: '250x250', type: 'image/jpeg' }] : [],
       });
     }
+    // Record the play for history + recommendations (fire-and-forget).
+    if (currentId) api.post('/api/plays', { track_id: currentId }).catch(() => {});
     // Keyed on the track identity (not the queue index) so reordering the
     // queue around the playing track doesn't restart it.
   }, [currentId, playNonce]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -276,6 +278,55 @@ export function PlayerProvider({ children }) {
     setQueue([...q, ...fresh]);
     if (i < 0) { setIndex(q.length); setPlayNonce(n => n + 1); } // start on the first added track
   }, []);
+
+  /* ------------------------------------------------------------ Radio mode */
+  // Because we can only play files on disk, radio works by pre-downloading
+  // upcoming tracks and appending them to the queue as they land. Deezer's
+  // artist radio supplies the candidate list.
+  const PREFETCH_AHEAD = 4;
+  const [radioActive, setRadioActive] = useState(false);
+  const radioRef = useRef({ pool: [], requested: new Set(), seed: null });
+
+  // One pass: top up downloads for the next few missing tracks, and append any
+  // that have finished downloading to the play queue.
+  const radioTick = useCallback(async () => {
+    const st = radioRef.current;
+    if (!st.pool.length) return;
+    const toRequest = st.pool.filter(t => !t.available && !st.requested.has(t.id)).slice(0, PREFETCH_AHEAD);
+    for (const t of toRequest) {
+      st.requested.add(t.id);
+      api.post('/api/download', { kind: 'track', deezer_id: t.id }).catch(() => {});
+    }
+    const pending = st.pool.filter(t => !t.available && st.requested.has(t.id)).map(t => t.id);
+    if (!pending.length) return;
+    try {
+      const status = await api.get(`/api/track-status?ids=${pending.join(',')}`);
+      let changed = false;
+      for (const t of st.pool) if (!t.available && status[t.id]?.available) { t.available = true; changed = true; }
+      if (changed) enqueue(st.pool.filter(t => t.available)); // enqueue de-dupes
+    } catch { /* ignore a poll miss */ }
+  }, [enqueue]);
+
+  const startRadio = useCallback(async (seed) => {
+    const r = await api.get(`/api/radio?seed=${encodeURIComponent(seed)}`);
+    radioRef.current = { pool: (r.tracks || []).slice(0, 40), requested: new Set(), seed };
+    setRadioActive(true);
+    const ready = radioRef.current.pool.filter(t => t.available);
+    if (ready.length) playList(ready, 0);
+    radioTick();
+    return radioRef.current.pool.length;
+  }, [playList, radioTick]);
+
+  const stopRadio = useCallback(() => {
+    setRadioActive(false);
+    radioRef.current = { pool: [], requested: new Set(), seed: null };
+  }, []);
+
+  useEffect(() => {
+    if (!radioActive) return;
+    const t = setInterval(() => radioTick(), 6000);
+    return () => clearInterval(t);
+  }, [radioActive, radioTick]);
 
   // Reorder/remove keep `index` pointing at the currently-playing track.
   const moveInQueue = useCallback((from, to) => {
@@ -345,6 +396,7 @@ export function PlayerProvider({ children }) {
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
     playList, playTrack, playOrToggle, toggle, next, prev, seek,
     enqueue, moveInQueue, removeFromQueue, playAt,
+    startRadio, stopRadio, radioActive,
     repeat, cycleRepeat,
     hasNext: index < queue.length - 1 || (repeat !== 'off' && queue.length > 0),
     hasPrev: index > 0,
