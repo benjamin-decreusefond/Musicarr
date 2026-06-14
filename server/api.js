@@ -198,12 +198,14 @@ api.get('/search', async (req, res) => {
 
 /* -------------------------------------------------- Browse (Deezer proxy) */
 api.get('/artist/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid artist id' });
   try {
     const [artist, top, albums, related] = await Promise.all([
-      deezerGet(`artist/${req.params.id}`),
-      deezerGet(`artist/${req.params.id}/top?limit=10`),
-      deezerGet(`artist/${req.params.id}/albums?limit=50`),
-      deezerGet(`artist/${req.params.id}/related?limit=12`),
+      deezerGet(`artist/${id}`),
+      deezerGet(`artist/${id}/top?limit=10`),
+      deezerGet(`artist/${id}/albums?limit=50`),
+      deezerGet(`artist/${id}/related?limit=12`),
     ]);
     const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
@@ -227,8 +229,10 @@ api.get('/artist/:id', async (req, res) => {
 });
 
 api.get('/album/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid album id' });
   try {
-    const album = await deezerGet(`album/${req.params.id}`);
+    const album = await deezerGet(`album/${id}`);
     const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     res.json({
       id: album.id, title: album.title, artist: album.artist?.name, artist_id: album.artist?.id,
@@ -273,8 +277,10 @@ api.get('/home', async (req, res) => {
 
 // Preview a Deezer playlist (its tracks) before importing it.
 api.get('/deezer-playlist/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid playlist id' });
   try {
-    const pl = await deezerGet(`playlist/${req.params.id}`);
+    const pl = await deezerGet(`playlist/${id}`);
     const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     res.json({
       id: pl.id, title: pl.title, cover: pl.picture_big || pl.picture_medium,
@@ -642,9 +648,13 @@ function mapTrack(t, have) {
 api.post('/plays', (req, res) => {
   const id = parseInt(req.body?.track_id, 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'track_id required' });
-  // Only log tracks we actually know about; ignore unknown ids quietly.
+  // Only log known tracks, and de-dupe rapid repeats (also prevents a client
+  // from spamming this endpoint to grow the plays table without bound).
   if (db.prepare('SELECT 1 FROM tracks WHERE deezer_id = ?').get(id)) {
-    db.prepare('INSERT INTO plays (user_id, track_id) VALUES (?, ?)').run(req.user.id, id);
+    const recent = db.prepare(
+      `SELECT 1 FROM plays WHERE user_id = ? AND track_id = ? AND played_at > datetime('now','-30 seconds')`
+    ).get(req.user.id, id);
+    if (!recent) db.prepare('INSERT INTO plays (user_id, track_id) VALUES (?, ?)').run(req.user.id, id);
   }
   res.json({ ok: true });
 });
