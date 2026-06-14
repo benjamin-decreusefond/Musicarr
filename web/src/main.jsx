@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, Friends, UserProfile } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -271,7 +271,6 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="library" icon="library" label="Library" />
         <NavItem view="favorites" icon="heart" label="Liked songs" />
         <NavItem view="downloads" icon="download" label="Downloads" />
-        <NavItem view="friends" icon="user" label="Friends" />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
@@ -307,8 +306,41 @@ function Sidebar({ route, nav, me, onLogout }) {
   );
 }
 
+/* -------------------------------------------------------- Friend activity */
+// Persistent right-hand panel showing what the people you follow are playing
+// (like Spotify's Friend Activity). Polls the following feed.
+function ActivityPanel({ nav, onClose }) {
+  const [people, setPeople] = useState([]);
+  useEffect(() => {
+    const load = () => api.get('/api/social/following').then(setPeople).catch(() => {});
+    load();
+    const t = setInterval(load, 20000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <aside className="activity">
+      <div className="activity-head"><span>Friend activity</span>
+        <button className="icon-btn" onClick={onClose} title="Hide"><Icon name="close" size={16} /></button>
+      </div>
+      {people.length ? people.map(u => (
+        <button key={u.id} className="activity-row" onClick={() => nav({ view: 'user', id: u.id })}>
+          <div className="user-avatar sm"><Icon name="user" size={16} /></div>
+          <div className="activity-meta">
+            <div className="activity-name">{u.username}</div>
+            <div className="activity-sub">
+              {u.nowPlaying
+                ? <span className="np-live"><span className="np-dot" /> {u.nowPlaying.title} · {u.nowPlaying.artist}</span>
+                : (u.lastPlayed ? `${u.lastPlayed.title} · ${u.lastPlayed.artist || ''}` : 'Not listening')}
+            </div>
+          </div>
+        </button>
+      )) : <div className="state faint">Follow people (from Search or their profile) to see their activity here.</div>}
+    </aside>
+  );
+}
+
 /* ----------------------------------------------------------- Player bar */
-function PlayerBar() {
+function PlayerBar({ onToggleActivity, activityOpen }) {
   const p = usePlayer();
   const [seekVal, setSeekVal] = useState(null);
   const scrubbing = useRef(false);
@@ -357,6 +389,10 @@ function PlayerBar() {
         </div>
       </div>
       <div className="player-right">
+        <button className="icon-btn" onClick={onToggleActivity} title="Friend activity"
+          style={{ color: activityOpen ? 'var(--accent)' : undefined }}>
+          <Icon name="user" size={18} />
+        </button>
         <Lyrics />
         <QueuePanel />
         <Equalizer />
@@ -395,6 +431,8 @@ function App() {
   const [me, setMe] = useState(undefined); // undefined = loading
   const [route, setRoute] = useState(() => parsePath(window.location.pathname));
   const [depth, setDepth] = useState(0); // in-app history depth, for the back button
+  const [activityOpen, setActivityOpen] = useState(() => localStorage.getItem('musicarr:activity') === '1');
+  const toggleActivity = useCallback(() => setActivityOpen(o => { localStorage.setItem('musicarr:activity', o ? '0' : '1'); return !o; }), []);
 
   useEffect(() => { api.get('/api/auth/me').then(setMe).catch(() => setMe(null)); }, []);
   useEffect(() => {
@@ -442,18 +480,17 @@ function App() {
     case 'favorites': page = <Favorites nav={nav} />; break;
     case 'playlist': page = <Playlist id={route.id} nav={nav} />; break;
     case 'downloads': page = <Downloads nav={nav} />; break;
-    case 'friends': page = <Friends nav={nav} />; break;
     case 'user': page = <UserProfile id={route.id} nav={nav} />; break;
     case 'admin': page = <Admin me={me} />; break;
     case 'settings': page = <Settings />; break;
-    case 'profile': page = <Profile me={me} />; break;
+    case 'profile': page = <Profile me={me} nav={nav} />; break;
     case 'equalizer': page = <EqualizerPage />; break;
     default: page = <Home nav={nav} />;
   }
 
   return (
     <MeContext.Provider value={me}>
-      <div className="app">
+      <div className={`app ${activityOpen ? 'with-activity' : ''}`}>
         <Sidebar route={route} nav={nav} me={me} onLogout={logout} />
         <main className="main">
           <div className="topbar">
@@ -461,7 +498,8 @@ function App() {
           </div>
           <div className="main-scroll" key={route.view + (route.id || '')}>{page}</div>
         </main>
-        <PlayerBar />
+        {activityOpen && <ActivityPanel nav={nav} onClose={toggleActivity} />}
+        <PlayerBar onToggleActivity={toggleActivity} activityOpen={activityOpen} />
       </div>
     </MeContext.Provider>
   );
