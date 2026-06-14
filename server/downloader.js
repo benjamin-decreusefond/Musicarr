@@ -507,12 +507,16 @@ async function importDownload(dl) {
     } catch (e) {
       if (e.code === 'EXDEV' || e.code === 'EPERM') {
         try { fs.copyFileSync(fi.path, dest); }
-        catch (e2) { throw new Error(`Copy failed: ${e2.message}`); }
+        catch (e2) { try { fs.rmdirSync(destDir); } catch { /* keep if non-empty */ } throw new Error(`Copy failed: ${e2.message}`); }
       } else {
+        try { fs.rmdirSync(destDir); } catch { /* keep if non-empty */ }
         throw new Error(`Hardlink failed: ${e.message}`);
       }
     }
-    db.prepare('UPDATE tracks SET file_path = ?, in_library = 1 WHERE deezer_id = ?').run(dest, want.deezer_id);
+    // Record the exact source so deletion can reclaim it later even if the
+    // downloaded filename differs from the library name (or the download row
+    // is gone).
+    db.prepare('UPDATE tracks SET file_path = ?, source_path = ?, in_library = 1 WHERE deezer_id = ?').run(dest, fi.path, want.deezer_id);
     log.info(`#${dl.id} imported "${want.artist} - ${want.title}" -> ${dest}`);
     imported++;
   };
@@ -617,32 +621,54 @@ export function resumeOnBoot() {
  *  library, the same bytes usually exist under both the root folder and slskd's
  *  download dir — remove both names so the space is actually reclaimed. Returns
  *  a summary of what was removed. */
+/** Remove now-empty directories above a deleted file, climbing up to (but never
+ *  removing or escaping) the library/download roots. */
+function pruneEmptyDirs(filePath) {
+  if (!filePath) return;
+  const roots = [path.resolve(config.musicDir), path.resolve(config.slskdDownloadDir)];
+  let dir = path.dirname(path.resolve(filePath));
+  const root = roots.find(r => dir === r || dir.startsWith(r + path.sep));
+  if (!root) return;
+  while (dir.startsWith(root + path.sep) && dir !== root) {
+    try {
+      if (fs.readdirSync(dir).length === 0) { fs.rmdirSync(dir); dir = path.dirname(dir); }
+      else break;
+    } catch { break; }
+  }
+}
+
 export function deleteTrackFile(deezerId) {
-  const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(deezerId);
+  const row = db.prepare('SELECT file_path, source_path FROM tracks WHERE deezer_id = ?').get(deezerId);
   if (!row) return { removed: [], notFound: true };
   const removed = [];
   const tryUnlink = (p) => {
     try { if (p && fs.existsSync(p)) { fs.unlinkSync(p); removed.push(p); } } catch (e) { log.warn(`delete: could not remove ${p}: ${e.message}`); }
   };
 
-  // 1) The library copy.
+  // 1) The library copy and 2) the exact original download (covers files whose
+  // on-disk name differs from the library/remote name, and copies on a separate
+  // filesystem).
   tryUnlink(row.file_path);
+  tryUnlink(row.source_path);
 
-  // 2) The original slskd download(s) for this track, located by basename under
-  // the slskd download dir (the other end of the hardlink).
-  const dls = db.prepare(`SELECT slskd_file FROM downloads WHERE deezer_id = ? AND slskd_file IS NOT NULL`).all(deezerId);
-  const wantBases = new Set();
-  for (const d of dls) for (const f of slskdFilesOf({ slskd_file: d.slskd_file })) wantBases.add(f.split(/[\\/]/).pop());
-  // Also match the library file's own basename, covering album downloads where
-  // slskd_file lists every track on one row.
-  if (row.file_path) wantBases.add(path.basename(row.file_path));
-  if (wantBases.size) {
-    for (const f of walkAudio(config.slskdDownloadDir)) {
-      if (wantBases.has(path.basename(f)) && !removed.includes(f)) tryUnlink(f);
+  // 3) Fallback for tracks imported before source_path was recorded: locate the
+  // download(s) by basename under the slskd download dir.
+  if (!row.source_path) {
+    const dls = db.prepare(`SELECT slskd_file FROM downloads WHERE deezer_id = ? AND slskd_file IS NOT NULL`).all(deezerId);
+    const wantBases = new Set();
+    for (const d of dls) for (const f of slskdFilesOf({ slskd_file: d.slskd_file })) wantBases.add(f.split(/[\\/]/).pop());
+    if (row.file_path) wantBases.add(path.basename(row.file_path));
+    if (wantBases.size) {
+      for (const f of walkAudio(config.slskdDownloadDir)) {
+        if (wantBases.has(path.basename(f)) && !removed.includes(f)) tryUnlink(f);
+      }
     }
   }
 
-  db.prepare('UPDATE tracks SET file_path = NULL, in_library = 0 WHERE deezer_id = ?').run(deezerId);
+  // Clean up folders left empty by the deletion (e.g. Artist/Album).
+  for (const p of [row.file_path, row.source_path, ...removed]) pruneEmptyDirs(p);
+
+  db.prepare('UPDATE tracks SET file_path = NULL, source_path = NULL, in_library = 0 WHERE deezer_id = ?').run(deezerId);
   log.info(`#del track ${deezerId}: removed ${removed.length} file(s)`);
   return { removed, notFound: false };
 }
