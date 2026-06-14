@@ -13,18 +13,34 @@ const log = logger('http');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// Behind nginx/ingress: trust the proxy so req.ip reflects the real client
-// (used for login rate limiting).
-app.set('trust proxy', true);
+// Behind nginx/ingress: trust a *bounded* number of proxy hops so req.ip is the
+// real client. Trusting every hop (true) lets a client spoof X-Forwarded-For and
+// bypass per-IP login rate limiting, so default to 1 and let deployments with a
+// deeper proxy chain override via TRUST_PROXY (a hop count, or true/false).
+const tp = process.env.TRUST_PROXY ?? '1';
+app.set('trust proxy', tp === 'true' ? true : tp === 'false' ? false : (Number.isNaN(Number(tp)) ? tp : Number(tp)));
 app.disable('x-powered-by');
 
 // Baseline security headers for an internet-exposed app (no extra deps).
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' https: data:",            // Deezer cover art is served over https
+  "media-src 'self'",                        // audio is streamed from our own origin
+  "connect-src 'self'",
+  "base-uri 'self'",
+  "frame-ancestors 'self'",
+  "object-src 'none'",
+].join('; ');
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  res.setHeader('Content-Security-Policy', CSP);
   next();
 });
 
