@@ -161,6 +161,16 @@
   .tt-artist { display: none; }
 }
 
+/* ============================ Library hub ============================ */
+.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 22px; overflow-x: auto; }
+.tab { padding: 10px 14px; font-weight: 600; font-size: 14.5px; color: var(--text-dim); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.card-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.create-tile { text-align: left; }
+.create-art { width: 156px; height: 156px; border-radius: 8px; background: var(--bg-elev-2); display: grid; place-items: center; color: var(--text-dim); }
+.create-tile:hover .create-art { color: var(--text); }
+
 /* ============================ Social ============================ */
 .user-list { display: flex; flex-direction: column; gap: 4px; }
 .user-row { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
