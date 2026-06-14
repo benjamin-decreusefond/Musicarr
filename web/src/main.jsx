@@ -431,7 +431,7 @@ function App() {
   const [me, setMe] = useState(undefined); // undefined = loading
   const [route, setRoute] = useState(() => parsePath(window.location.pathname));
   const [depth, setDepth] = useState(0); // in-app history depth, for the back button
-  const [activityOpen, setActivityOpen] = useState(() => localStorage.getItem('musicarr:activity') === '1');
+  const [activityOpen, setActivityOpen] = useState(() => localStorage.getItem('musicarr:activity') !== '0');
   const toggleActivity = useCallback(() => setActivityOpen(o => { localStorage.setItem('musicarr:activity', o ? '0' : '1'); return !o; }), []);
 
   useEffect(() => { api.get('/api/auth/me').then(setMe).catch(() => setMe(null)); }, []);
