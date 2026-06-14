@@ -123,6 +123,7 @@ const loadHistory = () => { try { return JSON.parse(localStorage.getItem(SEARCH_
 export function Search({ nav }) {
   const [q, setQ] = useState('');
   const [res, setRes] = useState(null);
+  const [people, setPeople] = useState([]);
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState(loadHistory);
   const [trending, setTrending] = useState(null);
@@ -142,9 +143,11 @@ export function Search({ nav }) {
   const clearHistory = () => { localStorage.removeItem(SEARCH_HISTORY_KEY); setHistory([]); };
 
   useEffect(() => {
-    if (!q.trim()) { setRes(null); return; }
+    if (!q.trim()) { setRes(null); setPeople([]); return; }
     setLoading(true);
     const id = setTimeout(async () => {
+      // Query Deezer (music) and the server's own users in parallel.
+      api.get(`/api/social/users?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([]));
       try {
         const r = await api.get(`/api/search?q=${encodeURIComponent(q)}`);
         setRes(r);
@@ -174,6 +177,16 @@ export function Search({ nav }) {
                 <Icon name="search" size={14} /> {term}
               </button>
             ))}
+          </div>
+        </section>
+      )}
+      {!!people.length && (
+        <section className="page-block">
+          <h2 className="row-title">People <span className="src-badge">on this server</span></h2>
+          <div className="user-list">
+            {people.map(u => <UserRow key={u.id} u={u} nav={nav} onChange={() => {
+              api.get(`/api/social/users?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => {});
+            }} />)}
           </div>
         </section>
       )}
@@ -833,12 +846,15 @@ export function Downloads({ nav }) {
 }
 
 /* -------------------------------------------------------------- Profile */
-export function Profile({ me }) {
+export function Profile({ me, nav }) {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [friends, setFriends] = useState(null);
+  const loadFriends = useCallback(() => api.get('/api/social/following').then(setFriends).catch(() => setFriends([])), []);
+  useEffect(() => { loadFriends(); const t = setInterval(loadFriends, 20000); return () => clearInterval(t); }, [loadFriends]);
   const submit = async (e) => {
     e.preventDefault();
     setMsg(null);
@@ -877,6 +893,13 @@ export function Profile({ me }) {
           <button className="btn-primary" disabled={busy || !cur || !next}>{busy ? 'Saving…' : 'Update password'}</button>
         </form>
         {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+      </section>
+      <section className="page-block settings-section">
+        <h2 className="row-title">Friends</h2>
+        <p className="settings-hint">People you follow on this server. Find more from the Search tab.</p>
+        {friends && friends.length
+          ? <div className="user-list">{friends.map(u => <UserRow key={u.id} u={u} nav={nav} onChange={loadFriends} />)}</div>
+          : <div className="state faint">You're not following anyone yet.</div>}
       </section>
     </div>
   );
@@ -1079,36 +1102,6 @@ function UserRow({ u, nav, onChange }) {
         <div className="user-row-sub">{sub}</div>
       </div>
       <div onClick={e => e.stopPropagation()}><FollowButton user={u} onChange={onChange} /></div>
-    </div>
-  );
-}
-
-export function Friends({ nav }) {
-  const [q, setQ] = useState('');
-  const [users, setUsers] = useState(null);
-  const [following, setFollowing] = useState(null);
-  const loadFollowing = useCallback(() => { api.get('/api/social/following').then(setFollowing).catch(() => setFollowing([])); }, []);
-  const loadUsers = useCallback(() => { api.get(`/api/social/users?q=${encodeURIComponent(q)}`).then(setUsers).catch(() => setUsers([])); }, [q]);
-  useEffect(() => { loadFollowing(); const t = setInterval(loadFollowing, 20000); return () => clearInterval(t); }, [loadFollowing]);
-  useEffect(() => { const t = setTimeout(loadUsers, 250); return () => clearTimeout(t); }, [loadUsers]);
-  const refresh = () => { loadFollowing(); loadUsers(); };
-  return (
-    <div className="page">
-      <h1 className="page-h1">Friends</h1>
-      <section className="page-block">
-        <h2 className="row-title">Activity</h2>
-        {following && following.length > 0
-          ? <div className="user-list">{following.map(u => <UserRow key={u.id} u={u} nav={nav} onChange={refresh} />)}</div>
-          : <div className="state faint">You're not following anyone yet — find people below.</div>}
-      </section>
-      <section className="page-block">
-        <h2 className="row-title">Find people</h2>
-        <div className="search-box"><Icon name="search" size={18} /><input placeholder="Search people on this server…" value={q} onChange={e => setQ(e.target.value)} /></div>
-        <div className="user-list">
-          {(users || []).map(u => <UserRow key={u.id} u={u} nav={nav} onChange={refresh} />)}
-          {users && !users.length && <div className="state faint">No people found.</div>}
-        </div>
-      </section>
     </div>
   );
 }
