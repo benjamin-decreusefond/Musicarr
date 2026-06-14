@@ -548,7 +548,7 @@ export function Playlist({ id, nav }) {
       </header>
       <section className="page-block">
         {tracks.length
-          ? <TrackTable tracks={tracks} nav={nav} onRemove={remove} />
+          ? <TrackTable tracks={tracks} nav={nav} onRemove={data.is_owner === false ? undefined : remove} />
           : <div className="state faint">This playlist is empty.</div>}
       </section>
     </div>
@@ -1140,7 +1140,18 @@ export function UserProfile({ id, nav }) {
           <TrackTable tracks={favs} nav={nav} showAdded={false} />
         </section>
       )}
-      {!recent.length && !favs.length && <div className="state faint">No public activity yet.</div>}
+      {!!data.playlists?.length && (
+        <section className="page-block">
+          <h2 className="row-title">Playlists</h2>
+          <div className="card-grid">
+            {data.playlists.map(pl => (
+              <TileCard key={pl.id} cover={pl.cover} title={pl.name} sub={`${pl.count || 0} tracks`}
+                onClick={() => nav({ view: 'playlist', id: pl.id })} />
+            ))}
+          </div>
+        </section>
+      )}
+      {!recent.length && !favs.length && !data.playlists?.length && <div className="state faint">No public activity yet.</div>}
     </div>
   );
 }
