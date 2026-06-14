@@ -692,7 +692,7 @@ export function Downloads({ nav }) {
               )}
             </div>
             <span className={`dl-status s-${d.status}`}>{statusLabel[d.status] || d.status}</span>
-            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Dismiss"><Icon name="trash" size={16} /></button>
+            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Remove from this list (does not delete the downloaded file)"><Icon name="trash" size={16} /></button>
           </div>
         ))}
         {!items.length && <div className="state faint">No downloads yet.</div>}
