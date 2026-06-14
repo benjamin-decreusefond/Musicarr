@@ -599,6 +599,21 @@ async function importDownload(dl) {
     }
   }
 
+  // Clean up files we downloaded but did NOT import — wrong candidates,
+  // verification rejects, duplicates of tracks we already had, and (for albums)
+  // junk that doesn't belong to the release. For a track download every extra is
+  // wrong; for an album we keep unused files that still plausibly match a wanted
+  // track (a real track that merely failed to auto-match) to avoid losing music.
+  const junk = fileInfos.filter(fi => !fi.used).filter(fi =>
+    dl.kind !== 'album'
+      ? true
+      : !wanted.some(w => titleMatches(fi, w.title) || durVerdict(w, fi) === true)
+  ).map(fi => fi.path);
+  for (const p of junk) {
+    try { fs.unlinkSync(p); log.info(`#${dl.id} removed unused download: ${path.basename(p)}`); }
+    catch (e) { log.debug(`#${dl.id} could not remove ${p}: ${e.message}`); }
+  }
+
   if (imported === 0) {
     throw Object.assign(
       new Error(`Downloaded ${fileInfos.length} file(s) but none matched/verified against the ${wanted.length} requested track(s)`),
