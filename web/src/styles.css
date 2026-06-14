@@ -13,7 +13,8 @@
 .player { grid-area: player; }
 
 .main-scroll { flex: 1; overflow-y: auto; padding: 0 28px 40px; }
-.topbar { position: sticky; top: 0; z-index: 10; padding: 14px 28px 8px; }
+.topbar { position: sticky; top: 0; z-index: 10; padding: 14px 28px 8px; display: flex; align-items: center; justify-content: space-between; }
+.topbar-activity.on { color: var(--accent); }
 .round-btn { width: 34px; height: 34px; border-radius: 50%; background: rgba(0,0,0,.5); color: var(--text); font-size: 22px; line-height: 1; display: grid; place-items: center; backdrop-filter: blur(8px); }
 .round-btn:disabled { opacity: .35; cursor: default; }
 

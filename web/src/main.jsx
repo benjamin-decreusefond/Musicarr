@@ -495,6 +495,8 @@ function App() {
         <main className="main">
           <div className="topbar">
             <button className="round-btn" onClick={back} disabled={!depth} title="Back">‹</button>
+            <button className={`round-btn topbar-activity ${activityOpen ? 'on' : ''}`} onClick={toggleActivity}
+              title="Friend activity"><Icon name="user" size={18} /></button>
           </div>
           <div className="main-scroll" key={route.view + (route.id || '')}>{page}</div>
         </main>
