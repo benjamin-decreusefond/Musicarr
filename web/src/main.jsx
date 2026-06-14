@@ -120,6 +120,62 @@ function QueuePanel() {
   );
 }
 
+/* ------------------------------------------------------------- Lyrics */
+// Lyrics popover for the currently-playing track. Shows time-synced lyrics with
+// the active line highlighted (click a line to seek), or plain lyrics as a
+// fallback. Data comes from the server's /api/lyrics (LRCLIB-backed).
+function Lyrics() {
+  const p = usePlayer();
+  const ref = useRef(null);
+  const activeRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [st, setSt] = useState({ loading: false, synced: [], plain: '', err: null });
+  const id = p.current ? (p.current.deezer_id || p.current.id) : null;
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !id) return;
+    setSt({ loading: true, synced: [], plain: '', err: null });
+    api.get(`/api/lyrics/${id}`)
+      .then(d => setSt({ loading: false, synced: d.synced || [], plain: d.plain || '', err: null }))
+      .catch(e => setSt({ loading: false, synced: [], plain: '', err: e.message }));
+  }, [open, id]);
+
+  let active = -1;
+  for (let k = 0; k < st.synced.length; k++) { if (st.synced[k].time <= p.time + 0.25) active = k; else break; }
+  useEffect(() => { activeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, [active]);
+
+  return (
+    <div className="eq-wrap" ref={ref}>
+      <button className="icon-btn" onClick={() => setOpen(o => !o)} title="Lyrics"
+        style={{ color: open ? 'var(--accent)' : undefined }}>
+        <Icon name="lyrics" size={18} />
+      </button>
+      {open && (
+        <div className="lyrics-panel" onClick={e => e.stopPropagation()}>
+          <div className="eq-head"><span>Lyrics</span>{p.current && <span className="queue-count">{p.current.title}</span>}</div>
+          <div className="lyrics-body">
+            {st.loading && <div className="state faint">Loading…</div>}
+            {!st.loading && st.err && <div className="state faint">No lyrics found.</div>}
+            {!st.loading && !st.err && st.synced.length > 0 && st.synced.map((l, k) => (
+              <p key={k} ref={k === active ? activeRef : null}
+                className={`lyrics-line ${k === active ? 'active' : ''} ${k < active ? 'past' : ''}`}
+                onClick={() => p.seek(l.time)}>{l.text || '♪'}</p>
+            ))}
+            {!st.loading && !st.err && !st.synced.length && st.plain && <pre className="lyrics-plain">{st.plain}</pre>}
+            {!st.loading && !st.err && !st.synced.length && !st.plain && <div className="state faint">No lyrics.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------- Login */
 function Login({ onLogin }) {
   const [u, setU] = useState('');
@@ -300,6 +356,7 @@ function PlayerBar() {
         </div>
       </div>
       <div className="player-right">
+        <Lyrics />
         <QueuePanel />
         <Equalizer />
         <Icon name="vol" size={18} />
