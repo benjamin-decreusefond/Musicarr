@@ -119,6 +119,48 @@
 .pl-del { position: absolute; right: 56px; top: 50%; transform: translateY(-50%); opacity: 0; }
 .pl-row:hover .pl-del { opacity: 1; }
 
+/* ===================== Track table (Deezer-style) ===================== */
+.tracktable { display: flex; flex-direction: column; }
+.tt-head, .tt-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 2.4fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 110px 132px 56px;
+  align-items: center; gap: 14px;
+}
+.tt-head {
+  padding: 4px 12px 8px; border-bottom: 1px solid var(--line); margin-bottom: 6px;
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint);
+}
+.tt-head .tt-time, .tt-head .tt-idx { display: flex; }
+.tt-head .tt-time { justify-content: flex-end; }
+.tt-row { padding: 7px 12px; border-radius: 7px; cursor: pointer; }
+.tt-row:hover { background: var(--bg-elev-2); }
+.tt-row.dim { opacity: .55; }
+.tt-row.current .tt-name { color: var(--accent); }
+.tt-idx { position: relative; text-align: center; color: var(--text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
+.tt-idx .num { display: inline; }
+.tt-idx svg { display: none; position: absolute; inset: 0; margin: auto; }
+.tt-row:hover .tt-idx .num { opacity: 0; }
+.tt-row:hover .tt-idx svg { display: block; }
+.tt-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.tt-title-meta { min-width: 0; }
+.tt-name { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-badge { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+.tt-artist, .tt-album { font-size: 13.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-artist .link, .tt-album .link { cursor: pointer; }
+.tt-artist .link:hover, .tt-album .link:hover { color: var(--text); text-decoration: underline; }
+.tt-added { font-size: 13px; color: var(--text-faint); white-space: nowrap; }
+.tt-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity .15s; }
+.tt-row:hover .tt-actions { opacity: 1; }
+.tt-time { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
+@media (max-width: 900px) {
+  .tt-head, .tt-row { grid-template-columns: 28px minmax(0, 2.4fr) minmax(0, 1.3fr) 120px 56px; }
+  .tt-album, .tt-added { display: none; }
+}
+@media (max-width: 620px) {
+  .tt-head, .tt-row { grid-template-columns: 24px minmax(0, 1fr) 110px 48px; }
+  .tt-artist { display: none; }
+}
+
 /* ============================ Search ============================ */
 .search-box { display: flex; align-items: center; gap: 12px; background: var(--bg-elev-2); border-radius: 999px; padding: 13px 20px; max-width: 480px; margin-bottom: 12px; color: var(--text-dim); }
 .search-box input { flex: 1; background: none; border: none; outline: none; color: var(--text); font-size: 15px; }

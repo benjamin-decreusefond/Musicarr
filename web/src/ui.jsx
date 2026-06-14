@@ -29,6 +29,7 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     radio: 'M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6M5.6 5.6a9 9 0 0 0 0 12.7M18.4 5.6a9 9 0 0 1 0 12.7M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7',
     compass: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM16 8l-2 6-6 2 2-6 6-2Z',
     lyrics: 'M5 6h11M5 10h14M5 14h9M5 18h6M19 13v6a2 2 0 1 1-2-2',
+    clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2',
     settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2Z',
     spinner: 'M12 3a9 9 0 1 0 9 9',
   }[name];
@@ -214,6 +215,99 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
         )}
       </div>
       <span className="track-time">{fmtTime(track.duration)}</span>
+    </div>
+  );
+}
+
+// Short date for the "Added" column (added_at is a UTC "YYYY-MM-DD HH:MM:SS").
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/** One row of the columnar TrackTable. */
+function TrackTableRow({ track, i, tracks, nav, onRemove }) {
+  const player = usePlayer();
+  const me = useMe();
+  const id = track.deezer_id || track.id;
+  const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
+  const available = track.available || track.file_path;
+  const DL_LABEL = { searching: 'Searching…', downloading: 'Downloading…', importing: 'Importing…', error: 'Failed', not_found: 'Not found' };
+  const pending = !available && DL_LABEL[track.download_status];
+  const [hidden, setHidden] = useState(false);
+
+  const onPlay = () => { if (available) player.playOrToggle(track, tracks, i ?? 0); };
+  const doDelete = async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${track.title}" from disk? This removes the file from your library.`)) return;
+    try { await api.del(`/api/library/${id}`); window.dispatchEvent(new Event('musicarr:library-changed')); setHidden(true); }
+    catch (err) { alert(err.message); }
+  };
+  if (hidden) return null;
+
+  return (
+    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}>
+      <div className="tt-idx">
+        {isCurrent && player.playing
+          ? <span className="eq"><i /><i /><i /></span>
+          : <span className="num">{(i ?? 0) + 1}</span>}
+        <Icon name={isCurrent && player.playing ? 'pause' : 'play'} size={14} fill="currentColor" />
+      </div>
+      <div className="tt-title">
+        <Cover src={track.cover} size={40} />
+        <div className="tt-title-meta">
+          <div className="tt-name">{track.title}</div>
+          {!available && <div className="tt-badge">{pending || 'Not downloaded'}</div>}
+        </div>
+      </div>
+      <div className="tt-artist">
+        {nav && track.artist_id
+          ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'artist', id: track.artist_id }); }}>{track.artist}</span>
+          : track.artist}
+      </div>
+      <div className="tt-album">
+        {nav && track.album_id
+          ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'album', id: track.album_id }); }}>{track.album}</span>
+          : track.album}
+      </div>
+      <div className="tt-added">{fmtDate(track.added_at)}</div>
+      <div className="tt-actions" onClick={e => e.stopPropagation()}>
+        <HeartButton trackId={id} track={track} initial={track.favorite} />
+        <AddToPlaylist trackId={id} track={track} />
+        {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
+        {available && me?.is_admin && (
+          <button className="icon-btn" title="Delete from disk" onClick={doDelete}><Icon name="trash" size={16} /></button>
+        )}
+        {onRemove && (
+          <button className="icon-btn" title="Remove from playlist"
+            onClick={e => { e.stopPropagation(); onRemove(id); }}><Icon name="close" size={16} /></button>
+        )}
+      </div>
+      <div className="tt-time">{fmtTime(track.duration)}</div>
+    </div>
+  );
+}
+
+/** Deezer-style columnar track table (Title · Artist · Album · Added · Duration)
+ *  with per-row actions on hover. `onRemove` adds a remove-from-playlist button. */
+export function TrackTable({ tracks, nav, onRemove }) {
+  if (!tracks.length) return <div className="state faint">Nothing here yet.</div>;
+  return (
+    <div className="tracktable">
+      <div className="tt-head">
+        <div className="tt-idx">#</div>
+        <div>Title</div>
+        <div className="tt-artist">Artist</div>
+        <div className="tt-album">Album</div>
+        <div className="tt-added">Added</div>
+        <div />
+        <div className="tt-time"><Icon name="clock" size={15} /></div>
+      </div>
+      {tracks.map((t, i) => (
+        <TrackTableRow key={t.deezer_id || t.id} track={t} i={i} tracks={tracks} nav={nav} onRemove={onRemove} />
+      ))}
     </div>
   );
 }
