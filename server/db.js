@@ -44,6 +44,11 @@ export const config = {
   get slskdApiKey() { return stored('slskd_api_key', envDefaults.slskdApiKey); },
   get slskdDownloadDir() { return getSetting('slskd_download_dir') || envDefaults.slskdDownloadDir; },
   get slskdEnabled() { return !!(this.slskdUrl && this.slskdApiKey); },
+
+  // Auto-cleanup: optionally remove tracks not played for N days. Off by default;
+  // favorited and playlisted tracks are always kept.
+  get autoCleanupEnabled() { return getSetting('cleanup_enabled') === '1'; },
+  get cleanupAfterDays() { return Math.max(0, parseInt(getSetting('cleanup_after_days') || '0', 10) || 0); },
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });

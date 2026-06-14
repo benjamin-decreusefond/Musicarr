@@ -293,6 +293,31 @@ export function startPoller() {
   setInterval(() => tick().catch(e => log.error('poll tick failed', e)), config.pollIntervalMs);
   setTimeout(() => sweepUnimported().catch(e => log.error('sweep failed', e)), Math.min(15000, config.sweepIntervalMs));
   setInterval(() => sweepUnimported().catch(e => log.error('sweep failed', e)), config.sweepIntervalMs);
+  // Auto-cleanup of stale tracks: shortly after boot, then daily.
+  setTimeout(() => cleanupStaleTracks().catch(e => log.error('cleanup failed', e)), 60000);
+  setInterval(() => cleanupStaleTracks().catch(e => log.error('cleanup failed', e)), 24 * 60 * 60 * 1000);
+}
+
+/** Remove downloaded tracks that haven't been played within the configured
+ *  window. Favorited tracks and tracks in any playlist are always kept. Tracks
+ *  never played are aged from when they were added. Returns the count removed. */
+export function cleanupStaleTracks() {
+  if (!config.autoCleanupEnabled || config.cleanupAfterDays <= 0) return Promise.resolve(0);
+  const days = config.cleanupAfterDays;
+  const stale = db.prepare(`
+    SELECT t.deezer_id, t.artist, t.title FROM tracks t
+    WHERE t.file_path IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.track_id = t.deezer_id)
+      AND NOT EXISTS (SELECT 1 FROM playlist_items pi WHERE pi.track_id = t.deezer_id)
+      AND COALESCE((SELECT MAX(p.played_at) FROM plays p WHERE p.track_id = t.deezer_id), t.added_at)
+            < datetime('now', ?)
+  `).all(`-${days} days`);
+  if (!stale.length) return Promise.resolve(0);
+  log.info(`auto-cleanup: removing ${stale.length} track(s) not played in ${days} day(s)`);
+  for (const t of stale) {
+    try { deleteTrackFile(t.deezer_id); } catch (e) { log.warn(`auto-cleanup: ${t.artist} - ${t.title}: ${e.message}`); }
+  }
+  return Promise.resolve(stale.length);
 }
 
 const TERMINAL = /Completed/i;
