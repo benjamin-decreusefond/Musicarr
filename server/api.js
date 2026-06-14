@@ -149,6 +149,21 @@ api.get('/library', (req, res) => {
   res.json(rows);
 });
 
+// Artists present in the library, with their real Deezer artist picture (the
+// track cover is the album art, which isn't the artist photo).
+api.get('/library/artists', async (req, res) => {
+  const rows = db.prepare(`
+    SELECT artist_id AS id, artist AS name, COUNT(*) AS count
+    FROM tracks WHERE file_path IS NOT NULL AND artist_id IS NOT NULL
+    GROUP BY artist_id ORDER BY count DESC, artist`).all();
+  const out = await Promise.all(rows.map(async r => {
+    let picture = null;
+    try { const a = await deezerGet(`artist/${r.id}`); picture = a.picture_medium || a.picture || null; } catch { /* fall back to no image */ }
+    return { id: r.id, name: r.name, count: r.count, picture };
+  }));
+  res.json(out);
+});
+
 /* --------------------------------------------------------------- Search */
 // Unified search: returns artists, albums and tracks from Deezer, each tagged
 // with whether we already have the file locally.

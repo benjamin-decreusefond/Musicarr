@@ -439,7 +439,7 @@ function App() {
     case 'artist': page = <Artist id={route.id} nav={nav} />; break;
     case 'album': page = <Album id={route.id} nav={nav} />; break;
     case 'library': page = <Library me={me} nav={nav} />; break;
-    case 'favorites': page = <Favorites />; break;
+    case 'favorites': page = <Favorites nav={nav} />; break;
     case 'playlist': page = <Playlist id={route.id} nav={nav} />; break;
     case 'downloads': page = <Downloads nav={nav} />; break;
     case 'friends': page = <Friends nav={nav} />; break;
