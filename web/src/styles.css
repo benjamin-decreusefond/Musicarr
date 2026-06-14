@@ -218,7 +218,15 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 
 /* ============================ Queue ============================ */
 .queue-panel { position: absolute; bottom: calc(100% + 12px); right: 0; width: 340px; max-height: 60vh; display: flex; flex-direction: column; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; z-index: 60; box-shadow: 0 16px 50px rgba(0,0,0,.6); }
-.queue-count { font-size: 12px; color: var(--text-faint); font-weight: 500; }
+.queue-count { font-size: 12px; color: var(--text-faint); font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Lyrics popover */
+.lyrics-panel { position: absolute; bottom: calc(100% + 12px); right: 0; width: 360px; max-height: 62vh; display: flex; flex-direction: column; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; z-index: 60; box-shadow: 0 16px 50px rgba(0,0,0,.6); }
+.lyrics-body { overflow-y: auto; margin-top: 8px; padding-right: 4px; }
+.lyrics-line { color: var(--text-dim); font-size: 15px; line-height: 1.5; margin: 7px 0; cursor: pointer; transition: color .15s, opacity .15s; }
+.lyrics-line.active { color: var(--text); font-weight: 700; }
+.lyrics-line.past { opacity: .45; }
+.lyrics-plain { white-space: pre-wrap; color: var(--text-dim); font-size: 14px; line-height: 1.6; font-family: inherit; margin: 0; }
 .queue-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .queue-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 2px; }
 .queue-row:hover { background: var(--surface-hover); }

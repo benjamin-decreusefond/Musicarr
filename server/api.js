@@ -5,6 +5,7 @@ import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } f
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testSlskd } from './sources.js';
 import { queueDownload, deleteTrackFile } from './downloader.js';
+import { createCache } from './cache.js';
 import { logger } from './log.js';
 
 const log = logger('api');
@@ -704,6 +705,75 @@ api.delete('/library/:trackId', requireAdmin, (req, res) => {
   const result = deleteTrackFile(id);
   if (result.notFound) return res.status(404).json({ error: 'Track not found' });
   res.json({ ok: true, removed: result.removed.length });
+});
+
+/* -------------------------------------------------------------- Lyrics */
+// Lyrics come from LRCLIB (https://lrclib.net) — a free, key-less database with
+// both plain and time-synced lyrics. Results are cached for a day.
+const lyricsCache = createCache({ ttlMs: 24 * 60 * 60 * 1000, max: 2000 });
+const LRCLIB = (process.env.LRCLIB_URL || 'https://lrclib.net').replace(/\/$/, '');
+const LRC_UA = 'Musicarr (https://github.com/benjamin-decreusefond/musicarr)';
+
+// Parse an LRC string into ordered { time, text } lines for synced display.
+function parseLrc(s) {
+  if (!s) return [];
+  const out = [];
+  for (const line of s.split(/\r?\n/)) {
+    const m = line.match(/^((?:\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\])+)(.*)$/);
+    if (!m) continue;
+    const text = m[2].trim();
+    for (const st of m[1].matchAll(/\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g)) {
+      const frac = st[3] ? Number(st[3]) / (st[3].length === 2 ? 100 : 1000) : 0;
+      out.push({ time: (+st[1]) * 60 + (+st[2]) + frac, text });
+    }
+  }
+  return out.sort((a, b) => a.time - b.time);
+}
+
+async function lrclibFetch(pathAndQuery) {
+  const r = await fetch(`${LRCLIB}${pathAndQuery}`, {
+    headers: { 'User-Agent': LRC_UA }, signal: AbortSignal.timeout(10000),
+  });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`LRCLIB ${r.status}`);
+  return r.json();
+}
+
+api.get('/lyrics/:trackId', async (req, res) => {
+  const id = parseInt(req.params.trackId, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid track id' });
+  try {
+    // Prefer our catalog; fall back to Deezer for not-yet-imported tracks.
+    let t = db.prepare('SELECT title, artist, album, duration FROM tracks WHERE deezer_id = ?').get(id);
+    if (!t?.title) {
+      const d = await deezerGet(`track/${id}`);
+      t = { title: d.title, artist: d.artist?.name, album: d.album?.title, duration: d.duration };
+    }
+    if (!t?.title || !t?.artist) return res.status(404).json({ error: 'Unknown track' });
+
+    const key = `${t.artist}|${t.title}|${t.album || ''}|${t.duration || ''}`;
+    const data = await lyricsCache.wrap(key, async () => {
+      // Exact signature match first (artist+title+album+duration), then a fuzzy search.
+      const qs = new URLSearchParams({ artist_name: t.artist, track_name: t.title });
+      if (t.album) qs.set('album_name', t.album);
+      if (t.duration) qs.set('duration', String(t.duration));
+      let body = await lrclibFetch(`/api/get?${qs}`);
+      if (!body || (!body.syncedLyrics && !body.plainLyrics)) {
+        const arr = await lrclibFetch(`/api/search?${new URLSearchParams({ track_name: t.title, artist_name: t.artist })}`);
+        body = Array.isArray(arr) ? arr.find(x => x.syncedLyrics || x.plainLyrics) : null;
+      }
+      if (!body) return { found: false };
+      return {
+        found: !!(body.syncedLyrics || body.plainLyrics),
+        synced: parseLrc(body.syncedLyrics),
+        plain: body.plainLyrics || '',
+      };
+    });
+    if (!data.found) return res.status(404).json({ error: 'No lyrics found for this track' });
+    res.json({ synced: data.synced, plain: data.plain });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
 });
 
 /* ------------------------------------------------------------- Streaming */
