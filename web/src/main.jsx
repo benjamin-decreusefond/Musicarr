@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, Friends, UserProfile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -271,6 +271,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="library" icon="library" label="Library" />
         <NavItem view="favorites" icon="heart" label="Liked songs" />
         <NavItem view="downloads" icon="download" label="Downloads" />
+        <NavItem view="friends" icon="user" label="Friends" />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
@@ -370,7 +371,7 @@ function PlayerBar() {
 /* ----------------------------------------------------------- URL routing */
 // Keep the current view in the address bar so a refresh restores it (the
 // server serves index.html for any non-API path, so deep links work too).
-const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre']);
+const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre', 'user']);
 const VIEWS_WITH_SLUG = new Set(['mood']); // string id rather than numeric
 
 function routeToPath({ view, id }) {
@@ -441,6 +442,8 @@ function App() {
     case 'favorites': page = <Favorites />; break;
     case 'playlist': page = <Playlist id={route.id} nav={nav} />; break;
     case 'downloads': page = <Downloads nav={nav} />; break;
+    case 'friends': page = <Friends nav={nav} />; break;
+    case 'user': page = <UserProfile id={route.id} nav={nav} />; break;
     case 'admin': page = <Admin me={me} />; break;
     case 'settings': page = <Settings />; break;
     case 'profile': page = <Profile me={me} />; break;

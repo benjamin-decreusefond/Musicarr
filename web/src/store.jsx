@@ -236,6 +236,15 @@ export function PlayerProvider({ children }) {
     // queue around the playing track doesn't restart it.
   }, [currentId, playNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live "now playing" heartbeat so other users see what we're listening to.
+  useEffect(() => {
+    if (!playing || !currentId) return;
+    const beat = () => api.post('/api/social/heartbeat', { track_id: currentId }).catch(() => {});
+    beat();
+    const t = setInterval(beat, 20000);
+    return () => clearInterval(t);
+  }, [playing, currentId]);
+
   const trackId = (t) => t?.deezer_id || t?.id;
   const playable = (tracks) => tracks.filter(t => t.available || t.file_path);
 

@@ -962,3 +962,104 @@ export function Admin({ me }) {
     </div>
   );
 }
+
+/* --------------------------------------------------------------- Social */
+function FollowButton({ user, onChange }) {
+  const [following, setFollowing] = useState(user.following);
+  useEffect(() => setFollowing(user.following), [user.following]);
+  const toggle = async (e) => {
+    e.stopPropagation();
+    const nv = !following; setFollowing(nv);
+    try {
+      if (nv) await api.post(`/api/social/follow/${user.id}`);
+      else await api.del(`/api/social/follow/${user.id}`);
+      onChange?.(nv);
+    } catch { setFollowing(!nv); }
+  };
+  return <button className={`btn-ghost sm ${following ? 'on' : ''}`} onClick={toggle}>{following ? 'Following' : 'Follow'}</button>;
+}
+
+function UserRow({ u, nav, onChange }) {
+  const sub = u.nowPlaying
+    ? <span className="np-live"><span className="np-dot" /> {u.nowPlaying.title} · {u.nowPlaying.artist}</span>
+    : <span>{u.lastPlayed ? `Last played: ${u.lastPlayed.title}` : `${u.followers} follower${u.followers === 1 ? '' : 's'}`}</span>;
+  return (
+    <div className="user-row" onClick={() => nav({ view: 'user', id: u.id })}>
+      <div className="user-avatar"><Icon name="user" size={20} /></div>
+      <div className="user-row-meta">
+        <div className="user-row-name">{u.username}{u.is_admin ? <span className="badge accent" style={{ marginLeft: 8 }}>Admin</span> : null}</div>
+        <div className="user-row-sub">{sub}</div>
+      </div>
+      <div onClick={e => e.stopPropagation()}><FollowButton user={u} onChange={onChange} /></div>
+    </div>
+  );
+}
+
+export function Friends({ nav }) {
+  const [q, setQ] = useState('');
+  const [users, setUsers] = useState(null);
+  const [following, setFollowing] = useState(null);
+  const loadFollowing = useCallback(() => { api.get('/api/social/following').then(setFollowing).catch(() => setFollowing([])); }, []);
+  const loadUsers = useCallback(() => { api.get(`/api/social/users?q=${encodeURIComponent(q)}`).then(setUsers).catch(() => setUsers([])); }, [q]);
+  useEffect(() => { loadFollowing(); const t = setInterval(loadFollowing, 20000); return () => clearInterval(t); }, [loadFollowing]);
+  useEffect(() => { const t = setTimeout(loadUsers, 250); return () => clearTimeout(t); }, [loadUsers]);
+  const refresh = () => { loadFollowing(); loadUsers(); };
+  return (
+    <div className="page">
+      <h1 className="page-h1">Friends</h1>
+      <section className="page-block">
+        <h2 className="row-title">Activity</h2>
+        {following && following.length > 0
+          ? <div className="user-list">{following.map(u => <UserRow key={u.id} u={u} nav={nav} onChange={refresh} />)}</div>
+          : <div className="state faint">You're not following anyone yet — find people below.</div>}
+      </section>
+      <section className="page-block">
+        <h2 className="row-title">Find people</h2>
+        <div className="search-box"><Icon name="search" size={18} /><input placeholder="Search people on this server…" value={q} onChange={e => setQ(e.target.value)} /></div>
+        <div className="user-list">
+          {(users || []).map(u => <UserRow key={u.id} u={u} nav={nav} onChange={refresh} />)}
+          {users && !users.length && <div className="state faint">No people found.</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function UserProfile({ id, nav }) {
+  const { data, err, loading } = useAsync(() => api.get(`/api/social/users/${id}`), [id]);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const recent = (data.recent || []).map(t => ({ ...t, available: !!t.available }));
+  const favs = (data.favorites || []).map(t => ({ ...t, available: !!t.available }));
+  return (
+    <div className="page">
+      <header className="hero">
+        <div className="fav-art" style={{ background: 'var(--bg-elev-2)' }}><Icon name="user" size={72} /></div>
+        <div className="hero-meta">
+          <span className="hero-kind">Profile</span>
+          <h1 className="hero-title">{data.username}</h1>
+          <span className="hero-sub faint">{data.followers} followers · {data.following_count} following</span>
+          <div className="hero-actions"><FollowButton user={data} /></div>
+          {data.nowPlaying && (
+            <div className="np-live" style={{ marginTop: 12 }}>
+              <span className="np-dot" /> Listening to <b style={{ margin: '0 5px' }}>{data.nowPlaying.title}</b> · {data.nowPlaying.artist}
+            </div>
+          )}
+        </div>
+      </header>
+      {!!recent.length && (
+        <section className="page-block">
+          <h2 className="row-title">Recently played</h2>
+          <div className="track-list">{recent.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={recent} showAlbum />)}</div>
+        </section>
+      )}
+      {!!favs.length && (
+        <section className="page-block">
+          <h2 className="row-title">Liked songs</h2>
+          <div className="track-list">{favs.map((t, i) => <TrackRow key={t.deezer_id} track={t} i={i} tracks={favs} showAlbum />)}</div>
+        </section>
+      )}
+      {!recent.length && !favs.length && <div className="state faint">No public activity yet.</div>}
+    </div>
+  );
+}

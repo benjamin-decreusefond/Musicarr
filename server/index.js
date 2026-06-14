@@ -4,6 +4,7 @@ import express from 'express';
 import { config } from './db.js';
 import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth } from './auth.js';
 import { deezerRouter } from './sources.js';
+import { socialRouter } from './social.js';
 import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
 import { logger } from './log.js';
@@ -36,6 +37,7 @@ app.use('/api/users', usersRouter);
 // The Deezer proxy is metadata-only but must still require a signed-in user
 // (it was previously reachable unauthenticated).
 app.use('/api/deezer', requireAuth, deezerRouter);
+app.use('/api/social', requireAuth, socialRouter);
 app.use('/api', api);
 
 // Surface server-side API errors in the logs instead of swallowing them.
