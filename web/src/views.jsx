@@ -1040,7 +1040,7 @@ export function Settings() {
 }
 
 /* ---------------------------------------------------------------- Admin */
-export function Admin({ me }) {
+export function Admin({ me, nav }) {
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({ username: '', password: '', is_admin: false });
   const load = async () => { try { setUsers(await api.get('/api/users')); } catch {} };
@@ -1062,11 +1062,14 @@ export function Admin({ me }) {
       </div>
       <div className="admin-list">
         {users.map(u => (
-          <div key={u.id} className="admin-row">
+          <div key={u.id} className="admin-row clickable"
+            onClick={() => nav(u.id === me.id ? { view: 'profile' } : { view: 'user', id: u.id })}
+            title="View profile">
             <Icon name="user" size={18} />
             <span className="admin-name">{u.username}</span>
             {!!u.is_admin && <span className="badge accent">Admin</span>}
-            {u.id !== me.id && <button className="icon-btn" onClick={() => del(u.id)}><Icon name="trash" size={16} /></button>}
+            <span style={{ flex: 1 }} />
+            {u.id !== me.id && <button className="icon-btn" onClick={(e) => { e.stopPropagation(); del(u.id); }}><Icon name="trash" size={16} /></button>}
           </div>
         ))}
       </div>
