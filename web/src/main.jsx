@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, fmtTime, PlayerProvider, usePlayer, EQ_LABELS, EQ_PRESETS } from './store.jsx';
+import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
 import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile } from './views.jsx';
 import './styles.css';
@@ -392,16 +392,18 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <Sidebar route={route} nav={nav} me={me} onLogout={logout} />
-      <main className="main">
-        <div className="topbar">
-          <button className="round-btn" onClick={back} disabled={!depth} title="Back">‹</button>
-        </div>
-        <div className="main-scroll" key={route.view + (route.id || '')}>{page}</div>
-      </main>
-      <PlayerBar />
-    </div>
+    <MeContext.Provider value={me}>
+      <div className="app">
+        <Sidebar route={route} nav={nav} me={me} onLogout={logout} />
+        <main className="main">
+          <div className="topbar">
+            <button className="round-btn" onClick={back} disabled={!depth} title="Back">‹</button>
+          </div>
+          <div className="main-scroll" key={route.view + (route.id || '')}>{page}</div>
+        </main>
+        <PlayerBar />
+      </div>
+    </MeContext.Provider>
   );
 }
 

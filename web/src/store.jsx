@@ -28,6 +28,11 @@ export function fmtTime(sec) {
 const PlayerCtx = createContext(null);
 export const usePlayer = () => useContext(PlayerCtx);
 
+// Current signed-in user (id, username, is_admin), so any component (e.g. a
+// track row) can adapt to permissions without prop-drilling.
+export const MeContext = createContext(null);
+export const useMe = () => useContext(MeContext);
+
 // Functional graphic EQ (Web Audio BiquadFilters). Shelf at the ends, peaking
 // in between. Gains in dB, clamped to ±12 in the UI.
 export const EQ_BANDS = [60, 170, 350, 1000, 3500, 10000];
