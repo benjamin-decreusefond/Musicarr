@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testSlskd } from './sources.js';
-import { queueDownload, deleteTrackFile } from './downloader.js';
+import { queueDownload, deleteTrackFile, cleanupStaleTracks } from './downloader.js';
 import { createCache } from './cache.js';
 import { logger } from './log.js';
 
@@ -25,6 +25,8 @@ function currentSettings() {
     slskd_api_key: config.slskdApiKey,
     slskd_download_dir: config.slskdDownloadDir,
     slskd_enabled: config.slskdEnabled,
+    cleanup_enabled: config.autoCleanupEnabled,
+    cleanup_after_days: config.cleanupAfterDays,
   };
 }
 
@@ -74,10 +76,28 @@ api.put('/settings', requireAdmin, (req, res) => {
       }
       setSetting('slskd_download_dir', dir);
     }
+
+    // --- Auto-cleanup (library maintenance) ---
+    if (has('cleanup_enabled')) setSetting('cleanup_enabled', b.cleanup_enabled ? '1' : '0');
+    if (has('cleanup_after_days')) {
+      const n = parseInt(b.cleanup_after_days, 10);
+      if (Number.isNaN(n) || n < 0) throw new Error('Cleanup period must be 0 or more days');
+      setSetting('cleanup_after_days', String(n));
+    }
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }
   res.json(currentSettings());
+});
+
+// Run the stale-track cleanup immediately (admin), returning how many were removed.
+api.post('/settings/cleanup-now', requireAdmin, async (req, res) => {
+  try {
+    const removed = await cleanupStaleTracks();
+    res.json({ ok: true, removed });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 // Test a connection with the values being entered (before saving them).

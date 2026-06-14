@@ -814,15 +814,27 @@ export function Settings() {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(null);
   const [tested, setTested] = useState({});
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanMsg, setCleanMsg] = useState(null);
   useEffect(() => {
     api.get('/api/settings').then(setS).catch(e => setMsg({ err: true, text: e.message }));
   }, []);
   const set = (k, v) => setS(prev => ({ ...prev, [k]: v }));
+  const runCleanup = async () => {
+    setCleaning(true); setCleanMsg(null);
+    try {
+      const r = await api.post('/api/settings/cleanup-now');
+      setCleanMsg({ err: false, text: `Removed ${r.removed} track(s).` });
+    } catch (e) { setCleanMsg({ err: true, text: e.message }); }
+    setCleaning(false);
+  };
 
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
       const payload = Object.fromEntries(SETTING_FIELDS.map(k => [k, s[k] ?? '']));
+      payload.cleanup_enabled = !!s.cleanup_enabled;
+      payload.cleanup_after_days = parseInt(s.cleanup_after_days, 10) || 0;
       const next = await api.put('/api/settings', payload);
       setS(next);
       setMsg({ err: false, text: 'Settings saved. Changes apply immediately — no restart needed.' });
@@ -885,6 +897,26 @@ export function Settings() {
             {testing === 'slskd' ? 'Testing…' : 'Test connection'}
           </button>
           <TestResult section="slskd" />
+        </div>
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Library maintenance</h2>
+        <p className="settings-hint">
+          Automatically free up disk space by deleting tracks you haven't played in a while.
+          Liked songs and tracks in any playlist are always kept. Off by default.
+        </p>
+        <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input type="checkbox" checked={!!s.cleanup_enabled} onChange={e => set('cleanup_enabled', e.target.checked)} />
+          <span className="settings-label" style={{ margin: 0 }}>Automatically remove unplayed tracks</span>
+        </label>
+        <Field label="Remove after (days without a play)" type="number"
+          hint="e.g. 30. A track never played is aged from when it was added. Set 0 to disable."
+          value={s.cleanup_after_days ?? 0} onChange={v => set('cleanup_after_days', v)} />
+        <div className="settings-actions">
+          <button className="btn-ghost" disabled={cleaning || !s.cleanup_enabled || !(parseInt(s.cleanup_after_days, 10) > 0)}
+            onClick={runCleanup}>{cleaning ? 'Cleaning…' : 'Run cleanup now'}</button>
+          {cleanMsg && <span className={`settings-msg ${cleanMsg.err ? 'err' : 'ok'}`}>{cleanMsg.text}</span>}
         </div>
       </section>
 
