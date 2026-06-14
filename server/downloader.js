@@ -340,6 +340,8 @@ async function tick() {
       const n = await importDownload(dl);
       setStatus(dl.id, 'done', n > 1 ? `Imported ${n} tracks to your library` : 'Added to your library', { progress: 1 });
     } catch (e) {
+      // A failed verification (wrong file) should try the next peer, not just error out.
+      if (e?.failover) { await handleTransferFailure(dl, String(e.message || e)); continue; }
       setStatus(dl.id, 'error', String(e.message || e));
     }
     pendingImports.delete(dl.id);
@@ -414,8 +416,17 @@ function cleanForSearch(s) {
  *  the bare title — peers often don't name the artist in the folder. */
 function searchVariants(artist, title) {
   const withArtist = t => (normTitle(t).includes(normTitle(artist)) || !artist) ? t : `${artist} ${t}`;
+  const deAccent = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
   const ct = cleanForSearch(title);
-  const out = [withArtist(title), withArtist(ct), title, ct];
+  const out = [
+    withArtist(title), withArtist(ct),
+    deAccent(withArtist(ct)),                 // accent-insensitive ("Morphée" -> "Morphee")
+    title, ct, deAccent(ct),
+    // Last resort: scan the artist's shared files and let scoring + the
+    // post-download duration check find the right take. Catches odd spellings
+    // like "High Way" vs "Highway" that strict title terms miss.
+    artist,
+  ];
   return [...new Set(out.map(s => s.trim()).filter(Boolean))];
 }
 
@@ -478,18 +489,43 @@ async function importDownload(dl) {
   for (const f of files) {
     const base = path.basename(f);
     let title = path.basename(f, path.extname(f));
-    let trackNo = null;
+    let trackNo = null, duration = null;
     try {
-      const mm = await parseFile(f, { duration: false });
+      const mm = await parseFile(f, { duration: true });
       title = mm.common.title || title;
       trackNo = mm.common.track?.no ?? null;
+      duration = mm.format?.duration ?? null;          // actual audio length, in seconds
     } catch { /* fall back to filename */ }
     if (trackNo == null) trackNo = fileTrackNo(base);
-    fileInfos.push({ path: f, title, trackNo, base });
+    fileInfos.push({ path: f, title, trackNo, base, duration });
   }
 
   const wanted = plan?.wantedTracks || [];
   let imported = 0;
+
+  // Duration is the most reliable proof that a file is the RIGHT recording: a
+  // wrong, edited, live or remixed take almost always differs in length. We
+  // reject files whose actual duration contradicts Deezer's, and otherwise
+  // prefer the closest match. (null = can't judge, e.g. unknown duration.)
+  const durTol = w => Math.max(7, (w || 0) * 0.05);
+  const durVerdict = (want, fi) => {
+    if (!want.duration || !fi.duration) return null;
+    return Math.abs(fi.duration - want.duration) <= durTol(want.duration);
+  };
+  const pickMatch = (want) => {
+    const cands = fileInfos.filter(fi => !fi.used && (
+      (want.track_position && fi.trackNo === want.track_position) || titleMatches(fi, want.title)));
+    const ranked = cands
+      .map(fi => ({ fi, v: durVerdict(want, fi) }))
+      .filter(x => x.v !== false)                       // drop clear duration mismatches
+      .sort((a, b) => {
+        if ((a.v === true) !== (b.v === true)) return a.v === true ? -1 : 1; // confirmed first
+        const da = (a.fi.duration && want.duration) ? Math.abs(a.fi.duration - want.duration) : 1e9;
+        const db2 = (b.fi.duration && want.duration) ? Math.abs(b.fi.duration - want.duration) : 1e9;
+        return da - db2;                                // then closest length
+      });
+    return ranked[0]?.fi || null;
+  };
 
   // Link one downloaded file into the library for a wanted track.
   const linkInto = (want, fi) => {
@@ -527,15 +563,14 @@ async function importDownload(dl) {
     const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id);
     if (have?.file_path && fs.existsSync(have.file_path)) { imported++; continue; }
 
-    // Match a downloaded file to this wanted track: prefer track number (tag or
-    // filename), then bidirectional title matching.
-    let match = null;
-    if (want.track_position) match = fileInfos.find(fi => !fi.used && fi.trackNo === want.track_position);
-    if (!match) match = fileInfos.find(fi => !fi.used && titleMatches(fi, want.title));
-    // A single-file download: assume it's the song the user asked for, even
-    // when tag/filename matching failed.
+    // Match a downloaded file to this wanted track by track number / title,
+    // gated and ranked by actual duration.
+    let match = pickMatch(want);
+    // A single-file download: assume it's the song the user asked for even when
+    // tag/filename matching failed — but only if the duration doesn't contradict it.
     if (!match && fileInfos.length === 1 && !fileInfos[0].used
-        && (wanted.length === 1 || want.deezer_id === plan?.requiredId)) {
+        && (wanted.length === 1 || want.deezer_id === plan?.requiredId)
+        && durVerdict(want, fileInfos[0]) !== false) {
       match = fileInfos[0];
     }
     if (!match) { unmatched.push(want); continue; }
@@ -551,7 +586,10 @@ async function importDownload(dl) {
     const need = [...unmatched].sort((a, b) => (a.track_position ?? 1e9) - (b.track_position ?? 1e9));
     if (freeFiles.length && Math.abs(freeFiles.length - need.length) <= 1) {
       log.info(`#${dl.id} positional fallback: assigning ${Math.min(freeFiles.length, need.length)} leftover file(s) by track order`);
-      for (let i = 0; i < need.length && i < freeFiles.length; i++) linkInto(need[i], freeFiles[i]);
+      for (let i = 0; i < need.length && i < freeFiles.length; i++) {
+        if (durVerdict(need[i], freeFiles[i]) === false) continue; // never mislabel by length
+        linkInto(need[i], freeFiles[i]);
+      }
     }
   }
 
@@ -562,14 +600,18 @@ async function importDownload(dl) {
   }
 
   if (imported === 0) {
-    throw new Error(`Downloaded ${fileInfos.length} file(s) but none matched the ${wanted.length} requested track(s)`);
+    throw Object.assign(
+      new Error(`Downloaded ${fileInfos.length} file(s) but none matched/verified against the ${wanted.length} requested track(s)`),
+      { failover: true });
   }
   // For a track download, the download only counts as done if the song the
-  // user asked for actually made it in.
+  // user asked for actually made it in (right title AND right duration).
   if (plan?.requiredId) {
     const got = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(plan.requiredId);
     if (!got?.file_path || !fs.existsSync(got.file_path)) {
-      throw new Error(`Imported ${imported} other track(s), but the requested song was not among them`);
+      throw Object.assign(
+        new Error(`The downloaded file didn't match the requested song (wrong title or duration) — trying another source`),
+        { failover: true });
     }
   }
   log.info(`#${dl.id} import complete: ${imported}/${wanted.length} track(s)`);

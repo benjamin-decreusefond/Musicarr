@@ -254,8 +254,11 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
     score += Math.min(10, (f.uploadSpeed || 0) / 100000);
     if (durClose) score += 10;                                        // duration confirms it
     else if (durKnown && Math.abs(f.length - durationSec) > 15) score -= 15;
-    // Prefer the studio recording unless the user explicitly wanted a live one.
-    if (!/\blive\b/.test(norm(title)) && /\b(live|bootleg|concert)\b/.test(pathHay)) score -= 12;
+    // Prefer the canonical studio recording: penalize live/remix/etc. unless the
+    // requested title itself asks for that variant.
+    const wantNorm = norm(title);
+    const bad = pathHay.match(/\b(live|bootleg|concert|remix|instrumental|karaoke|acoustic|nightcore|sped|slowed)\b/);
+    if (bad && !wantNorm.includes(bad[1])) score -= 12;
     scored.push({ file: f, score });
   }
   scored.sort((a, b) => b.score - a.score);
