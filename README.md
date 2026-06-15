@@ -161,6 +161,10 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
 | `SWEEP_INTERVAL_MS` | `600000` | How often completed-but-unimported downloads are retried |
 | `SLSKD_STALL_MS` | `900000` | A transfer with no progress for this long fails over to the next candidate |
+| `BACKUP_ENABLED` | `true` | Nightly SQLite backups into `$DATA_DIR/backups`. Set `false` to disable |
+| `BACKUP_RETENTION` | `7` | How many daily database backups to keep |
+| `COOKIE_SECURE` | `true` | Mark the session cookie `Secure` and send HSTS. Set `false` for plain-HTTP/LAN |
+| `TRUST_PROXY` | `1` | Proxy hop count for real client IP (login rate limiting) |
 
 ## First login
 
@@ -196,10 +200,36 @@ Every `/api/*` endpoint the UI uses is reachable this way — e.g. `GET
 takes effect immediately. As a safety measure, tokens can't create or revoke
 other tokens — that requires an interactive sign-in.
 
+## Health checks
+
+Three unauthenticated probe endpoints, suitable for Docker/Kubernetes:
+
+- `GET /health` and `GET /health/live` — **liveness**: the process is up. Never
+  touches the DB or slskd, so a slow dependency can't trigger a restart loop.
+- `GET /health/ready` — **readiness**: returns `200` only when SQLite is
+  reachable (and reports whether slskd is configured); `503` otherwise.
+- `GET /healthz` — legacy alias of the liveness check.
+
+## Backups
+
+The database (users, playlists, favorites, listening history, API tokens) is the
+only non-reproducible state — audio files can be re-downloaded. Musicarr writes a
+nightly online backup to `$DATA_DIR/backups/musicarr-YYYY-MM-DD.db` using
+SQLite's safe live-backup, keeping the most recent `BACKUP_RETENTION` (default 7).
+Disable with `BACKUP_ENABLED=false`.
+
 ## Ports
 
 - **8686** — HTTP (UI + API + audio streaming). Put it behind your own
   ingress/TLS.
+
+## Running as non-root
+
+The runtime image runs as the unprivileged `node` user (uid/gid **1000**). When
+the data, music, and slskd-downloads paths are mounted volumes, make them
+writable by that uid/gid — e.g. a one-time `chown -R 1000:1000` of existing data,
+and on Kubernetes a pod `securityContext` with `fsGroup: 1000` (plus
+`runAsNonRoot: true`, `runAsUser: 1000`).
 
 ## Notes & limits
 

@@ -234,6 +234,11 @@ if (!dlCols.includes('attempts')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN failed_candidates TEXT`);
 }
 
+/** Cheap readiness check that the SQLite handle is open and responsive. Throws on failure. */
+export function pingDb() {
+  db.prepare('SELECT 1').get();
+}
+
 export function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 }

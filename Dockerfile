@@ -30,6 +30,15 @@ ENV PORT=8686 \
     MUSIC_DIR=/music \
     SLSKD_DOWNLOAD_DIR=/slskd-downloads
 
+# Run as the unprivileged `node` user (uid/gid 1000) baked into the base image
+# instead of root. The default data locations are created and chowned so a fresh
+# container can write to them; when these paths are backed by mounted volumes or
+# PVCs, the host must make them writable by uid/gid 1000 (e.g. a pod
+# securityContext with fsGroup: 1000, and a one-time chown of existing data).
+RUN mkdir -p /data /music /slskd-downloads \
+    && chown -R node:node /data /music /slskd-downloads /app
+USER node
+
 VOLUME ["/data", "/music", "/slskd-downloads"]
 EXPOSE 8686
 
