@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "kubernetes": {
+      "type": "sse",
+      "url": "https://mcp-k8s.bigbossben.ovh/sse",
+      "headers": {
+        "Authorization": "Basic ${MCP_K8S_AUTH}"
+      }
+    }
+  }
+}
