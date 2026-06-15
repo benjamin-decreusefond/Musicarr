@@ -845,6 +845,101 @@ export function Downloads({ nav }) {
   );
 }
 
+/* ------------------------------------------------------ API access tokens */
+function ApiTokens() {
+  const [tokens, setTokens] = useState(null);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [created, setCreated] = useState(null); // freshly minted token, shown once
+  const [copied, setCopied] = useState(false);
+  const load = useCallback(() => api.get('/api/auth/tokens').then(setTokens).catch(() => setTokens([])), []);
+  useEffect(() => { load(); }, [load]);
+
+  const create = async (e) => {
+    e.preventDefault();
+    setBusy(true); setMsg(null); setCreated(null); setCopied(false);
+    try {
+      const t = await api.post('/api/auth/tokens', { name: name.trim() });
+      setCreated(t);
+      setName('');
+      load();
+    } catch (e) { setMsg({ err: true, text: e.message }); }
+    setBusy(false);
+  };
+
+  const revoke = async (id) => {
+    if (!window.confirm('Revoke this token? Any service using it will immediately lose access.')) return;
+    try { await api.del(`/api/auth/tokens/${id}`); load(); }
+    catch (e) { setMsg({ err: true, text: e.message }); }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(created.token); setCopied(true); }
+    catch { /* clipboard may be unavailable on http; the field is selectable */ }
+  };
+
+  return (
+    <section className="page-block settings-section">
+      <h2 className="row-title">API access tokens</h2>
+      <p className="settings-hint">
+        Personal access tokens let external tools (scripts, automations, Claude Code) call the
+        Musicarr API on your behalf. Send the token as an <code>Authorization: Bearer &lt;token&gt;</code>
+        header (or <code>X-Api-Key: &lt;token&gt;</code>). A token has the same permissions as your
+        account and is shown only once — store it somewhere safe.
+      </p>
+
+      <form className="profile-form token-create" onSubmit={create}>
+        <input className="settings-input" placeholder="Token name (e.g. Claude Code)" maxLength={80}
+          value={name} onChange={e => setName(e.target.value)} />
+        <button className="btn-primary" disabled={busy || !name.trim()}>{busy ? 'Creating…' : 'Create token'}</button>
+      </form>
+      {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+
+      {created && (
+        <div className="token-reveal">
+          <div className="settings-fieldhint">Copy your new token now — you won't be able to see it again.</div>
+          <div className="token-reveal-row">
+            <input className="settings-input mono" readOnly value={created.token} onFocus={e => e.target.select()} />
+            <button type="button" className="btn-ghost" onClick={copy}>
+              <Icon name="copy" size={16} /> {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="token-list">
+        {tokens == null ? <div className="state faint">Loading…</div>
+          : tokens.length === 0 ? <div className="state faint">No tokens yet.</div>
+          : tokens.map(t => (
+            <div key={t.id} className="token-row">
+              <div className="token-meta">
+                <Icon name="key" size={16} />
+                <span className="token-name">{t.name}</span>
+                <span className="token-prefix mono">{t.token_prefix}…</span>
+              </div>
+              <div className="token-sub">
+                <span className="settings-fieldhint">
+                  Created {fmtDate(t.created_at)} · {t.last_used_at ? `last used ${fmtDate(t.last_used_at)}` : 'never used'}
+                </span>
+                <button className="icon-btn" title="Revoke token" onClick={() => revoke(t.id)}>
+                  <Icon name="trash" size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+      </div>
+    </section>
+  );
+}
+
+function fmtDate(s) {
+  if (!s) return '';
+  // SQLite datetimes are UTC ("YYYY-MM-DD HH:MM:SS"); render in local time.
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString();
+}
+
 /* -------------------------------------------------------------- Profile */
 export function Profile({ me, nav }) {
   const [cur, setCur] = useState('');
@@ -894,6 +989,7 @@ export function Profile({ me, nav }) {
         </form>
         {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
       </section>
+      <ApiTokens />
       <section className="page-block settings-section">
         <h2 className="row-title">Friends</h2>
         <p className="settings-hint">People you follow on this server. Find more from the Search tab.</p>

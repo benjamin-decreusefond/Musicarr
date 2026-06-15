@@ -169,6 +169,33 @@ On first boot an admin account is created from `ADMIN_USERNAME` /
 accounts. Each user gets their own playlists and liked songs but shares the
 downloaded audio library.
 
+## API access tokens
+
+For programmatic access — scripts, automations, or tools like **Claude Code** —
+Musicarr issues **personal access tokens** so external services can call the API
+without a browser session.
+
+Create one under **Profile → API access tokens**. The token is shown **once** at
+creation (store it somewhere safe); only a SHA-256 hash is kept in the database.
+A token carries the **same permissions as the account that created it**, so a
+token owned by an admin can reach admin-only endpoints.
+
+Send it on each request as either header:
+
+```bash
+# Authorization: Bearer
+curl -H "Authorization: Bearer mcr_xxxx…" http://localhost:8686/api/library
+
+# or X-Api-Key
+curl -H "X-Api-Key: mcr_xxxx…" http://localhost:8686/api/library
+```
+
+Every `/api/*` endpoint the UI uses is reachable this way — e.g. `GET
+/api/search?q=…`, `POST /api/download`, `GET /api/downloads`, `GET
+/api/playlists`. Revoke a token at any time from the same screen; revocation
+takes effect immediately. As a safety measure, tokens can't create or revoke
+other tokens — that requires an interactive sign-in.
+
 ## Ports
 
 - **8686** — HTTP (UI + API + audio streaming). Put it behind your own
@@ -176,8 +203,9 @@ downloaded audio library.
 
 ## Notes & limits
 
-- Authentication is cookie-session based (HttpOnly, SameSite=Lax). Serve over
-  HTTPS in production.
+- Authentication is cookie-session based (HttpOnly, SameSite=Lax) for the UI,
+  with personal access tokens for programmatic API access (see **API access
+  tokens**). Serve over HTTPS in production.
 - Deezer is used purely for metadata and discovery; no audio comes from Deezer.
 - Streaming reads files directly from `/music` with range requests, so seeking
   works in the browser for FLAC/MP3/M4A/OGG/Opus/WAV/AAC.

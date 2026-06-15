@@ -371,6 +371,22 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .profile-name { font-size: 18px; font-weight: 600; }
 .profile-form { display: flex; flex-direction: column; gap: 12px; max-width: 360px; }
 
+/* ===================== API access tokens ===================== */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.token-create { flex-direction: row; align-items: center; max-width: 520px; }
+.token-create .settings-input { flex: 1; }
+.token-create .btn-primary { white-space: nowrap; }
+.token-reveal { margin-top: 12px; padding: 14px; border: 1px solid var(--accent); border-radius: 10px; background: var(--bg-elev-2); display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
+.token-reveal-row { display: flex; gap: 8px; align-items: center; }
+.token-reveal-row .settings-input { flex: 1; }
+.token-reveal-row .btn-ghost { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.token-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
+.token-row { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-elev-2); display: flex; flex-direction: column; gap: 4px; }
+.token-meta { display: flex; align-items: center; gap: 10px; color: var(--text); }
+.token-name { font-weight: 600; }
+.token-prefix { color: var(--text-dim); }
+.token-sub { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
 /* ============================ Login ============================ */
 .login { height: 100vh; display: grid; place-items: center; background: radial-gradient(ellipse at top, #1a1d2b 0%, var(--bg) 60%); color: var(--text-dim); }
 .login-card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 18px; padding: 40px; width: 360px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.5); }

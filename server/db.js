@@ -88,6 +88,19 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT
 );
 
+-- Personal access tokens for programmatic API use (e.g. Claude Code, scripts).
+-- We store only a SHA-256 hash of the token; the plaintext is shown once at
+-- creation. A token inherits the permissions of the user who owns it.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT
+);
+
 -- Per-user listening history: powers "recently played", "your top tracks",
 -- and seeds personalized recommendations ("you might like").
 CREATE TABLE IF NOT EXISTS plays (
@@ -170,6 +183,7 @@ CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
 CREATE INDEX IF NOT EXISTS idx_plays_user ON plays(user_id, played_at);
 CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 `);
 
 // Migration: force a password change for the seeded default-credential admin,
