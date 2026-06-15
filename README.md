@@ -163,6 +163,9 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `SLSKD_STALL_MS` | `900000` | A transfer with no progress for this long fails over to the next candidate |
 | `BACKUP_ENABLED` | `true` | Nightly SQLite backups into `$DATA_DIR/backups`. Set `false` to disable |
 | `BACKUP_RETENTION` | `7` | How many daily database backups to keep |
+| `RELEASE_WATCH_ENABLED` | `true` | Auto-download new releases from followed artists. `false` to disable |
+| `RELEASE_CHECK_INTERVAL_MS` | `21600000` | How often (ms) to check followed artists for new releases (default 6h) |
+| `RELEASE_TYPES` | `album,ep,single` | Which Deezer record types to auto-download (`compilation` excluded by default) |
 | `COOKIE_SECURE` | `true` | Mark the session cookie `Secure` and send HSTS. Set `false` for plain-HTTP/LAN |
 | `TRUST_PROXY` | `1` | Proxy hop count for real client IP (login rate limiting) |
 
@@ -199,6 +202,20 @@ Every `/api/*` endpoint the UI uses is reachable this way — e.g. `GET
 /api/playlists`. Revoke a token at any time from the same screen; revocation
 takes effect immediately. As a safety measure, tokens can't create or revoke
 other tokens — that requires an interactive sign-in.
+
+## Following artists (auto-download new releases)
+
+Open any artist and hit **Follow** to have Musicarr keep that artist current,
+Lidarr-style: a background watcher checks Deezer for new releases and queues each
+one through the normal Soulseek pipeline. Followed artists are listed under
+**Following** in the sidebar, where you can unfollow.
+
+The watcher only grabs releases that appear *after* you follow — when the first
+user follows an artist, their existing back-catalog is recorded as "already
+seen" so following doesn't trigger a flood of old-album downloads. Following is
+per-user, but because the audio library is shared, each new release is downloaded
+once for everyone. Tune it with `RELEASE_WATCH_ENABLED`,
+`RELEASE_CHECK_INTERVAL_MS`, and `RELEASE_TYPES` (see the table below).
 
 ## Health checks
 

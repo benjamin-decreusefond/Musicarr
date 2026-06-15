@@ -5,6 +5,7 @@ import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } f
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testSlskd } from './sources.js';
 import { queueDownload, deleteTrackFile, cleanupStaleTracks } from './downloader.js';
+import { seedSeenAlbums } from './releases.js';
 import { createCache } from './cache.js';
 import { logger } from './log.js';
 
@@ -209,8 +210,11 @@ api.get('/artist/:id', async (req, res) => {
     ]);
     const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
+    const following = !!db.prepare('SELECT 1 FROM followed_artists WHERE user_id = ? AND artist_id = ?')
+      .get(req.user.id, id);
     res.json({
       artist: { id: artist.id, name: artist.name, picture: artist.picture_xl || artist.picture_big, nb_fan: artist.nb_fan },
+      following,
       top: (top.data || []).map(t => ({
         id: t.id, title: t.title, artist: artist.name, artist_id: artist.id,
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium, duration: t.duration,
@@ -226,6 +230,42 @@ api.get('/artist/:id', async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
+});
+
+/* ----------------------------------------------- Followed artists (new releases) */
+// Follow an artist to have new releases auto-downloaded. Listing/unfollowing is
+// per-user; the actual release watcher runs server-wide (see releases.js).
+api.get('/following', (req, res) => {
+  res.json(db.prepare(`
+    SELECT artist_id AS id, artist_name AS name, artist_picture AS picture, created_at
+    FROM followed_artists WHERE user_id = ? ORDER BY artist_name COLLATE NOCASE
+  `).all(req.user.id));
+});
+
+api.put('/following/:artistId', async (req, res) => {
+  const id = parseInt(req.params.artistId, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid artist id' });
+  try {
+    const a = await deezerGet(`artist/${id}`);
+    if (!a?.name) return res.status(404).json({ error: 'Unknown artist' });
+    const picture = a.picture_medium || a.picture_big || null;
+    // Seed the existing back-catalog as "seen" the first time *anyone* follows
+    // this artist, so we only auto-grab releases that appear from now on.
+    const firstFollower = !db.prepare('SELECT 1 FROM followed_artists WHERE artist_id = ? LIMIT 1').get(id);
+    db.prepare(`INSERT OR IGNORE INTO followed_artists (user_id, artist_id, artist_name, artist_picture) VALUES (?, ?, ?, ?)`)
+      .run(req.user.id, id, a.name, picture);
+    if (firstFollower) await seedSeenAlbums(id);
+    res.json({ following: true });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+api.delete('/following/:artistId', (req, res) => {
+  const id = parseInt(req.params.artistId, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid artist id' });
+  db.prepare('DELETE FROM followed_artists WHERE user_id = ? AND artist_id = ?').run(req.user.id, id);
+  res.json({ following: false });
 });
 
 api.get('/album/:id', async (req, res) => {

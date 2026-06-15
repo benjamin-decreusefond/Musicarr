@@ -251,6 +251,27 @@ export function Search({ nav }) {
 }
 
 /* --------------------------------------------------------------- Artist */
+// Follow an artist so new releases are auto-downloaded (server-wide watcher).
+function ArtistFollowButton({ artistId, initial }) {
+  const [following, setFollowing] = useState(!!initial);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setFollowing(!!initial), [initial, artistId]);
+  const toggle = async () => {
+    const nv = !following; setFollowing(nv); setBusy(true);
+    try {
+      if (nv) await api.put(`/api/following/${artistId}`);
+      else await api.del(`/api/following/${artistId}`);
+    } catch (e) { setFollowing(!nv); alert(e.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <button className={`btn-ghost ${following ? 'on' : ''}`} onClick={toggle} disabled={busy}
+      title="Auto-download this artist's new releases">
+      <Icon name={following ? 'check' : 'plus'} size={18} /> {following ? 'Following' : 'Follow'}
+    </button>
+  );
+}
+
 export function Artist({ id, nav }) {
   const { data, err, loading } = useAsync(() => api.get(`/api/artist/${id}`), [id]);
   const player = usePlayer();
@@ -277,6 +298,7 @@ export function Artist({ id, nav }) {
             }}>
               <Icon name="radio" size={18} /> Start radio
             </button>
+            <ArtistFollowButton artistId={artist.id} initial={data.following} />
           </div>
         </div>
       </header>
@@ -508,6 +530,45 @@ export function Favorites({ nav }) {
         {tracks.length
           ? <TrackTable tracks={tracks} nav={nav} />
           : <div className="state faint">Tap the heart on any track to save it here.</div>}
+      </section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Following */
+// Artists the user follows. New releases from these artists are auto-downloaded
+// by the server-side release watcher.
+export function Following({ nav }) {
+  const { data, err, loading } = useAsync(() => api.get('/api/following'), []);
+  const [artists, setArtists] = useState(null);
+  useEffect(() => { if (data) setArtists(data); }, [data]);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const list = artists || [];
+  const unfollow = async (id) => {
+    setArtists(list.filter(a => a.id !== id));
+    try { await api.del(`/api/following/${id}`); } catch (e) { alert(e.message); setArtists(list); }
+  };
+  return (
+    <div className="page">
+      <header className="hero">
+        <div className="fav-art"><Icon name="user" size={72} fill="var(--accent-ink)" /></div>
+        <div className="hero-meta">
+          <span className="hero-kind">Library</span>
+          <h1 className="hero-title">Following</h1>
+          <span className="hero-sub faint">
+            {list.length} artist{list.length === 1 ? '' : 's'} · new releases download automatically
+          </span>
+        </div>
+      </header>
+      <section className="page-block">
+        {list.length
+          ? <div className="card-grid">{list.map(a => (
+              <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Following"
+                onClick={() => nav({ view: 'artist', id: a.id })}
+                actions={<button className="btn-ghost sm" onClick={(e) => { e.stopPropagation(); unfollow(a.id); }}>Unfollow</button>} />
+            ))}</div>
+          : <div className="state faint">Open an artist and tap <strong>Follow</strong> to auto-download their new releases.</div>}
       </section>
     </div>
   );
