@@ -1,0 +1,52 @@
+name: Claude on new issue
+
+# Automatically put Claude to work whenever an issue is opened.
+# Claude triages the issue, posts a comment with its analysis and a plan,
+# and labels it. To have Claude implement the fix and open a PR instead,
+# see the alternate prompt at the bottom of this file.
+on:
+  issues:
+    types: [opened]
+
+# Avoid stacking runs if several issues are opened in quick succession.
+concurrency:
+  group: claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            A new GitHub issue (#${{ github.event.issue.number }}) was just opened
+            in ${{ github.repository }}.
+
+            Title: ${{ github.event.issue.title }}
+
+            Read the issue (use the GitHub tools / `gh` to fetch the full body and
+            any context you need), then:
+              1. Determine whether it is a bug report, feature request, question,
+                 or needs more information.
+              2. Investigate the relevant code in this repository.
+              3. Post a single comment on the issue with: a short summary of the
+                 problem as you understand it, your assessment, and a concrete
+                 step-by-step plan to address it (or the questions you need
+                 answered if the report is incomplete).
+              4. Apply appropriate labels if any obviously fit.
+            Do NOT make code changes or open a pull request in this run — only
+            triage and respond.
+          claude_args: |
+            --max-turns 15
