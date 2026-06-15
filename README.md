@@ -203,6 +203,19 @@ Every `/api/*` endpoint the UI uses is reachable this way — e.g. `GET
 takes effect immediately. As a safety measure, tokens can't create or revoke
 other tokens — that requires an interactive sign-in.
 
+## Shared playlists
+
+Playlists are private by default, but the owner can **share** one with other users
+on the server. Open a playlist you own, hit **Share**, and search for a user:
+
+- **Share** — read-only: the playlist appears in their library and they can play it.
+- **Share & allow edits** — collaborative: they can also add and remove tracks.
+
+Shared playlists show up in the recipient's sidebar labelled with the owner's name.
+Recipients can "remove" a shared playlist to drop it from their own library without
+affecting the original. Only the owner can manage who it's shared with or delete it
+outright.
+
 ## Following artists (auto-download new releases)
 
 Open any artist and hit **Follow** to have Musicarr keep that artist current,

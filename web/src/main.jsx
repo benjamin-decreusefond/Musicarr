@@ -291,7 +291,7 @@ function Sidebar({ route, nav, me, onLogout }) {
             <Cover src={pl.cover} size={40} />
             <div className="pl-link-meta">
               <div className="pl-link-name">{pl.name}</div>
-              <div className="pl-link-sub">{pl.count} tracks</div>
+              <div className="pl-link-sub">{pl.shared ? `Shared by ${pl.owner_name}` : `${pl.count} tracks`}</div>
             </div>
           </button>
         ))}

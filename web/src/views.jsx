@@ -575,11 +575,72 @@ export function Following({ nav }) {
 }
 
 /* ------------------------------------------------------------- Playlist */
+// Owner-only panel to share a playlist with other users (view or collaborate).
+function SharePanel({ playlistId, initialShares }) {
+  const [shares, setShares] = useState(initialShares || []);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+  useEffect(() => {
+    let live = true;
+    const t = setTimeout(async () => {
+      try { const r = await api.get(`/api/social/users?q=${encodeURIComponent(q)}`); if (live) setResults(r || []); }
+      catch { if (live) setResults([]); }
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
+  const sharedIds = new Set(shares.map(s => s.user_id));
+  const save = async (userId, username, canEdit) => {
+    try {
+      await api.post(`/api/playlists/${playlistId}/shares`, { user_id: userId, can_edit: canEdit });
+      setShares(prev => [...prev.filter(s => s.user_id !== userId), { user_id: userId, username, can_edit: canEdit ? 1 : 0 }]);
+    } catch (e) { alert(e.message); }
+  };
+  const removeShare = async (userId) => {
+    try { await api.del(`/api/playlists/${playlistId}/shares/${userId}`); setShares(prev => prev.filter(s => s.user_id !== userId)); }
+    catch (e) { alert(e.message); }
+  };
+  const candidates = results.filter(u => !sharedIds.has(u.id));
+  return (
+    <section className="page-block share-panel">
+      <h2 className="row-title">Share with people</h2>
+      {!!shares.length && (
+        <div className="share-list">
+          {shares.map(s => (
+            <div className="share-row" key={s.user_id}>
+              <span className="share-name">{s.username}</span>
+              <label className="share-edit">
+                <input type="checkbox" checked={!!s.can_edit}
+                  onChange={e => save(s.user_id, s.username, e.target.checked)} /> Can edit
+              </label>
+              <button className="btn-ghost sm" onClick={() => removeShare(s.user_id)}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <input className="share-search" placeholder="Search users to share with…" value={q}
+        onChange={e => setQ(e.target.value)} />
+      <div className="share-results">
+        {candidates.map(u => (
+          <div className="share-row" key={u.id}>
+            <span className="share-name">{u.username}</span>
+            <button className="btn-ghost sm" onClick={() => save(u.id, u.username, false)}>Share</button>
+            <button className="btn-ghost sm" onClick={() => save(u.id, u.username, true)}>Share &amp; allow edits</button>
+          </div>
+        ))}
+        {q && !candidates.length && <div className="state faint">No matching users.</div>}
+      </div>
+    </section>
+  );
+}
+
 export function Playlist({ id, nav }) {
   const { data, err, loading, setData } = useAsync(() => api.get(`/api/playlists/${id}`), [id]);
   const player = usePlayer();
+  const [showShare, setShowShare] = useState(false);
+  useEffect(() => setShowShare(false), [id]);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
+  const canEdit = !!data.can_edit;
   const tracks = (data.tracks || []).map(t => ({ ...t, available: !!t.file_path }));
   const playable = tracks.filter(t => t.available);
   const remove = async (trackId) => {
@@ -587,14 +648,19 @@ export function Playlist({ id, nav }) {
     setData({ ...data, tracks: data.tracks.filter(t => t.deezer_id !== trackId) });
     window.dispatchEvent(new Event('musicarr:playlists-changed'));
   };
+  const meta = [
+    !data.is_owner && data.owner_name ? `by ${data.owner_name}` : null,
+    `${tracks.length} tracks`,
+    data.role === 'editor' ? 'you can edit' : (!data.is_owner && data.role === 'viewer' ? 'view only' : null),
+  ].filter(Boolean).join(' · ');
   return (
     <div className="page">
       <header className="hero">
         <Cover src={tracks[0]?.cover} size={200} alt={data.name} />
         <div className="hero-meta">
-          <span className="hero-kind">Playlist</span>
+          <span className="hero-kind">{data.shared ? 'Shared playlist' : 'Playlist'}</span>
           <h1 className="hero-title">{data.name}</h1>
-          <span className="hero-sub faint">{tracks.length} tracks</span>
+          <span className="hero-sub faint">{meta}</span>
           <div className="hero-actions">
             <button className="btn-primary" disabled={!playable.length}
               onClick={() => player.playList(playable, 0)}>
@@ -604,12 +670,18 @@ export function Playlist({ id, nav }) {
               onClick={() => player.playList(playable, 0, { shuffle: true })}>
               <Icon name="shuffle" size={18} /> Shuffle
             </button>
+            {data.is_owner && (
+              <button className={`btn-ghost ${showShare ? 'on' : ''}`} onClick={() => setShowShare(v => !v)}>
+                <Icon name="user" size={18} /> Share
+              </button>
+            )}
           </div>
         </div>
       </header>
+      {showShare && data.is_owner && <SharePanel playlistId={id} initialShares={data.shares || []} />}
       <section className="page-block">
         {tracks.length
-          ? <TrackTable tracks={tracks} nav={nav} onRemove={data.is_owner === false ? undefined : remove} />
+          ? <TrackTable tracks={tracks} nav={nav} onRemove={canEdit ? remove : undefined} />
           : <div className="state faint">This playlist is empty.</div>}
       </section>
     </div>
