@@ -22,6 +22,8 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     vol: 'M5 9v6h4l5 4V5L9 9zM17 8a5 5 0 0 1 0 8',
     sliders: 'M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4M14 4v4M6 10v4M12 16v4',
     lock: 'M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5zM12 14v3',
+    key: 'M15.5 7.5a3 3 0 1 1-2.6 4.5L8 17l-2 0 0-2 .5-.5L4 12l2-2 5.9-5.9A3 3 0 0 1 15.5 7.5Z',
+    copy: 'M9 9h10v10H9zM5 15H4V4h11v1',
     shuffle: 'M16 3h5v5M21 3l-7 7M4 20l7-7M4 4l5 5M16 21h5v-5M15 15l6 6',
     queue: 'M4 6h12M4 12h12M4 18h8M17 13v6M17 19a2 2 0 1 0 4 0 2 2 0 0 0-4 0M19 11l3-1',
     grip: 'M9 6h0M9 12h0M9 18h0M15 6h0M15 12h0M15 18h0',

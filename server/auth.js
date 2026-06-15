@@ -8,6 +8,13 @@ const COOKIE = 'musicarr_session';
 // takes the same time whether or not the user exists (no enumeration via timing).
 const DUMMY_HASH = bcrypt.hashSync('musicarr-timing-equalizer', 10);
 
+// Personal access tokens are high-entropy random strings, so a plain SHA-256
+// (fast, but with nothing to brute-force) is the right hash to store — unlike
+// passwords, which need bcrypt's deliberate slowness.
+const TOKEN_PREFIX = 'mcr_';
+const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
+const MAX_TOKENS_PER_USER = 50;
+
 /** Shared password policy for new/changed passwords. Returns an error string or null. */
 export function validatePassword(pw) {
   if (!pw || typeof pw !== 'string') return 'Password is required';
@@ -74,7 +81,31 @@ export function authMiddleware(req, res, next) {
       req.sessionToken = token;
     }
   }
+  // Fall back to a personal access token for programmatic clients. Accept it
+  // either as `Authorization: Bearer <token>` or `X-Api-Key: <token>`.
+  if (!req.user) authWithToken(req);
   next();
+}
+
+function authWithToken(req) {
+  const header = req.headers.authorization || '';
+  const m = /^Bearer\s+(.+)$/i.exec(header);
+  const presented = (m ? m[1] : req.headers['x-api-key'] || '').trim();
+  if (!presented) return;
+  const row = db.prepare(`
+    SELECT u.id, u.username, u.is_admin, u.must_change_password, t.id AS token_id, t.last_used_at
+    FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?
+  `).get(hashToken(presented));
+  if (!row) return;
+  req.user = { id: row.id, username: row.username, is_admin: row.is_admin, must_change_password: row.must_change_password };
+  req.apiToken = true;
+  // Record usage, but throttle the write to at most once a minute per token so
+  // a busy client doesn't generate a DB write on every single request.
+  const minuteAgo = new Date(Date.now() - 60_000).toISOString().slice(0, 19).replace('T', ' ');
+  if (!row.last_used_at || row.last_used_at < minuteAgo) {
+    try { db.prepare(`UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?`).run(row.token_id); }
+    catch { /* best-effort */ }
+  }
 }
 
 export function requireAuth(req, res, next) {
@@ -139,6 +170,47 @@ authRouter.post('/password', requireAuth, (req, res) => {
   db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
     .run(bcrypt.hashSync(next, 10), req.user.id);
   db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, req.sessionToken);
+  res.json({ ok: true });
+});
+
+// --- Personal access tokens (programmatic API access) ---
+// Token creation/revocation requires an interactive session, not a token, so a
+// leaked token can't mint more tokens for itself.
+function requireSession(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Not signed in' });
+  if (req.apiToken) return res.status(403).json({ error: 'API tokens cannot manage other tokens — sign in to do that' });
+  next();
+}
+
+authRouter.get('/tokens', requireSession, (req, res) => {
+  res.json(db.prepare(
+    'SELECT id, name, token_prefix, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY id DESC'
+  ).all(req.user.id));
+});
+
+authRouter.post('/tokens', requireSession, (req, res) => {
+  const name = (req.body?.name ?? '').toString().trim();
+  if (!name) return res.status(400).json({ error: 'A name is required' });
+  if (name.length > 80) return res.status(400).json({ error: 'Name must be 80 characters or fewer' });
+  const count = db.prepare('SELECT COUNT(*) AS n FROM api_tokens WHERE user_id = ?').get(req.user.id).n;
+  if (count >= MAX_TOKENS_PER_USER) {
+    return res.status(400).json({ error: `Token limit reached (${MAX_TOKENS_PER_USER}). Revoke one first.` });
+  }
+  // 32 random bytes → 256 bits of entropy. The plaintext is returned exactly
+  // once here; only its hash is stored.
+  const raw = TOKEN_PREFIX + crypto.randomBytes(32).toString('hex');
+  const prefix = raw.slice(0, TOKEN_PREFIX.length + 6);
+  const info = db.prepare(
+    'INSERT INTO api_tokens (user_id, name, token_hash, token_prefix) VALUES (?, ?, ?, ?)'
+  ).run(req.user.id, name, hashToken(raw), prefix);
+  const row = db.prepare('SELECT id, name, token_prefix, created_at, last_used_at FROM api_tokens WHERE id = ?')
+    .get(info.lastInsertRowid);
+  res.json({ ...row, token: raw });
+});
+
+authRouter.delete('/tokens/:id', requireSession, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  db.prepare('DELETE FROM api_tokens WHERE id = ? AND user_id = ?').run(id, req.user.id);
   res.json({ ok: true });
 });
 
