@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { config } from './db.js';
+import { config, pingDb } from './db.js';
 import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth } from './auth.js';
 import { deezerRouter } from './sources.js';
 import { socialRouter } from './social.js';
 import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
+import { startBackups } from './backup.js';
 import { logger } from './log.js';
 
 const log = logger('http');
@@ -41,13 +42,38 @@ app.use((req, res, next) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   res.setHeader('Content-Security-Policy', CSP);
+  // Only advertise HSTS when we're actually behind TLS (the same signal that
+  // marks the session cookie Secure); never on a plain-HTTP/LAN deployment.
+  if (config.cookieSecure) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
+});
+
+// Health/probe endpoints — registered before auth and the SPA fallback so they
+// are cheap, dependency-light, and return a *real* status instead of being
+// swallowed by the catch-all that serves index.html (which would always be 200).
+//
+// Liveness: the process is up and the event loop responds. Deliberately does NOT
+// touch the DB or slskd, so a slow dependency can never trigger a restart loop.
+const liveness = (_req, res) => res.json({ ok: true });
+app.get('/healthz', liveness);
+app.get('/health', liveness);
+app.get('/health/live', liveness);
+// Readiness: only take traffic when SQLite is reachable. slskd status is reported
+// for visibility but does not gate readiness — it being down shouldn't pull the
+// pod out of rotation when browsing/streaming still works.
+app.get('/health/ready', (_req, res) => {
+  try {
+    pingDb();
+    res.json({ ok: true, db: 'ok', slskd: config.slskdEnabled ? 'configured' : 'not_configured' });
+  } catch (e) {
+    res.status(503).json({ ok: false, db: 'error', error: String(e.message || e) });
+  }
 });
 
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);
-
-app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 // The Deezer proxy is metadata-only but must still require a signed-in user
@@ -72,6 +98,7 @@ bootstrapAdmin();
 scanLibrary();
 resumeOnBoot();
 startPoller();
+startBackups();
 
 app.listen(config.port, () => {
   log.info(`listening on :${config.port}`);

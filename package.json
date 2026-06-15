@@ -1,7 +1,7 @@
 {
   "name": "musicarr",
   "version": "1.0.0",
-  "description": "Self-hosted Spotify-like music app backed by Jackett + Transmission",
+  "description": "Self-hosted Spotify-like music app: Deezer metadata, Soulseek (slskd) downloads, SQLite storage",
   "type": "module",
   "main": "server/index.js",
   "scripts": {
