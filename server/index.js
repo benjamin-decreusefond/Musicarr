@@ -7,6 +7,7 @@ import { deezerRouter } from './sources.js';
 import { socialRouter } from './social.js';
 import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
+import { startReleaseWatcher } from './releases.js';
 import { startBackups } from './backup.js';
 import { logger } from './log.js';
 
@@ -98,6 +99,7 @@ bootstrapAdmin();
 scanLibrary();
 resumeOnBoot();
 startPoller();
+startReleaseWatcher();
 startBackups();
 
 app.listen(config.port, () => {

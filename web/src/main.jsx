@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -270,6 +270,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="explore" icon="compass" label="Explore" />
         <NavItem view="library" icon="library" label="Library" />
         <NavItem view="favorites" icon="heart" label="Liked songs" />
+        <NavItem view="following" icon="user" label="Following" />
         <NavItem view="downloads" icon="download" label="Downloads" />
       </nav>
       <div className="nav-divider" />
@@ -478,6 +479,7 @@ function App() {
     case 'album': page = <Album id={route.id} nav={nav} />; break;
     case 'library': page = <Library me={me} nav={nav} />; break;
     case 'favorites': page = <Favorites nav={nav} />; break;
+    case 'following': page = <Following nav={nav} />; break;
     case 'playlist': page = <Playlist id={route.id} nav={nav} />; break;
     case 'downloads': page = <Downloads nav={nav} />; break;
     case 'user': page = <UserProfile id={route.id} nav={nav} />; break;

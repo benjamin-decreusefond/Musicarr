@@ -37,6 +37,10 @@ export const config = {
   // A transfer with no progress for this long counts as failed and is retried
   // with the next candidate (Soulseek peers can leave you queued forever).
   slskdStallMs: parseInt(process.env.SLSKD_STALL_MS || '900000', 10),
+  // How often to check followed artists for new releases (default 6h). Set
+  // RELEASE_WATCH_ENABLED=false to turn the watcher off entirely.
+  releaseCheckIntervalMs: parseInt(process.env.RELEASE_CHECK_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10),
+  releaseWatchEnabled: process.env.RELEASE_WATCH_ENABLED !== 'false',
   envDefaults,
 
   get musicDir() { return getSetting('root_folder') || envDefaults.musicDir; },
@@ -184,6 +188,29 @@ CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
 CREATE INDEX IF NOT EXISTS idx_plays_user ON plays(user_id, played_at);
 CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+-- Artists a user follows so new releases are auto-downloaded (Lidarr-style).
+CREATE TABLE IF NOT EXISTS followed_artists (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  artist_id INTEGER NOT NULL,
+  artist_name TEXT NOT NULL,
+  artist_picture TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, artist_id)
+);
+CREATE INDEX IF NOT EXISTS idx_followed_artist ON followed_artists(artist_id);
+
+-- Albums already considered for a followed artist. When the first user follows
+-- an artist their current back-catalog is recorded here as "seen", so the watcher
+-- only auto-grabs releases that appear *after* the follow — no back-catalog
+-- stampede. Shared across users since the audio library is shared.
+CREATE TABLE IF NOT EXISTS seen_artist_albums (
+  artist_id INTEGER NOT NULL,
+  album_id INTEGER NOT NULL,
+  queued INTEGER NOT NULL DEFAULT 0,
+  seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (artist_id, album_id)
+);
 `);
 
 // Migration: force a password change for the seeded default-credential admin,
