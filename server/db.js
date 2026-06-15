@@ -200,6 +200,19 @@ CREATE TABLE IF NOT EXISTS followed_artists (
 );
 CREATE INDEX IF NOT EXISTS idx_followed_artist ON followed_artists(artist_id);
 
+-- Playlist sharing: an owner can share a playlist with specific users, either
+-- read-only (can_edit 0) or collaboratively (can_edit 1). Viewing any playlist
+-- by id is already open within the server; a share makes it discoverable in the
+-- recipient's library and (when can_edit) lets them add/remove tracks.
+CREATE TABLE IF NOT EXISTS playlist_shares (
+  playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  can_edit INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (playlist_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_shares_user ON playlist_shares(user_id);
+
 -- Albums already considered for a followed artist. When the first user follows
 -- an artist their current back-catalog is recorded here as "seen", so the watcher
 -- only auto-grabs releases that appear *after* the follow — no back-catalog
