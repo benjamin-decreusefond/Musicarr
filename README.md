@@ -157,7 +157,7 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `SLSKD_API_KEY` | — | slskd API key *(UI)* |
 | `SLSKD_DOWNLOAD_DIR` | `/slskd-downloads` | Where slskd writes completed files, as Musicarr sees it (shared volume) *(UI)* |
 | `ADMIN_USERNAME` | `admin` | Created on first boot only |
-| `ADMIN_PASSWORD` | `admin` | **Change this.** Created on first boot only |
+| `ADMIN_PASSWORD` | *(random)* | First-boot admin password seed. If unset, a strong random one is generated and printed to the logs; you must change it on first sign-in |
 | `POLL_INTERVAL_MS` | `10000` | How often download progress is polled |
 | `SWEEP_INTERVAL_MS` | `600000` | How often completed-but-unimported downloads are retried |
 | `SLSKD_STALL_MS` | `900000` | A transfer with no progress for this long fails over to the next candidate |
@@ -171,10 +171,12 @@ All of these are optional seeds for the first-run defaults; the ones marked
 
 ## First login
 
-On first boot an admin account is created from `ADMIN_USERNAME` /
-`ADMIN_PASSWORD`. Sign in, then go to **Users** (admin only) to add more
-accounts. Each user gets their own playlists and liked songs but shares the
-downloaded audio library.
+On first boot an admin account is created. If you set `ADMIN_PASSWORD`, that
+seed is used; **if you don't, Musicarr generates a strong random password and
+prints it once to the container logs** (rather than falling back to a guessable
+default). Either way you're required to set your own password on first sign-in.
+Then go to **Users** (admin only) to add more accounts — each user gets their own
+playlists and liked songs but shares the downloaded audio library.
 
 ## API access tokens
 
@@ -202,6 +204,43 @@ Every `/api/*` endpoint the UI uses is reachable this way — e.g. `GET
 /api/playlists`. Revoke a token at any time from the same screen; revocation
 takes effect immediately. As a safety measure, tokens can't create or revoke
 other tokens — that requires an interactive sign-in.
+
+## Made for you (mixes & smart playlists)
+
+The **Made for you** page (and a row on Home) gathers auto-generated, ready-to-play
+collections, refreshed from your activity:
+
+- **Smart playlists** built straight from your own library and history —
+  *On Repeat* (your most-played), *Recently Added*, and a *Liked Songs Mix*.
+  These are immediately playable from disk.
+- **Daily mixes** — discovery mixes seeded from your top artists, pulling in
+  Deezer related-artist tracks. Anything not on disk yet downloads on tap.
+
+## Your stats
+
+A personal, Spotify-Wrapped-style dashboard under **Your stats**: tracks played,
+time listened, unique artists/tracks, your top artists/tracks/albums and a
+14-day activity chart. Toggle the window between this week, month, year, or all
+time. Computed entirely from your own listening history.
+
+## Listen Together
+
+Play music in perfect-ish sync with other people on your server. Open the
+**Listen together** control in the player bar and **Start a session** — you become
+the host and your playback (current track, position, play/pause) drives everyone
+else. Share the short **code**; others **Join** and follow along, with the client
+correcting drift every couple of seconds. The host controls playback; guests
+stream the same shared-library files. Leaving as the host ends the session.
+
+## Install & offline (PWA)
+
+Musicarr is an installable progressive web app: add it to your home screen / desktop
+for a standalone window, lock-screen and media-key controls (play/pause, next/prev,
+seek), and a synced scrubber via the Media Session API. A service worker caches the
+app shell, static assets and cover art so the UI loads offline. Tap the **save**
+icon on any available track to keep its audio on the device — saved tracks live
+under the **Offline** page and play back without a connection (with seeking), served
+from the browser cache with HTTP range support.
 
 ## Shared playlists
 
@@ -265,7 +304,10 @@ and on Kubernetes a pod `securityContext` with `fsGroup: 1000` (plus
 
 - Authentication is cookie-session based (HttpOnly, SameSite=Lax) for the UI,
   with personal access tokens for programmatic API access (see **API access
-  tokens**). Serve over HTTPS in production.
+  tokens**). Serve over HTTPS in production. Session tokens are stored only as
+  SHA-256 hashes, so a leaked database or backup can't be used to resume live
+  sessions. The slskd API key is never sent back to the browser — the Settings
+  page only shows whether one is configured and a masked tail.
 - Deezer is used purely for metadata and discovery; no audio comes from Deezer.
 - Streaming reads files directly from `/music` with range requests, so seeking
   works in the browser for FLAC/MP3/M4A/OGG/Opus/WAV/AAC.
