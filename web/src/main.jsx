@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -268,6 +268,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="home" icon="home" label="Home" />
         <NavItem view="search" icon="search" label="Search" />
         <NavItem view="explore" icon="compass" label="Explore" />
+        <NavItem view="mixes" icon="sparkles" label="Made for you" />
         <NavItem view="library" icon="library" label="Library" />
         <NavItem view="favorites" icon="heart" label="Liked songs" />
         <NavItem view="following" icon="user" label="Following" />
@@ -275,6 +276,7 @@ function Sidebar({ route, nav, me, onLogout }) {
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
+        <NavItem view="stats" icon="chart" label="Your stats" />
         <NavItem view="equalizer" icon="sliders" label="Equalizer" />
         <NavItem view="profile" icon="user" label="Profile" />
         {!!me.is_admin && <NavItem view="admin" icon="user" label="Users" />}
@@ -409,7 +411,7 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
 // Keep the current view in the address bar so a refresh restores it (the
 // server serves index.html for any non-API path, so deep links work too).
 const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre', 'user']);
-const VIEWS_WITH_SLUG = new Set(['mood']); // string id rather than numeric
+const VIEWS_WITH_SLUG = new Set(['mood', 'mix']); // string id rather than numeric
 
 function routeToPath({ view, id }) {
   if (view === 'home') return '/';
@@ -472,6 +474,9 @@ function App() {
     case 'home': page = <Home nav={nav} />; break;
     case 'search': page = <Search nav={nav} />; break;
     case 'explore': page = <Explore nav={nav} />; break;
+    case 'mixes': page = <MadeForYou nav={nav} />; break;
+    case 'mix': page = <Mix id={route.id} nav={nav} />; break;
+    case 'stats': page = <Stats nav={nav} />; break;
     case 'genre': page = <Genre id={route.id} nav={nav} />; break;
     case 'mood': page = <Mood slug={route.id} nav={nav} />; break;
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;

@@ -805,6 +805,144 @@ api.get('/history', (req, res) => {
   `).all(req.user.id));
 });
 
+/* ------------------------------------------------------- Listening stats */
+// A personal "Wrapped"-style dashboard computed from the user's play history.
+// `range` selects the window: 'month' (30d), 'year' (365d) or 'all' (default).
+const STATS_WINDOWS = { week: '-7 days', month: '-30 days', year: '-365 days' };
+api.get('/stats', (req, res) => {
+  const userId = req.user.id;
+  const rangeKey = STATS_WINDOWS[req.query.range] ? req.query.range : 'all';
+  // A SQL WHERE fragment + bound args for the selected window.
+  const since = STATS_WINDOWS[rangeKey];
+  const where = since ? `p.user_id = ? AND p.played_at > datetime('now', ?)` : `p.user_id = ?`;
+  const args = since ? [userId, since] : [userId];
+
+  const totals = db.prepare(`
+    SELECT COUNT(*) AS plays,
+           COUNT(DISTINCT p.track_id) AS tracks,
+           COUNT(DISTINCT t.artist_id) AS artists,
+           COALESCE(SUM(t.duration), 0) AS seconds
+    FROM plays p JOIN tracks t ON t.deezer_id = p.track_id
+    WHERE ${where}
+  `).get(...args);
+
+  const topArtists = db.prepare(`
+    SELECT t.artist_id, t.artist, COUNT(*) AS plays, MAX(t.cover) AS cover
+    FROM plays p JOIN tracks t ON t.deezer_id = p.track_id
+    WHERE ${where} AND t.artist_id IS NOT NULL
+    GROUP BY t.artist_id ORDER BY plays DESC, t.artist LIMIT 12
+  `).all(...args);
+
+  const topTracks = db.prepare(`
+    SELECT t.*, (t.file_path IS NOT NULL) AS available, COUNT(*) AS plays
+    FROM plays p JOIN tracks t ON t.deezer_id = p.track_id
+    WHERE ${where}
+    GROUP BY p.track_id ORDER BY plays DESC, MAX(p.played_at) DESC LIMIT 15
+  `).all(...args);
+
+  const topAlbums = db.prepare(`
+    SELECT t.album_id, MAX(t.album) AS album, MAX(t.artist) AS artist,
+           MAX(t.cover) AS cover, COUNT(*) AS plays
+    FROM plays p JOIN tracks t ON t.deezer_id = p.track_id
+    WHERE ${where} AND t.album_id IS NOT NULL
+    GROUP BY t.album_id ORDER BY plays DESC LIMIT 8
+  `).all(...args);
+
+  // Per-day play counts for the last 14 days, for a small activity sparkline.
+  const daily = db.prepare(`
+    SELECT date(p.played_at) AS day, COUNT(*) AS plays
+    FROM plays p
+    WHERE p.user_id = ? AND p.played_at > datetime('now','-14 days')
+    GROUP BY day ORDER BY day
+  `).all(userId);
+
+  res.json({ range: rangeKey, totals, topArtists, topTracks, topAlbums, daily });
+});
+
+/* ----------------------------------------------------- Made-for-you mixes */
+// Two flavours of auto-generated, ready-to-play collections:
+//  - "smart" playlists computed straight from the user's own library/history
+//    (On Repeat, Recently Added, Liked songs) — immediately playable.
+//  - "daily" discovery mixes seeded from the user's top artists, pulling
+//    Deezer related-artist tracks (downloadable on tap).
+api.get('/mixes', async (req, res) => {
+  const userId = req.user.id;
+  const smart = [];
+
+  const onRepeat = db.prepare(`
+    SELECT t.*, (t.file_path IS NOT NULL) AS available, COUNT(*) AS plays
+    FROM plays p JOIN tracks t ON t.deezer_id = p.track_id
+    WHERE p.user_id = ? AND p.played_at > datetime('now','-60 days') AND t.file_path IS NOT NULL
+    GROUP BY p.track_id ORDER BY plays DESC, MAX(p.played_at) DESC LIMIT 40
+  `).all(userId);
+  if (onRepeat.length >= 3) {
+    smart.push({ key: 'on-repeat', title: 'On Repeat', subtitle: 'The tracks you keep coming back to',
+      cover: onRepeat[0]?.cover || null, tracks: onRepeat });
+  }
+
+  const recentlyAdded = db.prepare(`
+    SELECT t.*, 1 AS available FROM tracks t
+    WHERE t.file_path IS NOT NULL AND t.in_library = 1
+    ORDER BY t.added_at DESC LIMIT 40
+  `).all();
+  if (recentlyAdded.length >= 3) {
+    smart.push({ key: 'recently-added', title: 'Recently Added', subtitle: 'Fresh in your library',
+      cover: recentlyAdded[0]?.cover || null, tracks: recentlyAdded });
+  }
+
+  const liked = db.prepare(`
+    SELECT t.*, (t.file_path IS NOT NULL) AS available
+    FROM favorites f JOIN tracks t ON t.deezer_id = f.track_id
+    WHERE f.user_id = ? ORDER BY f.added_at DESC LIMIT 60
+  `).all(userId);
+  if (liked.length >= 3) {
+    smart.push({ key: 'liked', title: 'Liked Songs Mix', subtitle: 'A shuffle of everything you love',
+      cover: liked[0]?.cover || null, tracks: liked });
+  }
+
+  // Discovery: up to 3 daily mixes seeded from the user's most-listened artists.
+  const daily = [];
+  try {
+    const have = haveTrackStmt();
+    const seeds = db.prepare(`
+      SELECT t.artist_id, t.artist, COUNT(*) AS n FROM (
+        SELECT track_id AS tid FROM favorites WHERE user_id = @u
+        UNION ALL SELECT track_id AS tid FROM plays WHERE user_id = @u
+      ) x JOIN tracks t ON t.deezer_id = x.tid
+      WHERE t.artist_id IS NOT NULL
+      GROUP BY t.artist_id ORDER BY n DESC LIMIT 3
+    `).all({ u: userId });
+
+    let n = 1;
+    for (const seed of seeds) {
+      const [top, relatedList] = await Promise.all([
+        deezerGet(`artist/${seed.artist_id}/top?limit=12`).catch(() => ({ data: [] })),
+        deezerGet(`artist/${seed.artist_id}/related?limit=4`).catch(() => ({ data: [] })),
+      ]);
+      const seen = new Set();
+      const tracks = [];
+      for (const t of (top.data || [])) { if (!seen.has(t.id)) { seen.add(t.id); tracks.push(mapTrack(t, have)); } }
+      const relTops = await Promise.all(
+        (relatedList.data || []).slice(0, 3).map(a => deezerGet(`artist/${a.id}/top?limit=5`).catch(() => ({ data: [] })))
+      );
+      for (const rt of relTops) for (const t of (rt.data || [])) {
+        if (!seen.has(t.id)) { seen.add(t.id); tracks.push(mapTrack(t, have)); }
+      }
+      if (tracks.length >= 5) {
+        const names = [seed.artist, ...(relatedList.data || []).slice(0, 2).map(a => a.name)];
+        daily.push({
+          key: `daily-${seed.artist_id}`, title: `Daily Mix ${n++}`,
+          subtitle: names.join(', '),
+          cover: tracks.find(t => t.cover)?.cover || null,
+          tracks,
+        });
+      }
+    }
+  } catch { /* discovery is best-effort; smart mixes still return */ }
+
+  res.json({ smart, daily });
+});
+
 // "You might like": seed from the user's favorites + listening history, pull
 // related artists from Deezer and surface their popular tracks (those not in
 // the seed set). Falls back to the global chart for brand-new accounts.

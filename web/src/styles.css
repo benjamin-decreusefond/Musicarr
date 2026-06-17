@@ -417,3 +417,20 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .share-search { width: 100%; padding: 10px 14px; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-size: 14px; margin-bottom: 10px; }
 .share-search::placeholder { color: var(--muted); }
 .share-results { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- Listening stats (Your stats) ---- */
+.stats-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
+.seg-btn { padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.seg-btn.on { background: var(--accent); color: var(--accent-ink); }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 20px 0 8px; }
+.stat-card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px; }
+.stat-value { font-family: var(--font-display); font-size: 30px; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.stat-label { margin-top: 6px; font-size: 13px; color: var(--text-dim); }
+.row-title-flex { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* Per-day activity sparkline */
+.sparkline { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding: 8px 0; }
+.spark-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; }
+.spark-bar { width: 100%; max-width: 28px; min-height: 3px; background: linear-gradient(var(--accent), #8fb828); border-radius: 4px 4px 0 0; transition: height .3s ease; }
+.spark-label { font-size: 10px; color: var(--text-faint); }
