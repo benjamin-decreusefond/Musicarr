@@ -176,6 +176,142 @@ function Lyrics() {
   );
 }
 
+/* --------------------------------------------------- Listen Together */
+// Synchronized group playback. The host's player drives the session; guests
+// poll and follow the host's current track / position / play-state. Polling
+// (every ~2.5s) keeps everyone loosely in sync without any realtime transport.
+const parseUTC = (s) => (s ? Date.parse(s.replace(' ', 'T') + 'Z') : 0);
+
+function ListenTogether() {
+  const p = usePlayer();
+  const [session, setSession] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+
+  // Live player snapshot for the sync loops (avoids stale closures in intervals).
+  const liveRef = useRef({});
+  liveRef.current = { id: p.current ? (p.current.deezer_id || p.current.id) : null, time: p.time, playing: p.playing };
+  const loadedTrackRef = useRef(null);
+  const isHost = !!session?.is_host;
+
+  const gone = useCallback(() => { setSession(null); loadedTrackRef.current = null; }, []);
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  // Resume an in-progress session after a reload.
+  useEffect(() => { api.get('/api/listen/active').then(r => { if (r.active) setSession(r.session); }).catch(() => {}); }, []);
+
+  // HOST: push playback state on a timer and refresh the member list.
+  useEffect(() => {
+    if (!session || !isHost) return;
+    const push = () => {
+      const { id, time, playing } = liveRef.current;
+      api.post(`/api/listen/${session.id}/state`, { track_id: id, position: time, is_playing: playing }).catch(() => {});
+    };
+    push();
+    const t = setInterval(push, 2500);
+    const m = setInterval(() => api.get(`/api/listen/${session.id}`).then(setSession).catch(gone), 5000);
+    return () => { clearInterval(t); clearInterval(m); };
+  }, [session?.id, isHost, gone]);
+
+  // Push immediately when the host's track or play/pause state changes.
+  useEffect(() => {
+    if (!session || !isHost) return;
+    const { id, time, playing } = liveRef.current;
+    api.post(`/api/listen/${session.id}/state`, { track_id: id, position: time, is_playing: playing }).catch(() => {});
+  }, [liveRef.current.id, p.playing, session?.id, isHost]);
+
+  // GUEST: poll and follow the host.
+  useEffect(() => {
+    if (!session || isHost) return;
+    let alive = true;
+    const tick = async () => {
+      let st;
+      try { st = await api.get(`/api/listen/${session.id}`); } catch { gone(); return; }
+      if (!alive) return;
+      setSession(st);
+      const tr = st.track;
+      if (st.track_id && tr && (tr.available || tr.file_path)) {
+        if (loadedTrackRef.current !== st.track_id) {
+          loadedTrackRef.current = st.track_id;
+          p.playTrack({ deezer_id: tr.deezer_id, title: tr.title, artist: tr.artist, album: tr.album,
+            album_id: tr.album_id, cover: tr.cover, duration: tr.duration, available: true });
+        }
+        const drift = st.is_playing ? Math.max(0, (parseUTC(st.server_time) - parseUTC(st.updated_at)) / 1000) : 0;
+        const target = (st.position || 0) + drift;
+        const { time: ctime, playing: cplaying } = liveRef.current;
+        if (Math.abs((ctime || 0) - target) > 2.5) p.seek(target);
+        if (st.is_playing && !cplaying) p.play();
+        if (!st.is_playing && cplaying) p.pause();
+      }
+    };
+    tick();
+    const t = setInterval(tick, 2500);
+    return () => { alive = false; clearInterval(t); };
+  }, [session?.id, isHost, gone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const start = async () => { setBusy(true); setErr(''); try { setSession(await api.post('/api/listen/start')); } catch (e) { setErr(e.message); } setBusy(false); };
+  const join = async () => { setBusy(true); setErr(''); try { setSession(await api.post('/api/listen/join', { code: code.trim() })); setCode(''); } catch (e) { setErr(e.message); } setBusy(false); };
+  const leave = async () => { if (session) { try { await api.post(`/api/listen/${session.id}/leave`); } catch { /* ignore */ } } gone(); };
+
+  const active = !!session;
+  return (
+    <div className="eq-wrap" ref={ref}>
+      <button className="icon-btn" onClick={() => setOpen(o => !o)} title="Listen together"
+        style={{ color: active || open ? 'var(--accent)' : undefined }}>
+        <Icon name="users" size={18} />
+      </button>
+      {open && (
+        <div className="listen-panel" onClick={e => e.stopPropagation()}>
+          <div className="eq-head"><span>Listen together</span>{active && <span className="np-live"><span className="np-dot" /> live</span>}</div>
+          {!active ? (
+            <div className="listen-body">
+              <p className="settings-fieldhint">Play music in sync with friends on this server.</p>
+              <button className="btn-primary" onClick={start} disabled={busy}>{busy ? 'Starting…' : 'Start a session'}</button>
+              <div className="listen-or">or join with a code</div>
+              <div className="listen-join">
+                <input className="settings-input mono" placeholder="CODE" maxLength={8}
+                  value={code} onChange={e => setCode(e.target.value.toUpperCase())} />
+                <button className="btn-ghost" onClick={join} disabled={busy || !code.trim()}>Join</button>
+              </div>
+              {err && <p className="settings-msg err">{err}</p>}
+            </div>
+          ) : (
+            <div className="listen-body">
+              {isHost ? (
+                <>
+                  <p className="settings-fieldhint">Share this code so others can join:</p>
+                  <div className="listen-code mono">{session.code}</div>
+                </>
+              ) : (
+                <p className="settings-fieldhint">Listening with <b>{session.host_name}</b>.</p>
+              )}
+              {session.track
+                ? <div className="listen-now">♪ {session.track.title} · {session.track.artist}{!session.track.available && !isHost ? ' (not on your disk)' : ''}</div>
+                : <div className="settings-fieldhint">Nothing playing yet{isHost ? ' — start a track to share it.' : '.'}</div>}
+              <div className="listen-members">
+                {session.members?.map(m => (
+                  <div key={m.id} className="listen-member">
+                    <Icon name="user" size={14} /> {m.username}{m.is_host ? <span className="listen-host">host</span> : null}
+                  </div>
+                ))}
+              </div>
+              <button className="btn-ghost" onClick={leave}>{isHost ? 'End session' : 'Leave session'}</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------- Login */
 function Login({ onLogin }) {
   const [u, setU] = useState('');
@@ -397,6 +533,7 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
           style={{ color: activityOpen ? 'var(--accent)' : undefined }}>
           <Icon name="user" size={18} />
         </button>
+        <ListenTogether />
         <Lyrics />
         <QueuePanel />
         <Equalizer />

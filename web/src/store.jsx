@@ -440,6 +440,10 @@ export function PlayerProvider({ children }) {
     setPlayNonce(n => n + 1);
   }, []);
 
+  // Explicit play/pause (used by Listen Together to follow the host's state).
+  const play = useCallback(() => { audioCtxRef.current?.resume?.(); audioRef.current?.play().catch(() => {}); }, []);
+  const pause = useCallback(() => audioRef.current?.pause(), []);
+
   const next = useCallback(() => advance(true), [advance]);
   const prev = useCallback(() => {
     const a = audioRef.current;
@@ -477,7 +481,7 @@ export function PlayerProvider({ children }) {
   const resetEq = useCallback(() => setEqGains([...EQ_ZERO]), []);
 
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
-    playList, playTrack, playOrToggle, toggle, next, prev, seek,
+    playList, playTrack, playOrToggle, toggle, play, pause, next, prev, seek,
     enqueue, moveInQueue, removeFromQueue, playAt,
     startRadio, stopRadio, radioActive,
     repeat, cycleRepeat,

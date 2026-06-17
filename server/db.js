@@ -274,6 +274,30 @@ if (!dlCols.includes('attempts')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN failed_candidates TEXT`);
 }
 
+// Listen Together: synchronized group playback. A host drives a session and
+// guests follow its current track / position / play-state (polled by clients).
+db.exec(`
+CREATE TABLE IF NOT EXISTS listen_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  host_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code TEXT NOT NULL UNIQUE,
+  track_id INTEGER,
+  position REAL NOT NULL DEFAULT 0,
+  is_playing INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS listen_members (
+  session_id INTEGER NOT NULL REFERENCES listen_sessions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_listen_members_user ON listen_members(user_id);
+`);
+
 /** Cheap readiness check that the SQLite handle is open and responsive. Throws on failure. */
 export function pingDb() {
   db.prepare('SELECT 1').get();

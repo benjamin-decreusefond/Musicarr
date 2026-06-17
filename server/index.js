@@ -5,6 +5,7 @@ import { config, pingDb } from './db.js';
 import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth } from './auth.js';
 import { deezerRouter } from './sources.js';
 import { socialRouter } from './social.js';
+import { listenRouter } from './listen.js';
 import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
 import { startReleaseWatcher } from './releases.js';
@@ -81,6 +82,7 @@ app.use('/api/users', usersRouter);
 // (it was previously reachable unauthenticated).
 app.use('/api/deezer', requireAuth, deezerRouter);
 app.use('/api/social', requireAuth, socialRouter);
+app.use('/api/listen', requireAuth, listenRouter);
 app.use('/api', api);
 
 // Surface server-side API errors in the logs instead of swallowing them.
