@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix, Offline } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -272,6 +272,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="library" icon="library" label="Library" />
         <NavItem view="favorites" icon="heart" label="Liked songs" />
         <NavItem view="following" icon="user" label="Following" />
+        <NavItem view="offline" icon="save" label="Offline" />
         <NavItem view="downloads" icon="download" label="Downloads" />
       </nav>
       <div className="nav-divider" />
@@ -477,6 +478,7 @@ function App() {
     case 'mixes': page = <MadeForYou nav={nav} />; break;
     case 'mix': page = <Mix id={route.id} nav={nav} />; break;
     case 'stats': page = <Stats nav={nav} />; break;
+    case 'offline': page = <Offline nav={nav} />; break;
     case 'genre': page = <Genre id={route.id} nav={nav} />; break;
     case 'mood': page = <Mood slug={route.id} nav={nav} />; break;
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
@@ -517,3 +519,10 @@ function App() {
 createRoot(document.getElementById('root')).render(
   <PlayerProvider><App /></PlayerProvider>
 );
+
+// Register the service worker for offline support / installable PWA.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[sw] registration failed:', err));
+  });
+}
