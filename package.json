@@ -11,6 +11,6 @@
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.10.0",
     "express": "^4.21.2",
-    "music-metadata": "^10.8.2"
+    "music-metadata": "^11.13.0"
   }
 }

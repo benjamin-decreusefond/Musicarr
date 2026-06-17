@@ -20,10 +20,17 @@ api.use(requireAuth);
 
 // Current effective config (what the server is actually using right now).
 function currentSettings() {
+  // The slskd API key is a secret: never send it back to the browser. We only
+  // report whether one is set (so the UI can show "configured") plus a short
+  // masked hint of the tail for recognisability. Saving an empty value leaves
+  // the stored key unchanged; sending a new value replaces it.
+  const key = config.slskdApiKey || '';
   return {
     root_folder: config.musicDir,
     slskd_url: config.slskdUrl,
-    slskd_api_key: config.slskdApiKey,
+    slskd_api_key: '',
+    slskd_api_key_set: !!key,
+    slskd_api_key_hint: key ? `••••${key.slice(-4)}` : '',
     slskd_download_dir: config.slskdDownloadDir,
     slskd_enabled: config.slskdEnabled,
     cleanup_enabled: config.autoCleanupEnabled,
@@ -63,7 +70,11 @@ api.put('/settings', requireAdmin, (req, res) => {
       if (url && !isHttpUrl(url)) throw new Error('slskd URL must start with http:// or https://');
       setSetting('slskd_url', url.replace(/\/$/, ''));
     }
-    if (has('slskd_api_key')) setSetting('slskd_api_key', str(b.slskd_api_key));
+    // The UI never receives the stored key back, so an empty value here means
+    // "leave it as-is"; only a non-empty value replaces it. (Clearing the key is
+    // done from the dedicated control that sends slskd_api_key_clear.)
+    if (has('slskd_api_key') && str(b.slskd_api_key)) setSetting('slskd_api_key', str(b.slskd_api_key));
+    if (b.slskd_api_key_clear === true) setSetting('slskd_api_key', '');
     if (has('slskd_download_dir')) {
       const dir = str(b.slskd_download_dir);
       if (dir && !path.isAbsolute(dir)) throw new Error('slskd download directory must be an absolute path');
@@ -106,7 +117,12 @@ api.post('/settings/test', requireAdmin, async (req, res) => {
   const b = req.body || {};
   try {
     if (b.section === 'slskd') {
-      const { serverState } = await testSlskd({ url: b.slskd_url, apiKey: b.slskd_api_key });
+      // Fall back to the stored URL/key when the form left them blank (the key is
+      // never sent back to the browser, so "test" on an unchanged key must reuse it).
+      const { serverState } = await testSlskd({
+        url: (b.slskd_url || '').trim() || config.slskdUrl,
+        apiKey: (b.slskd_api_key || '').trim() || config.slskdApiKey,
+      });
       return res.json({ ok: true, detail: `Soulseek server: ${serverState}` });
     }
     return res.status(400).json({ error: 'Unknown section' });

@@ -1173,6 +1173,10 @@ export function Settings() {
     setBusy(true); setMsg(null);
     try {
       const payload = Object.fromEntries(SETTING_FIELDS.map(k => [k, s[k] ?? '']));
+      // The API key is write-only: the server never sends it back, so only
+      // include it when the admin actually typed a new one (otherwise an empty
+      // value would be a no-op that leaves the stored key untouched).
+      if (!s.slskd_api_key) delete payload.slskd_api_key;
       payload.cleanup_enabled = !!s.cleanup_enabled;
       payload.cleanup_after_days = parseInt(s.cleanup_after_days, 10) || 0;
       const next = await api.put('/api/settings', payload);
@@ -1229,7 +1233,9 @@ export function Settings() {
           configure slskd to share your music root folder back.
         </p>
         <Field label="URL" hint="e.g. http://slskd:5030 (no trailing slash)" value={s.slskd_url} onChange={v => set('slskd_url', v)} />
-        <Field label="API key" type="password" value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
+        <Field label="API key" type="password"
+          hint={s.slskd_api_key_set ? `A key is configured (${s.slskd_api_key_hint}). Leave blank to keep it, or type a new one to replace it.` : 'Not set yet.'}
+          value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
         <Field label="Download directory" hint="Where slskd writes finished files, as Musicarr sees it (shared volume), e.g. /data/slskd/downloads"
           value={s.slskd_download_dir} onChange={v => set('slskd_download_dir', v)} />
         <div className="settings-actions">
