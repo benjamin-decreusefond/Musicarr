@@ -358,6 +358,19 @@ export function PlayerProvider({ children }) {
     if (i < 0) { setIndex(q.length); setPlayNonce(n => n + 1); } // start on the first added track
   }, []);
 
+  // Insert tracks right after the currently-playing one ("Play next").
+  const playNext = useCallback((tracks) => {
+    const avail = playable(Array.isArray(tracks) ? tracks : [tracks]);
+    if (!avail.length) return;
+    const { queue: q, index: i } = stateRef.current;
+    const existing = new Set(q.map(trackId));
+    const fresh = avail.filter(t => !existing.has(trackId(t)));
+    if (!fresh.length) return;
+    if (i < 0) { setQueue([...q, ...fresh]); setIndex(q.length); setPlayNonce(n => n + 1); return; }
+    const nq = [...q.slice(0, i + 1), ...fresh, ...q.slice(i + 1)];
+    setQueue(nq);
+  }, []);
+
   /* ------------------------------------------------------------ Radio mode */
   // Because we can only play files on disk, radio works by pre-downloading
   // upcoming tracks and appending them to the queue as they land. Deezer's
@@ -482,7 +495,7 @@ export function PlayerProvider({ children }) {
 
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
     playList, playTrack, playOrToggle, toggle, play, pause, next, prev, seek,
-    enqueue, moveInQueue, removeFromQueue, playAt,
+    enqueue, playNext, moveInQueue, removeFromQueue, playAt,
     startRadio, stopRadio, radioActive,
     repeat, cycleRepeat,
     hasNext: index < queue.length - 1 || (repeat !== 'off' && queue.length > 0),
