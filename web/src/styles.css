@@ -417,3 +417,32 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .share-search { width: 100%; padding: 10px 14px; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-size: 14px; margin-bottom: 10px; }
 .share-search::placeholder { color: var(--muted); }
 .share-results { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- Listening stats (Your stats) ---- */
+.stats-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; }
+.seg-btn { padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.seg-btn.on { background: var(--accent); color: var(--accent-ink); }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 20px 0 8px; }
+.stat-card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px; }
+.stat-value { font-family: var(--font-display); font-size: 30px; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.stat-label { margin-top: 6px; font-size: 13px; color: var(--text-dim); }
+.row-title-flex { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* Per-day activity sparkline */
+.sparkline { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding: 8px 0; }
+.spark-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; }
+.spark-bar { width: 100%; max-width: 28px; min-height: 3px; background: linear-gradient(var(--accent), #8fb828); border-radius: 4px 4px 0 0; transition: height .3s ease; }
+.spark-label { font-size: 10px; color: var(--text-faint); }
+
+/* ---- Listen Together ---- */
+.listen-panel { position: absolute; bottom: 48px; right: 0; width: 280px; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 14px; padding: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.5); z-index: 50; }
+.listen-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.listen-or { text-align: center; font-size: 12px; color: var(--text-faint); }
+.listen-join { display: flex; gap: 8px; }
+.listen-join .settings-input { flex: 1; letter-spacing: 2px; text-align: center; text-transform: uppercase; }
+.listen-code { font-size: 26px; font-weight: 700; letter-spacing: 6px; text-align: center; color: var(--accent); background: var(--bg); border: 1px dashed var(--line); border-radius: 10px; padding: 12px; }
+.listen-now { font-size: 13px; color: var(--text); background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+.listen-members { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; }
+.listen-member { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); }
+.listen-host { margin-left: auto; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--accent-ink); background: var(--accent); border-radius: 999px; padding: 1px 7px; }

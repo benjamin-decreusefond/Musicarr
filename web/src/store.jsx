@@ -24,6 +24,53 @@ export function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/* ------------------------------------------------------ Offline downloads */
+// Tracks the user has explicitly saved for offline playback. The audio bytes
+// live in the Cache Storage bucket the service worker reads from; the metadata
+// (so we can list/browse them) lives in localStorage.
+const OFFLINE_KEY = 'musicarr:offline';
+const AUDIO_CACHE = 'musicarr-audio-v1';
+export const offlineSupported = typeof caches !== 'undefined' && 'serviceWorker' in navigator;
+
+function loadOffline() { try { return JSON.parse(localStorage.getItem(OFFLINE_KEY)) || {}; } catch { return {}; } }
+const trackKey = (t) => t?.deezer_id || t?.id;
+
+export async function saveTrackOffline(track) {
+  const id = trackKey(track);
+  if (!id || !offlineSupported) throw new Error('Offline storage unavailable');
+  const res = await fetch(`/api/stream/${id}`, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error('Could not download this track');
+  const cache = await caches.open(AUDIO_CACHE);
+  await cache.put(`/api/stream/${id}`, res.clone());
+  const map = loadOffline();
+  map[id] = {
+    deezer_id: id, title: track.title, artist: track.artist, artist_id: track.artist_id,
+    album: track.album, album_id: track.album_id, cover: track.cover, duration: track.duration,
+    available: true, saved_at: Date.now(),
+  };
+  localStorage.setItem(OFFLINE_KEY, JSON.stringify(map));
+  window.dispatchEvent(new Event('musicarr:offline-changed'));
+}
+
+export async function removeTrackOffline(id) {
+  if (offlineSupported) { try { (await caches.open(AUDIO_CACHE)).delete(`/api/stream/${id}`); } catch { /* ignore */ } }
+  const map = loadOffline();
+  delete map[id];
+  localStorage.setItem(OFFLINE_KEY, JSON.stringify(map));
+  window.dispatchEvent(new Event('musicarr:offline-changed'));
+}
+
+// Reactive view of the offline map; re-renders on any save/remove anywhere.
+export function useOffline() {
+  const [map, setMap] = useState(loadOffline);
+  useEffect(() => {
+    const h = () => setMap(loadOffline());
+    window.addEventListener('musicarr:offline-changed', h);
+    return () => window.removeEventListener('musicarr:offline-changed', h);
+  }, []);
+  return map;
+}
+
 /* ---------------------------------------------------------- Player store */
 const PlayerCtx = createContext(null);
 export const usePlayer = () => useContext(PlayerCtx);
@@ -166,9 +213,14 @@ export function PlayerProvider({ children }) {
     const a = audioRef.current;
     const onTime = () => {
       setTime(a.currentTime);
+      const d = a.duration;
+      // Keep the OS media UI's scrubber in sync (lock screen / media keys).
+      if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && Number.isFinite(d) && d > 0) {
+        try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(a.currentTime, d), playbackRate: a.playbackRate || 1 }); }
+        catch { /* some browsers reject odd values mid-seek */ }
+      }
       // Fallback for formats/streams where 'ended' doesn't fire reliably:
       // if we're at the very end and playback has stopped progressing, advance.
-      const d = a.duration;
       if (Number.isFinite(d) && d > 0 && a.currentTime >= d - 0.25 && !endedGuardRef.current) {
         endedGuardRef.current = true;
         skipFailsRef.current = 0;
@@ -388,6 +440,10 @@ export function PlayerProvider({ children }) {
     setPlayNonce(n => n + 1);
   }, []);
 
+  // Explicit play/pause (used by Listen Together to follow the host's state).
+  const play = useCallback(() => { audioCtxRef.current?.resume?.(); audioRef.current?.play().catch(() => {}); }, []);
+  const pause = useCallback(() => audioRef.current?.pause(), []);
+
   const next = useCallback(() => advance(true), [advance]);
   const prev = useCallback(() => {
     const a = audioRef.current;
@@ -405,6 +461,10 @@ export function PlayerProvider({ children }) {
       ms.setActionHandler('pause', () => audioRef.current?.pause());
       ms.setActionHandler('nexttrack', () => advance(true));
       ms.setActionHandler('previoustrack', () => prev());
+      ms.setActionHandler('stop', () => { const a = audioRef.current; if (a) { a.pause(); a.currentTime = 0; } });
+      ms.setActionHandler('seekbackward', (d) => { const a = audioRef.current; if (a) a.currentTime = Math.max(0, a.currentTime - (d.seekOffset || 10)); });
+      ms.setActionHandler('seekforward', (d) => { const a = audioRef.current; if (a) a.currentTime = Math.min(a.duration || 0, a.currentTime + (d.seekOffset || 10)); });
+      ms.setActionHandler('seekto', (d) => { const a = audioRef.current; if (a && d.seekTime != null) a.currentTime = d.seekTime; });
     } catch { /* some handlers unsupported */ }
   }, [advance, prev]);
 
@@ -421,7 +481,7 @@ export function PlayerProvider({ children }) {
   const resetEq = useCallback(() => setEqGains([...EQ_ZERO]), []);
 
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
-    playList, playTrack, playOrToggle, toggle, next, prev, seek,
+    playList, playTrack, playOrToggle, toggle, play, pause, next, prev, seek,
     enqueue, moveInQueue, removeFromQueue, playAt,
     startRadio, stopRadio, radioActive,
     repeat, cycleRepeat,

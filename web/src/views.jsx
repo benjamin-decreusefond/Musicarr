@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, usePlayer } from './store.jsx';
+import { api, usePlayer, useOffline } from './store.jsx';
 import { Icon, Cover, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
 
 function useAsync(fn, deps) {
@@ -49,9 +49,11 @@ export function Home({ nav }) {
   const { data, err, loading } = useAsync(() => api.get('/api/home'), []);
   const [recs, setRecs] = useState(null);
   const [history, setHistory] = useState(null);
+  const [mixes, setMixes] = useState(null);
   useEffect(() => {
     api.get('/api/recommendations').then(setRecs).catch(() => {});
     api.get('/api/history').then(h => setHistory(h.map(t => ({ ...t, available: !!t.file_path }))) ).catch(() => {});
+    api.get('/api/mixes').then(m => setMixes([...(m.smart || []), ...(m.daily || [])])).catch(() => {});
   }, []);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
@@ -67,6 +69,11 @@ export function Home({ nav }) {
               onClick={() => t.album_id && nav({ view: 'album', id: t.album_id })}
               actions={<RadioButton seed={`track:${t.deezer_id}`} />} />
           ))}
+        </CardRow>
+      )}
+      {!!mixes?.length && (
+        <CardRow title="Made for you">
+          {mixes.map(m => <MixCard key={m.key} mix={m} nav={nav} />)}
         </CardRow>
       )}
       {!!recs?.tracks?.length && (
@@ -978,6 +985,223 @@ export function Downloads({ nav }) {
   );
 }
 
+/* -------------------------------------------------------------- Offline */
+// Tracks saved to this device for playback without a connection (PWA).
+export function Offline({ nav }) {
+  const offline = useOffline();
+  const player = usePlayer();
+  const tracks = Object.values(offline).sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
+  return (
+    <div className="page">
+      <h1 className="page-h1">Offline</h1>
+      <p className="settings-hint">
+        Tracks saved to this device, playable without a connection. {tracks.length} saved.
+        Install Musicarr to your home screen for a full offline app.
+      </p>
+      {tracks.length ? (
+        <>
+          <div className="hero-actions" style={{ margin: '4px 0 18px' }}>
+            <button className="btn-primary" onClick={() => player.playList(tracks, 0)}>
+              <Icon name="play" size={18} fill="currentColor" /> Play all
+            </button>
+            <button className="btn-ghost" onClick={() => player.playList(tracks, 0, { shuffle: true })}>
+              <Icon name="shuffle" size={18} /> Shuffle
+            </button>
+          </div>
+          <TrackTable tracks={tracks} nav={nav} showAdded={false} />
+        </>
+      ) : (
+        <div className="state faint">Nothing saved yet. Tap the save icon on any available track to keep it offline.</div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------- Listening stats */
+const STAT_RANGES = [['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time']];
+
+function StatCard({ value, label }) {
+  return <div className="stat-card"><div className="stat-value">{value}</div><div className="stat-label">{label}</div></div>;
+}
+
+export function Stats({ nav }) {
+  const [range, setRange] = useState('all');
+  const { data, err, loading } = useAsync(() => api.get(`/api/stats?range=${range}`), [range]);
+  const player = usePlayer();
+
+  const fmtMinutes = (sec) => {
+    const m = Math.round((sec || 0) / 60);
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  };
+
+  return (
+    <div className="page">
+      <div className="stats-head">
+        <h1 className="page-h1">Your stats</h1>
+        <div className="seg">
+          {STAT_RANGES.map(([key, label]) => (
+            <button key={key} className={`seg-btn ${range === key ? 'on' : ''}`} onClick={() => setRange(key)}>{label}</button>
+          ))}
+        </div>
+      </div>
+      {loading && <Loading />}
+      {err && <ErrState msg={err} />}
+      {data && (data.totals.plays === 0
+        ? <div className="state faint">No listening recorded for this period yet — play something and check back.</div>
+        : <>
+          <div className="stat-grid">
+            <StatCard value={data.totals.plays} label="Tracks played" />
+            <StatCard value={fmtMinutes(data.totals.seconds)} label="Time listened" />
+            <StatCard value={data.totals.artists} label="Different artists" />
+            <StatCard value={data.totals.tracks} label="Unique tracks" />
+          </div>
+
+          {!!data.daily?.length && (
+            <section className="page-block">
+              <h2 className="row-title">Last 14 days</h2>
+              <Sparkline daily={data.daily} />
+            </section>
+          )}
+
+          {!!data.topArtists?.length && (
+            <CardRow title="Top artists">
+              {data.topArtists.map((a, i) => (
+                <TileCard key={a.artist_id} cover={a.cover} round title={`${i + 1}. ${a.artist}`}
+                  sub={`${a.plays} play${a.plays === 1 ? '' : 's'}`}
+                  onClick={() => a.artist_id && nav({ view: 'artist', id: a.artist_id })} />
+              ))}
+            </CardRow>
+          )}
+
+          {!!data.topTracks?.length && (
+            <section className="page-block">
+              <div className="row-title-flex">
+                <h2 className="row-title">Top tracks</h2>
+                <button className="btn-ghost sm" onClick={() => player.playList(data.topTracks, 0)}>
+                  <Icon name="play" size={14} fill="currentColor" /> Play
+                </button>
+              </div>
+              <TrackTable tracks={data.topTracks} nav={nav} showAdded={false} />
+            </section>
+          )}
+
+          {!!data.topAlbums?.length && (
+            <CardRow title="Top albums">
+              {data.topAlbums.map(a => (
+                <TileCard key={a.album_id} cover={a.cover} title={a.album} sub={a.artist}
+                  onClick={() => a.album_id && nav({ view: 'album', id: a.album_id })} />
+              ))}
+            </CardRow>
+          )}
+        </>)}
+    </div>
+  );
+}
+
+// Tiny dependency-free bar chart of per-day play counts.
+function Sparkline({ daily }) {
+  const max = Math.max(1, ...daily.map(d => d.plays));
+  return (
+    <div className="sparkline">
+      {daily.map(d => (
+        <div key={d.day} className="spark-col" title={`${d.day}: ${d.plays} play${d.plays === 1 ? '' : 's'}`}>
+          <div className="spark-bar" style={{ height: `${Math.round((d.plays / max) * 100)}%` }} />
+          <span className="spark-label">{d.day.slice(8)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------- Made-for-you mixes */
+// A mix tile that plays its tracks on click (Liked Songs shuffles). Discovery
+// "daily" mixes are mostly not on disk yet, so playing one queues whatever is
+// available and offers to download the rest.
+function MixCard({ mix, nav }) {
+  const player = usePlayer();
+  const availableCount = mix.tracks.filter(t => t.available || t.file_path).length;
+  const play = (e) => {
+    e.stopPropagation();
+    const shuffle = mix.key === 'liked';
+    if (availableCount > 0) player.playList(mix.tracks, 0, { shuffle });
+  };
+  return (
+    <div className="tile" onClick={() => nav({ view: 'mix', id: mix.key })}>
+      <div className="tile-art">
+        <Cover src={mix.cover} size={156} alt={mix.title} />
+        <div className="tile-actions" onClick={e => e.stopPropagation()}>
+          <button className="icon-btn" onClick={play} title={availableCount ? 'Play' : 'Nothing downloaded yet — open to download'}>
+            <Icon name="play" size={18} fill="currentColor" />
+          </button>
+        </div>
+      </div>
+      <div className="tile-title">{mix.title}</div>
+      <div className="tile-sub">{mix.subtitle}</div>
+    </div>
+  );
+}
+
+export function MadeForYou({ nav }) {
+  const { data, err, loading } = useAsync(() => api.get('/api/mixes'), []);
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const empty = !data.smart?.length && !data.daily?.length;
+  return (
+    <div className="page">
+      <h1 className="page-h1">Made for you</h1>
+      {empty && <div className="state faint">Listen to and like some music — your personal mixes will appear here.</div>}
+      {!!data.smart?.length && (
+        <CardRow title="Your mixes">
+          {data.smart.map(m => <MixCard key={m.key} mix={m} nav={nav} />)}
+        </CardRow>
+      )}
+      {!!data.daily?.length && (
+        <CardRow title="Daily mixes">
+          {data.daily.map(m => <MixCard key={m.key} mix={m} nav={nav} />)}
+        </CardRow>
+      )}
+    </div>
+  );
+}
+
+// Full track listing for a single mix (reached by clicking a mix tile).
+export function Mix({ id, nav }) {
+  const { data, err, loading } = useAsync(() => api.get('/api/mixes'), []);
+  const player = usePlayer();
+  if (loading) return <Loading />;
+  if (err) return <ErrState msg={err} />;
+  const mix = [...(data.smart || []), ...(data.daily || [])].find(m => m.key === id);
+  if (!mix) return <ErrState msg="This mix is no longer available." />;
+  const shuffle = mix.key === 'liked';
+  const availableCount = mix.tracks.filter(t => t.available || t.file_path).length;
+  return (
+    <div className="page">
+      <header className="hero">
+        <Cover src={mix.cover} size={200} alt={mix.title} />
+        <div className="hero-meta">
+          <span className="hero-kind">Mix</span>
+          <h1 className="hero-title">{mix.title}</h1>
+          <span className="hero-sub faint">{mix.subtitle}</span>
+          <div className="hero-actions">
+            <button className="btn-primary" disabled={!availableCount}
+              onClick={() => player.playList(mix.tracks, 0, { shuffle })}>
+              <Icon name="play" size={18} fill="currentColor" /> {shuffle ? 'Shuffle' : 'Play'}
+            </button>
+            {availableCount < mix.tracks.length && (
+              <span className="hero-sub faint">{availableCount} of {mix.tracks.length} on disk — download the rest below.</span>
+            )}
+          </div>
+        </div>
+      </header>
+      <section className="page-block">
+        <TrackTable tracks={mix.tracks} nav={nav} showAdded={false} />
+      </section>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------ API access tokens */
 function ApiTokens() {
   const [tokens, setTokens] = useState(null);
@@ -1173,6 +1397,10 @@ export function Settings() {
     setBusy(true); setMsg(null);
     try {
       const payload = Object.fromEntries(SETTING_FIELDS.map(k => [k, s[k] ?? '']));
+      // The API key is write-only: the server never sends it back, so only
+      // include it when the admin actually typed a new one (otherwise an empty
+      // value would be a no-op that leaves the stored key untouched).
+      if (!s.slskd_api_key) delete payload.slskd_api_key;
       payload.cleanup_enabled = !!s.cleanup_enabled;
       payload.cleanup_after_days = parseInt(s.cleanup_after_days, 10) || 0;
       const next = await api.put('/api/settings', payload);
@@ -1229,7 +1457,9 @@ export function Settings() {
           configure slskd to share your music root folder back.
         </p>
         <Field label="URL" hint="e.g. http://slskd:5030 (no trailing slash)" value={s.slskd_url} onChange={v => set('slskd_url', v)} />
-        <Field label="API key" type="password" value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
+        <Field label="API key" type="password"
+          hint={s.slskd_api_key_set ? `A key is configured (${s.slskd_api_key_hint}). Leave blank to keep it, or type a new one to replace it.` : 'Not set yet.'}
+          value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
         <Field label="Download directory" hint="Where slskd writes finished files, as Musicarr sees it (shared volume), e.g. /data/slskd/downloads"
           value={s.slskd_download_dir} onChange={v => set('slskd_download_dir', v)} />
         <div className="settings-actions">

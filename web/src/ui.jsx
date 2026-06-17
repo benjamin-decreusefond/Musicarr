@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { api, fmtTime, usePlayer, useMe } from './store.jsx';
+import { api, fmtTime, usePlayer, useMe, useOffline, saveTrackOffline, removeTrackOffline, offlineSupported } from './store.jsx';
 
 /* Inline icon set (no dependency). */
 export const Icon = ({ name, size = 20, fill = 'none' }) => {
@@ -34,6 +34,11 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2',
     settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2Z',
     spinner: 'M12 3a9 9 0 1 0 9 9',
+    chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+    sparkles: 'M12 3l1.8 4.7L18.5 9.5 13.8 11.3 12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 14l.9 2.3 2.3.9-2.3.9L19 20.4l-.9-2.3-2.3-.9 2.3-.9z',
+    users: 'M16 14c2.7 0 5 1.8 5 4v2H11v-2c0-2.2 2.3-4 5-4ZM8.5 13C10.4 13 12 14.3 12 16v2H1v-2c0-1.7 1.6-3 3.5-3M8 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6M16.5 5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5',
+    cast: 'M2 8V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7M2 12a8 8 0 0 1 8 8M2 16a4 4 0 0 1 4 4M2 20h0',
+    save: 'M6 19a4 4 0 0 1-.6-8A6 6 0 0 1 17 8.5a4.5 4.5 0 0 1 .5 9H6ZM9 13l3 3 3-3M12 9v7',
   }[name];
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
@@ -87,6 +92,30 @@ export function RadioButton({ seed }) {
   return (
     <button className="icon-btn" onClick={go} title="Start radio (auto-downloads similar songs)">
       <Icon name="radio" size={18} />
+    </button>
+  );
+}
+
+// Save/remove a track for offline playback (cached in the browser via the
+// service worker). Only shown for tracks already available on disk.
+export function OfflineButton({ track }) {
+  const offline = useOffline();
+  const [busy, setBusy] = useState(false);
+  if (!offlineSupported) return null;
+  const id = track.deezer_id || track.id;
+  const saved = !!offline[id];
+  const toggle = async (e) => {
+    e.stopPropagation();
+    setBusy(true);
+    try { if (saved) await removeTrackOffline(id); else await saveTrackOffline(track); }
+    catch (err) { alert(err.message); }
+    setBusy(false);
+  };
+  return (
+    <button className="icon-btn" onClick={toggle} disabled={busy}
+      title={saved ? 'Saved offline — tap to remove' : 'Save for offline'}
+      style={{ color: saved ? 'var(--accent)' : undefined }}>
+      <Icon name={busy ? 'spinner' : saved ? 'check' : 'save'} size={18} />
     </button>
   );
 }
@@ -209,6 +238,7 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
         <RadioButton seed={`track:${id}`} />
         <HeartButton trackId={id} track={track} initial={track.favorite} onChange={onFav} />
         <AddToPlaylist trackId={id} track={track} />
+        {available && <OfflineButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {canDelete && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}>
@@ -280,6 +310,7 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
       <div className="tt-actions" onClick={e => e.stopPropagation()}>
         <HeartButton trackId={id} track={track} initial={track.favorite} />
         <AddToPlaylist trackId={id} track={track} />
+        {available && <OfflineButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {available && me?.is_admin && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}><Icon name="trash" size={16} /></button>

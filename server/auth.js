@@ -15,6 +15,11 @@ const TOKEN_PREFIX = 'mcr_';
 const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 const MAX_TOKENS_PER_USER = 50;
 
+// Session cookies carry a high-entropy random token; we store only its SHA-256
+// hash so a leaked database (or a nightly backup) can't be used to resume live
+// sessions. Same reasoning as API tokens above.
+const hashSession = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
+
 /** Shared password policy for new/changed passwords. Returns an error string or null. */
 export function validatePassword(pw) {
   if (!pw || typeof pw !== 'string') return 'Password is required';
@@ -25,11 +30,26 @@ export function validatePassword(pw) {
 export function bootstrapAdmin() {
   const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
   if (count === 0) {
-    const isDefault = config.adminPassword === 'admin';
-    const hash = bcrypt.hashSync(config.adminPassword, 10);
+    // If no ADMIN_PASSWORD was provided, don't fall back to the well-known
+    // "admin" default (a real window where anyone can log in). Generate a strong
+    // random one, print it once to the logs, and force a change on first sign-in.
+    const envHadPassword = !!process.env.ADMIN_PASSWORD;
+    let password = config.adminPassword;
+    let generated = null;
+    if (!envHadPassword) {
+      generated = crypto.randomBytes(12).toString('base64url'); // ~16 chars, 96 bits
+      password = generated;
+    }
+    const mustChange = generated != null || password === 'admin';
+    const hash = bcrypt.hashSync(password, 10);
     db.prepare('INSERT INTO users (username, password_hash, is_admin, must_change_password) VALUES (?, ?, 1, ?)')
-      .run(config.adminUsername, hash, isDefault ? 1 : 0);
-    console.log(`[auth] Created admin user "${config.adminUsername}"${isDefault ? ' with DEFAULT password "admin" — you will be required to change it on first sign-in.' : ''}`);
+      .run(config.adminUsername, hash, mustChange ? 1 : 0);
+    if (generated) {
+      console.log(`[auth] Created admin user "${config.adminUsername}" with a generated password:\n\n    ${generated}\n\n` +
+        `[auth] Sign in with it now — you'll be required to set your own password. (Set ADMIN_PASSWORD to choose your own seed.)`);
+    } else {
+      console.log(`[auth] Created admin user "${config.adminUsername}"${mustChange ? ' with DEFAULT password "admin" — you will be required to change it on first sign-in.' : ''}`);
+    }
   }
   // Drop expired sessions on boot, then hourly.
   cleanupSessions();
@@ -69,16 +89,17 @@ function parseCookies(req) {
 export function authMiddleware(req, res, next) {
   const token = parseCookies(req)[COOKIE];
   if (token) {
+    const tokenHash = hashSession(token);
     const row = db.prepare(`
       SELECT u.id, u.username, u.is_admin, u.must_change_password, s.expires_at FROM sessions s
       JOIN users u ON u.id = s.user_id WHERE s.token = ?
-    `).get(token);
+    `).get(tokenHash);
     if (row && row.expires_at && row.expires_at < new Date().toISOString().slice(0, 19).replace('T', ' ')) {
       // Expired: drop it and treat as signed-out.
-      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(tokenHash);
     } else if (row) {
       req.user = { id: row.id, username: row.username, is_admin: row.is_admin, must_change_password: row.must_change_password };
-      req.sessionToken = token;
+      req.sessionToken = tokenHash;
     }
   }
   // Fall back to a personal access token for programmatic clients. Accept it
@@ -138,15 +159,16 @@ authRouter.post('/login', (req, res) => {
   }
   const token = crypto.randomBytes(32).toString('hex');
   const ttlSec = config.sessionTtlDays * 24 * 60 * 60;
+  // Store only the hash; the raw token lives in the cookie and is never persisted.
   db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', ?))`)
-    .run(token, user.id, `+${config.sessionTtlDays} days`);
+    .run(hashSession(token), user.id, `+${config.sessionTtlDays} days`);
   res.setHeader('Set-Cookie', sessionCookie(token, ttlSec));
   res.json({ id: user.id, username: user.username, is_admin: !!user.is_admin, must_change_password: !!user.must_change_password });
 });
 
 authRouter.post('/logout', (req, res) => {
   const token = parseCookies(req)[COOKIE];
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(hashSession(token));
   res.setHeader('Set-Cookie', sessionCookie('', 0));
   res.json({ ok: true });
 });
