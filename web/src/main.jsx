@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
 import { Icon, Cover } from './ui.jsx';
+import { LangProvider, useT } from './i18n.jsx';
+import { ContextMenuProvider } from './menu.jsx';
 import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix, Offline } from './views.jsx';
 import './styles.css';
 
@@ -191,6 +193,7 @@ function ListenTogether() {
   const [busy, setBusy] = useState(false);
   const ref = useRef(null);
 
+  const tr = useT();
   // Live player snapshot for the sync loops (avoids stale closures in intervals).
   const liveRef = useRef({});
   liveRef.current = { id: p.current ? (p.current.deezer_id || p.current.id) : null, time: p.time, playing: p.playing };
@@ -264,13 +267,13 @@ function ListenTogether() {
   const active = !!session;
   return (
     <div className="eq-wrap" ref={ref}>
-      <button className="icon-btn" onClick={() => setOpen(o => !o)} title="Listen together"
+      <button className="icon-btn" onClick={() => setOpen(o => !o)} title={tr('player.listenTogether')}
         style={{ color: active || open ? 'var(--accent)' : undefined }}>
         <Icon name="users" size={18} />
       </button>
       {open && (
         <div className="listen-panel" onClick={e => e.stopPropagation()}>
-          <div className="eq-head"><span>Listen together</span>{active && <span className="np-live"><span className="np-dot" /> live</span>}</div>
+          <div className="eq-head"><span>{tr('player.listenTogether')}</span>{active && <span className="np-live"><span className="np-dot" /> live</span>}</div>
           {!active ? (
             <div className="listen-body">
               <p className="settings-fieldhint">Play music in sync with friends on this server.</p>
@@ -314,6 +317,7 @@ function ListenTogether() {
 
 /* ---------------------------------------------------------------- Login */
 function Login({ onLogin }) {
+  const t = useT();
   const [u, setU] = useState('');
   const [p, setP] = useState('');
   const [err, setErr] = useState('');
@@ -328,11 +332,11 @@ function Login({ onLogin }) {
     <div className="login">
       <form className="login-card" onSubmit={submit}>
         <div className="brand"><span className="brand-mark" /> Musicarr</div>
-        <p className="login-tag">Your music, your server.</p>
-        <input placeholder="Username" value={u} onChange={e => setU(e.target.value)} autoFocus />
-        <input placeholder="Password" type="password" value={p} onChange={e => setP(e.target.value)} />
+        <p className="login-tag">{t('auth.tagline')}</p>
+        <input placeholder={t('auth.username')} value={u} onChange={e => setU(e.target.value)} autoFocus />
+        <input placeholder={t('auth.password')} type="password" value={p} onChange={e => setP(e.target.value)} />
         {err && <div className="login-err">{err}</div>}
-        <button className="btn-primary lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className="btn-primary lg" disabled={busy}>{busy ? t('auth.signingIn') : t('auth.signIn')}</button>
       </form>
     </div>
   );
@@ -375,6 +379,7 @@ function ForcePasswordChange({ onDone }) {
 
 /* -------------------------------------------------------------- Sidebar */
 function Sidebar({ route, nav, me, onLogout }) {
+  const t = useT();
   const [playlists, setPlaylists] = useState([]);
   const load = useCallback(async () => { try { setPlaylists(await api.get('/api/playlists')); } catch {} }, []);
   useEffect(() => {
@@ -385,7 +390,7 @@ function Sidebar({ route, nav, me, onLogout }) {
   }, [load]);
 
   const createPlaylist = async () => {
-    const name = prompt('New playlist name');
+    const name = prompt(t('nav.newPlaylist'));
     if (!name) return;
     const pl = await api.post('/api/playlists', { name });
     load(); nav({ view: 'playlist', id: pl.id });
@@ -401,27 +406,27 @@ function Sidebar({ route, nav, me, onLogout }) {
     <aside className="sidebar">
       <div className="brand" onClick={() => nav({ view: 'home' })}><span className="brand-mark" /> Musicarr</div>
       <nav className="nav-main">
-        <NavItem view="home" icon="home" label="Home" />
-        <NavItem view="search" icon="search" label="Search" />
-        <NavItem view="explore" icon="compass" label="Explore" />
-        <NavItem view="mixes" icon="sparkles" label="Made for you" />
-        <NavItem view="library" icon="library" label="Library" />
-        <NavItem view="favorites" icon="heart" label="Liked songs" />
-        <NavItem view="following" icon="user" label="Following" />
-        <NavItem view="offline" icon="save" label="Offline" />
-        <NavItem view="downloads" icon="download" label="Downloads" />
+        <NavItem view="home" icon="home" label={t('nav.home')} />
+        <NavItem view="search" icon="search" label={t('nav.search')} />
+        <NavItem view="explore" icon="compass" label={t('nav.explore')} />
+        <NavItem view="mixes" icon="sparkles" label={t('nav.madeForYou')} />
+        <NavItem view="library" icon="library" label={t('nav.library')} />
+        <NavItem view="favorites" icon="heart" label={t('nav.liked')} />
+        <NavItem view="following" icon="user" label={t('nav.following')} />
+        <NavItem view="offline" icon="save" label={t('nav.offline')} />
+        <NavItem view="downloads" icon="download" label={t('nav.downloads')} />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
-        <NavItem view="stats" icon="chart" label="Your stats" />
-        <NavItem view="equalizer" icon="sliders" label="Equalizer" />
-        <NavItem view="profile" icon="user" label="Profile" />
-        {!!me.is_admin && <NavItem view="admin" icon="user" label="Users" />}
-        {!!me.is_admin && <NavItem view="settings" icon="settings" label="Settings" />}
+        <NavItem view="stats" icon="chart" label={t('nav.stats')} />
+        <NavItem view="equalizer" icon="sliders" label={t('nav.equalizer')} />
+        <NavItem view="profile" icon="user" label={t('nav.profile')} />
+        {!!me.is_admin && <NavItem view="admin" icon="user" label={t('nav.users')} />}
+        {!!me.is_admin && <NavItem view="settings" icon="settings" label={t('nav.settings')} />}
       </nav>
       <div className="pl-head">
-        <span>Playlists</span>
-        <button className="icon-btn" onClick={createPlaylist} title="New playlist"><Icon name="plus" size={18} /></button>
+        <span>{t('nav.playlists')}</span>
+        <button className="icon-btn" onClick={createPlaylist} title={t('nav.newPlaylist')}><Icon name="plus" size={18} /></button>
       </div>
       <div className="pl-scroll">
         {playlists.map(pl => (
@@ -436,11 +441,11 @@ function Sidebar({ route, nav, me, onLogout }) {
         ))}
       </div>
       <div className="user-foot">
-        <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title="Profile">
+        <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title={t('nav.profile')}>
           <Icon name="user" size={18} />
           <span className="user-name">{me.username}</span>
         </button>
-        <button className="icon-btn" onClick={onLogout} title="Sign out"><Icon name="logout" size={18} /></button>
+        <button className="icon-btn" onClick={onLogout} title={t('auth.signOut')}><Icon name="logout" size={18} /></button>
       </div>
     </aside>
   );
@@ -482,6 +487,7 @@ function ActivityPanel({ nav, onClose }) {
 /* ----------------------------------------------------------- Player bar */
 function PlayerBar({ onToggleActivity, activityOpen }) {
   const p = usePlayer();
+  const tr = useT();
   const [seekVal, setSeekVal] = useState(null);
   const scrubbing = useRef(false);
   // Commit the scrub on release anywhere on the page, so the time display can
@@ -496,7 +502,7 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
     window.addEventListener('pointercancel', end);
     return () => { window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, [p.seek]);
-  if (!p.current) return <footer className="player empty">Nothing playing</footer>;
+  if (!p.current) return <footer className="player empty">{tr('player.nothingPlaying')}</footer>;
   const t = p.current;
   const pct = p.duration ? ((seekVal ?? p.time) / p.duration) * 100 : 0;
   return (
@@ -529,7 +535,7 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
         </div>
       </div>
       <div className="player-right">
-        <button className="icon-btn" onClick={onToggleActivity} title="Friend activity"
+        <button className="icon-btn" onClick={onToggleActivity} title={tr('player.friendActivity')}
           style={{ color: activityOpen ? 'var(--accent)' : undefined }}>
           <Icon name="user" size={18} />
         </button>
@@ -599,6 +605,14 @@ function App() {
     setDepth(d => d + 1);
     document.querySelector('.main-scroll')?.scrollTo(0, 0);
   }, []);
+
+  // Global navigation requests (e.g. from the right-click context menu, which
+  // has no direct access to `nav`).
+  useEffect(() => {
+    const h = (e) => { if (e.detail?.view) nav(e.detail); };
+    window.addEventListener('musicarr:navigate', h);
+    return () => window.removeEventListener('musicarr:navigate', h);
+  }, [nav]);
   const back = useCallback(() => { window.history.back(); }, []);
 
   const logout = async () => { await api.post('/api/auth/logout'); setMe(null); };
@@ -654,7 +668,11 @@ function App() {
 }
 
 createRoot(document.getElementById('root')).render(
-  <PlayerProvider><App /></PlayerProvider>
+  <LangProvider>
+    <ContextMenuProvider>
+      <PlayerProvider><App /></PlayerProvider>
+    </ContextMenuProvider>
+  </LangProvider>
 );
 
 // Register the service worker for offline support / installable PWA.

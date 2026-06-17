@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { api, fmtTime, usePlayer, useMe, useOffline, saveTrackOffline, removeTrackOffline, offlineSupported } from './store.jsx';
+import { useContextMenu } from './menu.jsx';
+import { useT } from './i18n.jsx';
+
+// Fire a global navigation request (handled by <App>), so deep components like
+// the context menu can route without prop-drilling `nav`.
+const navTo = (route) => window.dispatchEvent(new CustomEvent('musicarr:navigate', { detail: route }));
 
 /* Inline icon set (no dependency). */
 export const Icon = ({ name, size = 20, fill = 'none' }) => {
@@ -190,11 +196,106 @@ export function AddToPlaylist({ trackId, track }) {
   );
 }
 
+/** Build the right-click context menu for a track and return an onContextMenu
+ *  handler. Reused by both the compact TrackRow and the columnar TrackTableRow
+ *  so every track listing exposes the same Musicarr actions. */
+export function useTrackMenu() {
+  const player = usePlayer();
+  const me = useMe();
+  const offline = useOffline();
+  const { openMenu } = useContextMenu() || {};
+  const t = useT();
+
+  return (e, track, opts = {}) => {
+    if (!openMenu) return;
+    const id = track.deezer_id || track.id;
+    const available = track.available || track.file_path;
+    const isOffline = !!offline[id];
+    const items = [];
+
+    if (available) {
+      items.push({ label: t('ctx.play'), icon: 'play', onClick: () => player.playOrToggle(track, opts.tracks, opts.i ?? 0) });
+      items.push({ label: t('ctx.playNext'), icon: 'next', onClick: () => player.playNext(track) });
+      items.push({ label: t('ctx.addToQueue'), icon: 'queue', onClick: () => player.enqueue(track) });
+    } else {
+      items.push({ label: t('ctx.download'), icon: 'download', onClick: () =>
+        api.post('/api/download', { kind: 'track', deezer_id: id, track }).catch(err => alert(err.message)) });
+    }
+    items.push({ label: t('ctx.startRadio'), icon: 'radio', onClick: () => {
+      if (confirmRadioDownloads()) player.startRadio(`track:${id}`).catch(err => alert(err.message));
+    } });
+
+    items.push({ separator: true });
+    items.push({
+      label: track.favorite ? t('ctx.unlike') : t('ctx.like'), icon: 'heart',
+      onClick: async () => {
+        try {
+          if (track.favorite) await api.del(`/api/favorites/${id}`);
+          else await api.put(`/api/favorites/${id}`, track || {});
+          track.favorite = !track.favorite;
+          opts.onFav?.(track.favorite);
+        } catch (err) { alert(err.message); }
+      },
+    });
+    items.push({
+      label: t('ctx.addToPlaylist'), icon: 'plus',
+      emptyLabel: t('ctx.noPlaylists'),
+      loadSubmenu: async () => {
+        const lists = await api.get('/api/playlists').catch(() => []);
+        const own = lists.filter(l => !l.shared);
+        const addTo = (pid) => api.post(`/api/playlists/${pid}/tracks`, { track_id: id, track })
+          .then(() => window.dispatchEvent(new Event('musicarr:playlists-changed')))
+          .catch(err => alert(err.message));
+        const out = [{
+          label: t('ctx.newPlaylist'), icon: 'plus', onClick: async () => {
+            const name = prompt(t('nav.newPlaylist'));
+            if (!name) return;
+            try { const pl = await api.post('/api/playlists', { name }); await addTo(pl.id); }
+            catch (err) { alert(err.message); }
+          },
+        }];
+        if (own.length) out.push({ separator: true });
+        for (const l of own) out.push({ label: l.name, onClick: () => addTo(l.id) });
+        return out;
+      },
+    });
+
+    if (track.artist_id || track.album_id) {
+      items.push({ separator: true });
+      if (track.artist_id) items.push({ label: t('ctx.goToArtist'), icon: 'user', onClick: () => navTo({ view: 'artist', id: track.artist_id }) });
+      if (track.album_id) items.push({ label: t('ctx.goToAlbum'), icon: 'library', onClick: () => navTo({ view: 'album', id: track.album_id }) });
+    }
+
+    if (available && offlineSupported) {
+      items.push({ separator: true });
+      items.push({
+        label: isOffline ? t('ctx.removeOffline') : t('ctx.saveOffline'), icon: isOffline ? 'check' : 'save',
+        onClick: () => (isOffline ? removeTrackOffline(id) : saveTrackOffline(track)).catch(err => alert(err.message)),
+      });
+    }
+
+    if (available && me?.is_admin) {
+      items.push({ separator: true });
+      items.push({
+        label: t('ctx.deleteFromLibrary'), icon: 'trash', danger: true,
+        onClick: async () => {
+          if (!confirm(`Delete "${track.title}" from disk?`)) return;
+          try { await api.del(`/api/library/${id}`); window.dispatchEvent(new Event('musicarr:library-changed')); opts.onDelete?.(id); }
+          catch (err) { alert(err.message); }
+        },
+      });
+    }
+
+    openMenu(e, items);
+  };
+}
+
 /** A single row in a track list. `tracks`/`i` allow play-in-context.
  *  `shuffle` (used by playlists) shuffles the whole list into the queue. */
 export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete }) {
   const player = usePlayer();
   const me = useMe();
+  const trackMenu = useTrackMenu();
   const [hidden, setHidden] = useState(false);
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
@@ -221,7 +322,8 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
   };
   if (hidden) return null;
   return (
-    <div className={`track-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}>
+    <div className={`track-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}
+      onContextMenu={(e) => trackMenu(e, track, { tracks, i, onFav, onDelete: (delId) => { if (onDelete) onDelete(delId); else setHidden(true); } })}>
       <div className="track-idx">
         {isCurrent && player.playing
           ? <span className="eq"><i /><i /><i /></span>
@@ -263,6 +365,7 @@ function fmtDate(s) {
 function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid }) {
   const player = usePlayer();
   const me = useMe();
+  const trackMenu = useTrackMenu();
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
   const available = track.available || track.file_path;
@@ -280,7 +383,8 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
   if (hidden) return null;
 
   return (
-    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} style={grid} onClick={onPlay}>
+    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} style={grid} onClick={onPlay}
+      onContextMenu={(e) => trackMenu(e, track, { tracks, i, onDelete: () => setHidden(true) })}>
       <div className="tt-idx">
         {isCurrent && player.playing
           ? <span className="eq"><i /><i /><i /></span>

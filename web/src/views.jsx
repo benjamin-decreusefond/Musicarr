@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer, useOffline } from './store.jsx';
 import { Icon, Cover, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
+import { useT, useLang, LANGS } from './i18n.jsx';
 
 function useAsync(fn, deps) {
   const [data, setData] = useState(null);
@@ -46,6 +47,7 @@ function ImportPlaylistButton({ playlist, nav }) {
 }
 
 export function Home({ nav }) {
+  const t = useT();
   const { data, err, loading } = useAsync(() => api.get('/api/home'), []);
   const [recs, setRecs] = useState(null);
   const [history, setHistory] = useState(null);
@@ -58,7 +60,7 @@ export function Home({ nav }) {
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
   const hour = new Date().getHours();
-  const greet = hour < 5 ? 'Late night' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const greet = hour < 5 ? t('greet.night') : hour < 12 ? t('greet.morning') : hour < 18 ? t('greet.afternoon') : t('greet.evening');
   return (
     <div className="page">
       <h1 className="page-h1">{greet}</h1>
@@ -1298,6 +1300,24 @@ function fmtDate(s) {
 }
 
 /* -------------------------------------------------------------- Profile */
+// Interface language selector (persisted to localStorage; applies instantly).
+function LanguagePicker() {
+  const { lang, setLang, t } = useLang();
+  return (
+    <section className="page-block settings-section">
+      <h2 className="row-title">{t('settings.language')}</h2>
+      <p className="settings-hint">{t('settings.languageHint')}</p>
+      <div className="lang-grid">
+        {LANGS.map(l => (
+          <button key={l.code} className={`lang-btn ${lang === l.code ? 'on' : ''}`} onClick={() => setLang(l.code)}>
+            {l.label}{lang === l.code ? <Icon name="check" size={16} /> : null}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function Profile({ me, nav }) {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
@@ -1333,6 +1353,7 @@ export function Profile({ me, nav }) {
           </div>
         </div>
       </section>
+      <LanguagePicker />
       <section className="page-block settings-section">
         <h2 className="row-title">Change password</h2>
         <form className="profile-form" onSubmit={submit}>
