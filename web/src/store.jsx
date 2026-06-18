@@ -58,10 +58,14 @@ export function PlayerProvider({ children }) {
   const audioCtxRef = useRef(null);
   const filtersRef = useRef(null);
   // Separate audio element for 30s previews of not-yet-downloaded tracks, kept
-  // independent of the main queue/player.
+  // independent of the main queue/player but surfaced in the player bar.
   const previewRef = useRef(null);
   const [previewId, setPreviewId] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTrackObj, setPreviewTrackObj] = useState(null);
+  const [previewTime, setPreviewTime] = useState(0);
+  const [previewDuration, setPreviewDuration] = useState(0);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
   const [queue, setQueue] = useState([]);
   const [index, setIndex] = useState(-1);
   const [playing, setPlaying] = useState(false);
@@ -191,7 +195,7 @@ export function PlayerProvider({ children }) {
       skipFailsRef.current = 0; setPlaying(true);
       // Real playback wins over a preview — never play both at once.
       if (previewRef.current) { previewRef.current.pause(); previewRef.current.removeAttribute('src'); }
-      setPreviewId(null); setPreviewLoading(false);
+      setPreviewId(null); setPreviewLoading(false); setPreviewTrackObj(null); setPreviewPlaying(false);
     };
     const onPause = () => setPlaying(false);
     // A track whose file is missing/broken must not silently stop the queue:
@@ -234,29 +238,49 @@ export function PlayerProvider({ children }) {
   const stopPreview = useCallback(() => {
     const a = previewRef.current;
     if (a) { a.pause(); a.removeAttribute('src'); }
-    setPreviewId(null); setPreviewLoading(false);
+    setPreviewId(null); setPreviewLoading(false); setPreviewTrackObj(null);
+    setPreviewPlaying(false); setPreviewTime(0); setPreviewDuration(0);
   }, []);
 
-  // Toggle a 30s Deezer preview for a track (proxied via /api/preview). Pauses
-  // the main player while it plays; clicking the same track again stops it.
+  // Lazily create the preview element and wire its state into the player bar.
+  const ensurePreview = useCallback(() => {
+    if (previewRef.current) return previewRef.current;
+    const a = new Audio();
+    a.volume = volume;
+    a.addEventListener('timeupdate', () => setPreviewTime(a.currentTime || 0));
+    a.addEventListener('durationchange', () => setPreviewDuration(Number.isFinite(a.duration) ? a.duration : 0));
+    a.addEventListener('play', () => setPreviewPlaying(true));
+    a.addEventListener('pause', () => setPreviewPlaying(false));
+    a.addEventListener('playing', () => setPreviewLoading(false));
+    a.addEventListener('ended', () => { setPreviewPlaying(false); });
+    a.addEventListener('error', () => { setPreviewLoading(false); setPreviewPlaying(false); });
+    previewRef.current = a;
+    return a;
+  }, [volume]);
+
+  // Start (or restart) a 30s Deezer preview for a track, proxied via
+  // /api/preview. Pauses the main player; the preview shows in the player bar
+  // with its own play/pause + seek. Previewing the same track again stops it.
   const previewTrack = useCallback((track) => {
     const id = track?.deezer_id || track?.id;
     if (!id) return;
     if (previewId === id) { stopPreview(); return; }
-    if (!previewRef.current) {
-      const a = new Audio();
-      a.volume = volume;
-      a.addEventListener('ended', () => { setPreviewId(null); setPreviewLoading(false); });
-      a.addEventListener('playing', () => setPreviewLoading(false));
-      a.addEventListener('error', () => { setPreviewId(null); setPreviewLoading(false); });
-      previewRef.current = a;
-    }
+    const a = ensurePreview();
     audioRef.current?.pause(); // silence the main player
-    const a = previewRef.current;
     a.src = `/api/preview/${id}`;
-    setPreviewId(id); setPreviewLoading(true);
-    a.play().catch(() => { setPreviewId(null); setPreviewLoading(false); });
-  }, [previewId, stopPreview, volume]);
+    setPreviewId(id); setPreviewTrackObj(track); setPreviewLoading(true);
+    setPreviewTime(0); setPreviewDuration(0);
+    a.play().catch(() => { setPreviewLoading(false); setPreviewPlaying(false); });
+  }, [previewId, stopPreview, ensurePreview]);
+
+  // Pause/resume the active preview (used by the player-bar play button).
+  const previewToggle = useCallback(() => {
+    const a = previewRef.current;
+    if (!a || !previewId) return;
+    if (a.paused) { audioRef.current?.pause(); a.play().catch(() => {}); } else a.pause();
+  }, [previewId]);
+
+  const previewSeek = useCallback((t) => { if (previewRef.current) previewRef.current.currentTime = t; }, []);
 
   const currentId = current ? (current.deezer_id || current.id) : null;
   useEffect(() => {
@@ -488,7 +512,8 @@ export function PlayerProvider({ children }) {
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
     playList, playTrack, playOrToggle, toggle, play, pause, next, prev, seek,
     enqueue, playNext, moveInQueue, removeFromQueue, playAt,
-    previewTrack, stopPreview, previewId, previewLoading,
+    previewTrack, stopPreview, previewToggle, previewSeek,
+    previewId, previewLoading, previewTrackObj, previewTime, previewDuration, previewPlaying,
     startRadio, stopRadio, radioActive,
     repeat, cycleRepeat,
     hasNext: index < queue.length - 1 || (repeat !== 'off' && queue.length > 0),

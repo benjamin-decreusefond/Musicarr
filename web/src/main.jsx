@@ -503,6 +503,46 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
     window.addEventListener('pointercancel', end);
     return () => { window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, [p.seek]);
+
+  // Preview mode: a 30s clip takes over the bar with its own play/pause + seek.
+  if (p.previewId) {
+    const pt = p.previewTrackObj || {};
+    const pdur = p.previewDuration || 30;
+    const ppct = pdur ? (p.previewTime / pdur) * 100 : 0;
+    return (
+      <footer className="player">
+        <div className="player-track">
+          <Cover src={pt.cover} size={56} />
+          <div className="player-meta">
+            <div className="player-title">{pt.title || tr('player.preview')}</div>
+            <div className="player-artist">{pt.artist}<span className="preview-tag">{tr('player.preview')}</span></div>
+          </div>
+        </div>
+        <div className="player-center">
+          <div className="player-controls">
+            <button className="play-btn" onClick={p.previewToggle} title={tr('player.preview')}>
+              <Icon name={p.previewLoading ? 'spinner' : p.previewPlaying ? 'pause' : 'play'} size={22} fill="currentColor" />
+            </button>
+          </div>
+          <div className="player-seek">
+            <span className="t">{fmtTime(p.previewTime)}</span>
+            <input type="range" min={0} max={pdur} step="0.1" value={Math.min(p.previewTime, pdur)}
+              onChange={e => p.previewSeek(parseFloat(e.target.value))} style={{ '--pct': `${ppct}%` }} />
+            <span className="t">{fmtTime(pdur)}</span>
+          </div>
+        </div>
+        <div className="player-right">
+          <button className="btn-ghost sm" onClick={p.stopPreview} title={tr('player.stopPreview')}>
+            <Icon name="close" size={16} /> {tr('player.stopPreview')}
+          </button>
+          <Icon name="vol" size={18} />
+          <input className="vol" type="range" min={0} max={1} step="0.01" value={p.volume}
+            onChange={e => p.setVolume(parseFloat(e.target.value))} style={{ '--pct': `${p.volume * 100}%` }} />
+        </div>
+      </footer>
+    );
+  }
+
   const t = p.current;
   const pct = p.duration ? ((seekVal ?? p.time) / p.duration) * 100 : 0;
   return (

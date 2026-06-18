@@ -476,3 +476,7 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
    bleed into / overlap the adjacent cover art. */
 .tt-idx .eq, .track-idx .eq { justify-content: center; max-width: 100%; }
 .tt-idx, .track-idx { overflow: hidden; }
+
+/* ---- Preview mode (player bar) ---- */
+.preview-tag { margin-left: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--accent-ink); background: var(--accent); border-radius: 999px; padding: 1px 7px; vertical-align: middle; }
+.player-right .btn-ghost.sm { display: inline-flex; align-items: center; gap: 6px; }
