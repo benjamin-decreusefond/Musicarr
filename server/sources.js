@@ -227,6 +227,13 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
     const artistHits = must.filter(t => pathHay.includes(t)).length;
     const durKnown = durationSec && f.length;
     const durClose = durKnown && Math.abs(f.length - durationSec) <= 12;
+    // Hard duration gate: when we know both the requested track's length and the
+    // candidate's, reject recordings that are clearly a different length — a
+    // remix, radio edit, live take, etc. — even when the name and artist match.
+    // (This is what stops a "Nightcall (Angèle remix)" file, mislabelled with the
+    // plain title, from satisfying a request for the original Kavinsky version.)
+    const durTol = durationSec ? Math.max(12, durationSec * 0.06) : 0;
+    if (durKnown && Math.abs(f.length - durationSec) > durTol) continue;
 
     if (want.length && titleHits === 0) {
       // Title not in the filename. Only trust it when the filename carries no
@@ -253,7 +260,6 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
     score -= Math.min(20, (f.queueLength || 0));                      // long queue is bad
     score += Math.min(10, (f.uploadSpeed || 0) / 100000);
     if (durClose) score += 10;                                        // duration confirms it
-    else if (durKnown && Math.abs(f.length - durationSec) > 15) score -= 15;
     // Prefer the canonical studio recording: penalize live/remix/etc. unless the
     // requested title itself asks for that variant.
     const wantNorm = norm(title);
