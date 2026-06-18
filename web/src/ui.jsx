@@ -47,6 +47,7 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     save: 'M6 19a4 4 0 0 1-.6-8A6 6 0 0 1 17 8.5a4.5 4.5 0 0 1 .5 9H6ZM9 13l3 3 3-3M12 9v7',
     addCircle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v8M8 12h8',
     camera: 'M3 8a2 2 0 0 1 2-2h2l1.5-2h7L19 6h0a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
+    headphones: 'M4 14v-1a8 8 0 0 1 16 0v1M3 16a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h0a2 2 0 0 1-2-2zM21 16a2 2 0 0 0-2-2h0a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2z',
   }[name];
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
@@ -91,6 +92,22 @@ export function DownloadButton({ kind, id, label }) {
   return (
     <button className="icon-btn" onClick={go} title={`Download ${label}`} disabled={state !== 'idle'}>
       <Icon name={state === 'busy' ? 'spinner' : state === 'done' ? 'check' : 'download'} size={18} />
+    </button>
+  );
+}
+
+// Play a 30-second Deezer preview of a track (for songs not downloaded yet).
+export function PreviewButton({ track }) {
+  const player = usePlayer();
+  const t = useT();
+  const id = track.deezer_id || track.id;
+  const active = player.previewId === id;
+  const loading = active && player.previewLoading;
+  return (
+    <button className="icon-btn" title={t('ctx.preview')}
+      onClick={(e) => { e.stopPropagation(); player.previewTrack(track); }}
+      style={{ color: active ? 'var(--accent)' : undefined }}>
+      <Icon name={loading ? 'spinner' : active ? 'pause' : 'headphones'} size={18} />
     </button>
   );
 }
@@ -230,6 +247,7 @@ export function useTrackMenu() {
       items.push({ label: t('ctx.playNext'), icon: 'next', onClick: () => player.playNext(track) });
       items.push({ label: t('ctx.addToQueue'), icon: 'queue', onClick: () => player.enqueue(track) });
     } else {
+      items.push({ label: t('ctx.preview'), icon: 'headphones', onClick: () => player.previewTrack(track) });
       items.push({ label: t('ctx.download'), icon: 'download', onClick: () =>
         api.post('/api/download', { kind: 'track', deezer_id: id, track }).catch(err => alert(err.message)) });
     }
@@ -372,6 +390,7 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
         <HeartButton trackId={id} track={track} initial={track.favorite} onChange={onFav} />
         <AddToPlaylist trackId={id} track={track} />
         {available && track.in_library === 0 && <AddToLibraryButton track={track} />}
+        {!available && !pending && <PreviewButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {canDelete && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}>
@@ -446,6 +465,7 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
         <HeartButton trackId={id} track={track} initial={track.favorite} />
         <AddToPlaylist trackId={id} track={track} />
         {available && track.in_library === 0 && <AddToLibraryButton track={track} />}
+        {!available && !pending && <PreviewButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {available && me?.is_admin && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}><Icon name="trash" size={16} /></button>

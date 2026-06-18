@@ -34,7 +34,7 @@ const STRINGS = {
     'ctx.deleteFromLibrary': 'Delete from library', 'ctx.openAlbum': 'Open album',
     'ctx.downloadAlbum': 'Download album', 'ctx.openArtist': 'Open artist',
     'ctx.noPlaylists': 'No playlists yet',
-    'ctx.addToLibrary': 'Add to library', 'ctx.viewProfile': 'View profile',
+    'ctx.preview': 'Preview', 'ctx.addToLibrary': 'Add to library', 'ctx.viewProfile': 'View profile',
     'ctx.follow': 'Follow', 'ctx.unfollow': 'Unfollow',
     'settings.photo': 'Profile picture', 'settings.changePhoto': 'Change picture', 'settings.removePhoto': 'Remove',
 
@@ -74,7 +74,7 @@ const STRINGS = {
     'ctx.deleteFromLibrary': 'Supprimer de la bibliothèque', 'ctx.openAlbum': "Ouvrir l'album",
     'ctx.downloadAlbum': "Télécharger l'album", 'ctx.openArtist': "Ouvrir l'artiste",
     'ctx.noPlaylists': 'Aucune playlist',
-    'ctx.addToLibrary': 'Ajouter à la bibliothèque', 'ctx.viewProfile': 'Voir le profil',
+    'ctx.preview': 'Aperçu', 'ctx.addToLibrary': 'Ajouter à la bibliothèque', 'ctx.viewProfile': 'Voir le profil',
     'ctx.follow': 'Suivre', 'ctx.unfollow': 'Ne plus suivre',
     'settings.photo': 'Photo de profil', 'settings.changePhoto': 'Changer la photo', 'settings.removePhoto': 'Retirer',
 
@@ -114,7 +114,7 @@ const STRINGS = {
     'ctx.deleteFromLibrary': 'Eliminar de la biblioteca', 'ctx.openAlbum': 'Abrir álbum',
     'ctx.downloadAlbum': 'Descargar álbum', 'ctx.openArtist': 'Abrir artista',
     'ctx.noPlaylists': 'Aún no hay listas',
-    'ctx.addToLibrary': 'Añadir a la biblioteca', 'ctx.viewProfile': 'Ver perfil',
+    'ctx.preview': 'Vista previa', 'ctx.addToLibrary': 'Añadir a la biblioteca', 'ctx.viewProfile': 'Ver perfil',
     'ctx.follow': 'Seguir', 'ctx.unfollow': 'Dejar de seguir',
     'settings.photo': 'Foto de perfil', 'settings.changePhoto': 'Cambiar foto', 'settings.removePhoto': 'Quitar',
 
@@ -154,7 +154,7 @@ const STRINGS = {
     'ctx.deleteFromLibrary': 'Aus Bibliothek löschen', 'ctx.openAlbum': 'Album öffnen',
     'ctx.downloadAlbum': 'Album herunterladen', 'ctx.openArtist': 'Künstler öffnen',
     'ctx.noPlaylists': 'Noch keine Playlists',
-    'ctx.addToLibrary': 'Zur Bibliothek hinzufügen', 'ctx.viewProfile': 'Profil ansehen',
+    'ctx.preview': 'Vorschau', 'ctx.addToLibrary': 'Zur Bibliothek hinzufügen', 'ctx.viewProfile': 'Profil ansehen',
     'ctx.follow': 'Folgen', 'ctx.unfollow': 'Nicht mehr folgen',
     'settings.photo': 'Profilbild', 'settings.changePhoto': 'Bild ändern', 'settings.removePhoto': 'Entfernen',
 
