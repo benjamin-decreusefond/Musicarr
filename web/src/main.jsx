@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
-import { Icon, Cover, Avatar, useUserMenu } from './ui.jsx';
+import { Icon, Cover, Avatar, TrackArtists, useUserMenu } from './ui.jsx';
 import { LangProvider, useT } from './i18n.jsx';
 import { ContextMenuProvider } from './menu.jsx';
 import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
@@ -106,7 +106,7 @@ function QueuePanel() {
               <span className="queue-idx">{i === p.index && p.playing ? <span className="eq"><i /><i /><i /></span> : i + 1}</span>
               <span className="queue-meta">
                 <span className="queue-title">{t.title}</span>
-                <span className="queue-artist">{t.artist}</span>
+                <span className="queue-artist"><TrackArtists track={t} /></span>
               </span>
             </button>
             <div className="queue-actions">
@@ -553,7 +553,7 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
             <Cover src={t.cover} size={56} />
             <div className="player-meta">
               <div className="player-title">{t.title}</div>
-              <div className="player-artist">{t.artist}</div>
+              <div className="player-artist"><TrackArtists track={t} /></div>
             </div>
           </>
         ) : (
@@ -604,7 +604,7 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
 /* ----------------------------------------------------------- URL routing */
 // Keep the current view in the address bar so a refresh restores it (the
 // server serves index.html for any non-API path, so deep links work too).
-const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre', 'user']);
+const VIEWS_WITH_ID = new Set(['artist', 'album', 'playlist', 'dplaylist', 'genre', 'user', 'stats']);
 const VIEWS_WITH_SLUG = new Set(['mood', 'mix']); // string id rather than numeric
 
 function routeToPath({ view, id }) {
@@ -688,7 +688,7 @@ function App() {
     case 'explore': page = <Explore nav={nav} />; break;
     case 'mixes': page = <MadeForYou nav={nav} />; break;
     case 'mix': page = <Mix id={route.id} nav={nav} />; break;
-    case 'stats': page = <Stats nav={nav} />; break;
+    case 'stats': page = <Stats nav={nav} userId={route.id || null} />; break;
     case 'genre': page = <Genre id={route.id} nav={nav} />; break;
     case 'mood': page = <Mood slug={route.id} nav={nav} />; break;
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;

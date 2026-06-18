@@ -341,6 +341,27 @@ export function useUserMenu() {
 
 /** A single row in a track list. `tracks`/`i` allow play-in-context.
  *  `shuffle` (used by playlists) shuffles the whole list into the queue. */
+/** Render a track's artists: the main artist plus any featured contributors
+ *  (Deezer), comma-separated and each linkable to its artist page when `nav` is
+ *  given. Falls back to the single artist string for library/DB tracks. */
+export function TrackArtists({ track, nav }) {
+  const mainId = track.artist_id;
+  const link = (name, id) => (nav && id)
+    ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'artist', id }); }}>{name}</span>
+    : <span>{name}</span>;
+  const extra = (track.contributors || []).filter(c => c && c.name && c.id !== mainId);
+  if (!extra.length) return link(track.artist, mainId);
+  const seen = new Set([(track.artist || '').toLowerCase()]);
+  const parts = [link(track.artist, mainId)];
+  for (const c of extra) {
+    const key = c.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(link(c.name, c.id));
+  }
+  return <>{parts.map((p, idx) => <span key={idx}>{idx ? ', ' : ''}{p}</span>)}</>;
+}
+
 export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete }) {
   const player = usePlayer();
   const me = useMe();
@@ -382,7 +403,7 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
       {showAlbum && <Cover src={track.cover} size={40} />}
       <div className="track-main">
         <div className="track-title">{track.title}</div>
-        <div className="track-sub">{track.artist}{showAlbum && track.album ? ` · ${track.album}` : ''}</div>
+        <div className="track-sub"><TrackArtists track={track} />{showAlbum && track.album ? ` · ${track.album}` : ''}</div>
       </div>
       {pending ? <span className="badge">{pending}</span> : (!available && <span className="badge">Not downloaded</span>)}
       <div className="track-actions" onClick={e => e.stopPropagation()}>
@@ -449,9 +470,7 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
         </div>
       </div>
       <div className="tt-artist">
-        {nav && track.artist_id
-          ? <span className="link" onClick={e => { e.stopPropagation(); nav({ view: 'artist', id: track.artist_id }); }}>{track.artist}</span>
-          : track.artist}
+        <TrackArtists track={track} nav={nav} />
       </div>
       {showAlbum && (
         <div className="tt-album">

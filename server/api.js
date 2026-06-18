@@ -203,7 +203,7 @@ api.get('/search', async (req, res) => {
         available: !!haveAlbum.get(a.id),
       })),
       tracks: (tracksR.data || []).map(t => ({
-        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
         duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
       })),
@@ -295,7 +295,7 @@ api.get('/album/:id', async (req, res) => {
       cover: album.cover_big || album.cover_medium, release_date: album.release_date,
       nb_tracks: album.nb_tracks,
       tracks: (album.tracks?.data || []).map(t => ({
-        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         duration: t.duration, track_position: t.track_position,
         available: !!haveTrack.get(t.id)?.file_path,
       })),
@@ -316,7 +316,7 @@ api.get('/home', async (req, res) => {
     ]);
     res.json({
       tracks: (tracks.data || []).map(t => ({
-        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium, duration: t.duration,
       })),
       albums: (albums.data || []).map(a => ({ id: a.id, title: a.title, artist: a.artist?.name, artist_id: a.artist?.id, cover: a.cover_medium })),
@@ -342,7 +342,7 @@ api.get('/deezer-playlist/:id', async (req, res) => {
       id: pl.id, title: pl.title, cover: pl.picture_big || pl.picture_medium,
       by: pl.creator?.name || pl.user?.name || 'Deezer', nb_tracks: pl.nb_tracks,
       tracks: (pl.tracks?.data || []).map(t => ({
-        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
         duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
       })),
@@ -443,7 +443,7 @@ api.get('/mood/:slug', async (req, res) => {
       const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
       const full = await deezerGet(`playlist/${playlists[0].id}`);
       tracks = (full.tracks?.data || []).slice(0, 40).map(t => ({
-        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
         duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
       }));
@@ -477,7 +477,7 @@ api.get('/genre/:id', async (req, res) => {
         nb_tracks: p.nb_tracks, by: p.user?.name || 'Deezer',
       })),
       tracks: (chart.tracks?.data || []).map(t => ({
-        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+        id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
         duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
       })),
@@ -774,7 +774,7 @@ api.delete('/playlists/:id/shares/:userId', (req, res) => {
 const haveTrackStmt = () => db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
 function mapTrack(t, have) {
   return {
-    id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id,
+    id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
     album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
     duration: t.duration, available: !!have.get(t.id)?.file_path,
   };
@@ -857,7 +857,17 @@ api.put('/preferences', (req, res) => {
 // `range` selects the window: 'month' (30d), 'year' (365d) or 'all' (default).
 const STATS_WINDOWS = { week: '-7 days', month: '-30 days', year: '-365 days' };
 api.get('/stats', (req, res) => {
-  const userId = req.user.id;
+  // Optionally view another user's stats (?user=:id). Profiles are public to any
+  // signed-in user (same as /api/social/users/:id), so no extra gate is needed.
+  const requested = parseInt(req.query.user, 10);
+  let userId = req.user.id;
+  let username = null;
+  if (Number.isFinite(requested) && requested !== req.user.id) {
+    const u = db.prepare('SELECT id, username FROM users WHERE id = ?').get(requested);
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    userId = u.id;
+    username = u.username;
+  }
   const rangeKey = STATS_WINDOWS[req.query.range] ? req.query.range : 'all';
   // A SQL WHERE fragment + bound args for the selected window.
   const since = STATS_WINDOWS[rangeKey];
@@ -903,7 +913,7 @@ api.get('/stats', (req, res) => {
     GROUP BY day ORDER BY day
   `).all(userId);
 
-  res.json({ range: rangeKey, totals, topArtists, topTracks, topAlbums, daily });
+  res.json({ range: rangeKey, username, totals, topArtists, topTracks, topAlbums, daily });
 });
 
 /* ----------------------------------------------------- Made-for-you mixes */
