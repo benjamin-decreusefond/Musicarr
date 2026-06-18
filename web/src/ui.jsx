@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { api, fmtTime, usePlayer, useMe, useOffline, saveTrackOffline, removeTrackOffline, offlineSupported } from './store.jsx';
+import { api, fmtTime, usePlayer, useMe } from './store.jsx';
+import { useContextMenu } from './menu.jsx';
+import { useT } from './i18n.jsx';
+
+// Fire a global navigation request (handled by <App>), so deep components like
+// the context menu can route without prop-drilling `nav`.
+const navTo = (route) => window.dispatchEvent(new CustomEvent('musicarr:navigate', { detail: route }));
 
 /* Inline icon set (no dependency). */
 export const Icon = ({ name, size = 20, fill = 'none' }) => {
@@ -39,6 +45,9 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     users: 'M16 14c2.7 0 5 1.8 5 4v2H11v-2c0-2.2 2.3-4 5-4ZM8.5 13C10.4 13 12 14.3 12 16v2H1v-2c0-1.7 1.6-3 3.5-3M8 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6M16.5 5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5',
     cast: 'M2 8V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7M2 12a8 8 0 0 1 8 8M2 16a4 4 0 0 1 4 4M2 20h0',
     save: 'M6 19a4 4 0 0 1-.6-8A6 6 0 0 1 17 8.5a4.5 4.5 0 0 1 .5 9H6ZM9 13l3 3 3-3M12 9v7',
+    addCircle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v8M8 12h8',
+    camera: 'M3 8a2 2 0 0 1 2-2h2l1.5-2h7L19 6h0a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
+    headphones: 'M4 14v-1a8 8 0 0 1 16 0v1M3 16a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h0a2 2 0 0 1-2-2zM21 16a2 2 0 0 0-2-2h0a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2z',
   }[name];
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
@@ -59,6 +68,19 @@ export function Cover({ src, size, round, alt }) {
   );
 }
 
+// Round user avatar: shows the uploaded picture when `src` is set, otherwise a
+// neutral person glyph. Used in the sidebar, friend activity and profiles.
+export function Avatar({ src, size = 44, className = '' }) {
+  return (
+    <div className={`user-avatar ${className}`}
+      style={src
+        ? { width: size, height: size, backgroundImage: `url(${src})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+        : { width: size, height: size }}>
+      {!src && <Icon name="user" size={Math.max(14, Math.round(size * 0.45))} />}
+    </div>
+  );
+}
+
 export function DownloadButton({ kind, id, label }) {
   const [state, setState] = useState('idle');
   const go = async (e) => {
@@ -70,6 +92,45 @@ export function DownloadButton({ kind, id, label }) {
   return (
     <button className="icon-btn" onClick={go} title={`Download ${label}`} disabled={state !== 'idle'}>
       <Icon name={state === 'busy' ? 'spinner' : state === 'done' ? 'check' : 'download'} size={18} />
+    </button>
+  );
+}
+
+// Play a 30-second Deezer preview of a track (for songs not downloaded yet).
+export function PreviewButton({ track }) {
+  const player = usePlayer();
+  const t = useT();
+  const id = track.deezer_id || track.id;
+  const active = player.previewId === id;
+  const loading = active && player.previewLoading;
+  return (
+    <button className="icon-btn" title={t('ctx.preview')}
+      onClick={(e) => { e.stopPropagation(); player.previewTrack(track); }}
+      style={{ color: active ? 'var(--accent)' : undefined }}>
+      <Icon name={loading ? 'spinner' : active ? 'pause' : 'headphones'} size={18} />
+    </button>
+  );
+}
+
+// Promote an already-on-server track into the shared Library (e.g. a song seen
+// in another user's activity that isn't in the library yet).
+export function AddToLibraryButton({ track, onAdded }) {
+  const [state, setState] = useState('idle');
+  const t = useT();
+  const id = track.deezer_id || track.id;
+  const go = async (e) => {
+    e.stopPropagation();
+    setState('busy');
+    try {
+      await api.put(`/api/library/${id}`, {});
+      setState('done');
+      window.dispatchEvent(new Event('musicarr:library-changed'));
+      onAdded?.();
+    } catch (err) { setState('idle'); alert(err.message); }
+  };
+  return (
+    <button className="icon-btn" onClick={go} title={t('ctx.addToLibrary')} disabled={state !== 'idle'}>
+      <Icon name={state === 'busy' ? 'spinner' : state === 'done' ? 'check' : 'addCircle'} size={18} />
     </button>
   );
 }
@@ -92,30 +153,6 @@ export function RadioButton({ seed }) {
   return (
     <button className="icon-btn" onClick={go} title="Start radio (auto-downloads similar songs)">
       <Icon name="radio" size={18} />
-    </button>
-  );
-}
-
-// Save/remove a track for offline playback (cached in the browser via the
-// service worker). Only shown for tracks already available on disk.
-export function OfflineButton({ track }) {
-  const offline = useOffline();
-  const [busy, setBusy] = useState(false);
-  if (!offlineSupported) return null;
-  const id = track.deezer_id || track.id;
-  const saved = !!offline[id];
-  const toggle = async (e) => {
-    e.stopPropagation();
-    setBusy(true);
-    try { if (saved) await removeTrackOffline(id); else await saveTrackOffline(track); }
-    catch (err) { alert(err.message); }
-    setBusy(false);
-  };
-  return (
-    <button className="icon-btn" onClick={toggle} disabled={busy}
-      title={saved ? 'Saved offline — tap to remove' : 'Save for offline'}
-      style={{ color: saved ? 'var(--accent)' : undefined }}>
-      <Icon name={busy ? 'spinner' : saved ? 'check' : 'save'} size={18} />
     </button>
   );
 }
@@ -190,11 +227,124 @@ export function AddToPlaylist({ trackId, track }) {
   );
 }
 
+/** Build the right-click context menu for a track and return an onContextMenu
+ *  handler. Reused by both the compact TrackRow and the columnar TrackTableRow
+ *  so every track listing exposes the same Musicarr actions. */
+export function useTrackMenu() {
+  const player = usePlayer();
+  const me = useMe();
+  const { openMenu } = useContextMenu() || {};
+  const t = useT();
+
+  return (e, track, opts = {}) => {
+    if (!openMenu) return;
+    const id = track.deezer_id || track.id;
+    const available = track.available || track.file_path;
+    const items = [];
+
+    if (available) {
+      items.push({ label: t('ctx.play'), icon: 'play', onClick: () => player.playOrToggle(track, opts.tracks, opts.i ?? 0) });
+      items.push({ label: t('ctx.playNext'), icon: 'next', onClick: () => player.playNext(track) });
+      items.push({ label: t('ctx.addToQueue'), icon: 'queue', onClick: () => player.enqueue(track) });
+    } else {
+      items.push({ label: t('ctx.preview'), icon: 'headphones', onClick: () => player.previewTrack(track) });
+      items.push({ label: t('ctx.download'), icon: 'download', onClick: () =>
+        api.post('/api/download', { kind: 'track', deezer_id: id, track }).catch(err => alert(err.message)) });
+    }
+    // Already on the server but not in the shared Library yet → offer to add it.
+    if (available && track.in_library === 0) {
+      items.push({ label: t('ctx.addToLibrary'), icon: 'addCircle', onClick: async () => {
+        try { await api.put(`/api/library/${id}`, {}); track.in_library = 1; window.dispatchEvent(new Event('musicarr:library-changed')); opts.onAddedToLibrary?.(); }
+        catch (err) { alert(err.message); }
+      } });
+    }
+    items.push({ label: t('ctx.startRadio'), icon: 'radio', onClick: () => {
+      if (confirmRadioDownloads()) player.startRadio(`track:${id}`).catch(err => alert(err.message));
+    } });
+
+    items.push({ separator: true });
+    items.push({
+      label: track.favorite ? t('ctx.unlike') : t('ctx.like'), icon: 'heart',
+      onClick: async () => {
+        try {
+          if (track.favorite) await api.del(`/api/favorites/${id}`);
+          else await api.put(`/api/favorites/${id}`, track || {});
+          track.favorite = !track.favorite;
+          opts.onFav?.(track.favorite);
+        } catch (err) { alert(err.message); }
+      },
+    });
+    items.push({
+      label: t('ctx.addToPlaylist'), icon: 'plus',
+      emptyLabel: t('ctx.noPlaylists'),
+      loadSubmenu: async () => {
+        const lists = await api.get('/api/playlists').catch(() => []);
+        const own = lists.filter(l => !l.shared);
+        const addTo = (pid) => api.post(`/api/playlists/${pid}/tracks`, { track_id: id, track })
+          .then(() => window.dispatchEvent(new Event('musicarr:playlists-changed')))
+          .catch(err => alert(err.message));
+        const out = [{
+          label: t('ctx.newPlaylist'), icon: 'plus', onClick: async () => {
+            const name = prompt(t('nav.newPlaylist'));
+            if (!name) return;
+            try { const pl = await api.post('/api/playlists', { name }); await addTo(pl.id); }
+            catch (err) { alert(err.message); }
+          },
+        }];
+        if (own.length) out.push({ separator: true });
+        for (const l of own) out.push({ label: l.name, onClick: () => addTo(l.id) });
+        return out;
+      },
+    });
+
+    if (track.artist_id || track.album_id) {
+      items.push({ separator: true });
+      if (track.artist_id) items.push({ label: t('ctx.goToArtist'), icon: 'user', onClick: () => navTo({ view: 'artist', id: track.artist_id }) });
+      if (track.album_id) items.push({ label: t('ctx.goToAlbum'), icon: 'library', onClick: () => navTo({ view: 'album', id: track.album_id }) });
+    }
+
+    if (available && me?.is_admin) {
+      items.push({ separator: true });
+      items.push({
+        label: t('ctx.deleteFromLibrary'), icon: 'trash', danger: true,
+        onClick: async () => {
+          if (!confirm(`Delete "${track.title}" from disk?`)) return;
+          try { await api.del(`/api/library/${id}`); window.dispatchEvent(new Event('musicarr:library-changed')); opts.onDelete?.(id); }
+          catch (err) { alert(err.message); }
+        },
+      });
+    }
+
+    openMenu(e, items);
+  };
+}
+
+/** Right-click menu for a user (friend activity, user lists): view profile and
+ *  follow/unfollow. `opts.onChange(following)` lets the caller refresh. */
+export function useUserMenu() {
+  const { openMenu } = useContextMenu() || {};
+  const t = useT();
+  return (e, user, opts = {}) => {
+    if (!openMenu || !user) return;
+    const items = [
+      { label: t('ctx.viewProfile'), icon: 'user', onClick: () => navTo({ view: 'user', id: user.id }) },
+      { separator: true },
+      user.following
+        ? { label: t('ctx.unfollow'), icon: 'close', onClick: async () => {
+            try { await api.del(`/api/social/follow/${user.id}`); opts.onChange?.(false); } catch (err) { alert(err.message); } } }
+        : { label: t('ctx.follow'), icon: 'plus', onClick: async () => {
+            try { await api.post(`/api/social/follow/${user.id}`); opts.onChange?.(true); } catch (err) { alert(err.message); } } },
+    ];
+    openMenu(e, items);
+  };
+}
+
 /** A single row in a track list. `tracks`/`i` allow play-in-context.
  *  `shuffle` (used by playlists) shuffles the whole list into the queue. */
 export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete }) {
   const player = usePlayer();
   const me = useMe();
+  const trackMenu = useTrackMenu();
   const [hidden, setHidden] = useState(false);
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
@@ -221,7 +371,8 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
   };
   if (hidden) return null;
   return (
-    <div className={`track-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}>
+    <div className={`track-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} onClick={onPlay}
+      onContextMenu={(e) => trackMenu(e, track, { tracks, i, onFav, onDelete: (delId) => { if (onDelete) onDelete(delId); else setHidden(true); } })}>
       <div className="track-idx">
         {isCurrent && player.playing
           ? <span className="eq"><i /><i /><i /></span>
@@ -238,7 +389,8 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
         <RadioButton seed={`track:${id}`} />
         <HeartButton trackId={id} track={track} initial={track.favorite} onChange={onFav} />
         <AddToPlaylist trackId={id} track={track} />
-        {available && <OfflineButton track={track} />}
+        {available && track.in_library === 0 && <AddToLibraryButton track={track} />}
+        {!available && !pending && <PreviewButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {canDelete && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}>
@@ -263,6 +415,7 @@ function fmtDate(s) {
 function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid }) {
   const player = usePlayer();
   const me = useMe();
+  const trackMenu = useTrackMenu();
   const id = track.deezer_id || track.id;
   const isCurrent = (player.current?.deezer_id || player.current?.id) === id;
   const available = track.available || track.file_path;
@@ -280,7 +433,8 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
   if (hidden) return null;
 
   return (
-    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} style={grid} onClick={onPlay}>
+    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} style={grid} onClick={onPlay}
+      onContextMenu={(e) => trackMenu(e, track, { tracks, i, onDelete: () => setHidden(true) })}>
       <div className="tt-idx">
         {isCurrent && player.playing
           ? <span className="eq"><i /><i /><i /></span>
@@ -310,7 +464,8 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
       <div className="tt-actions" onClick={e => e.stopPropagation()}>
         <HeartButton trackId={id} track={track} initial={track.favorite} />
         <AddToPlaylist trackId={id} track={track} />
-        {available && <OfflineButton track={track} />}
+        {available && track.in_library === 0 && <AddToLibraryButton track={track} />}
+        {!available && !pending && <PreviewButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {available && me?.is_admin && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}><Icon name="trash" size={16} /></button>

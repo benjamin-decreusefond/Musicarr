@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
-import { Icon, Cover } from './ui.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix, Offline } from './views.jsx';
+import { Icon, Cover, Avatar, useUserMenu } from './ui.jsx';
+import { LangProvider, useT } from './i18n.jsx';
+import { ContextMenuProvider } from './menu.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -191,6 +193,7 @@ function ListenTogether() {
   const [busy, setBusy] = useState(false);
   const ref = useRef(null);
 
+  const tr = useT();
   // Live player snapshot for the sync loops (avoids stale closures in intervals).
   const liveRef = useRef({});
   liveRef.current = { id: p.current ? (p.current.deezer_id || p.current.id) : null, time: p.time, playing: p.playing };
@@ -264,13 +267,13 @@ function ListenTogether() {
   const active = !!session;
   return (
     <div className="eq-wrap" ref={ref}>
-      <button className="icon-btn" onClick={() => setOpen(o => !o)} title="Listen together"
+      <button className="icon-btn" onClick={() => setOpen(o => !o)} title={tr('player.listenTogether')}
         style={{ color: active || open ? 'var(--accent)' : undefined }}>
         <Icon name="users" size={18} />
       </button>
       {open && (
         <div className="listen-panel" onClick={e => e.stopPropagation()}>
-          <div className="eq-head"><span>Listen together</span>{active && <span className="np-live"><span className="np-dot" /> live</span>}</div>
+          <div className="eq-head"><span>{tr('player.listenTogether')}</span>{active && <span className="np-live"><span className="np-dot" /> live</span>}</div>
           {!active ? (
             <div className="listen-body">
               <p className="settings-fieldhint">Play music in sync with friends on this server.</p>
@@ -314,6 +317,7 @@ function ListenTogether() {
 
 /* ---------------------------------------------------------------- Login */
 function Login({ onLogin }) {
+  const t = useT();
   const [u, setU] = useState('');
   const [p, setP] = useState('');
   const [err, setErr] = useState('');
@@ -328,11 +332,11 @@ function Login({ onLogin }) {
     <div className="login">
       <form className="login-card" onSubmit={submit}>
         <div className="brand"><span className="brand-mark" /> Musicarr</div>
-        <p className="login-tag">Your music, your server.</p>
-        <input placeholder="Username" value={u} onChange={e => setU(e.target.value)} autoFocus />
-        <input placeholder="Password" type="password" value={p} onChange={e => setP(e.target.value)} />
+        <p className="login-tag">{t('auth.tagline')}</p>
+        <input placeholder={t('auth.username')} value={u} onChange={e => setU(e.target.value)} autoFocus />
+        <input placeholder={t('auth.password')} type="password" value={p} onChange={e => setP(e.target.value)} />
         {err && <div className="login-err">{err}</div>}
-        <button className="btn-primary lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className="btn-primary lg" disabled={busy}>{busy ? t('auth.signingIn') : t('auth.signIn')}</button>
       </form>
     </div>
   );
@@ -375,6 +379,7 @@ function ForcePasswordChange({ onDone }) {
 
 /* -------------------------------------------------------------- Sidebar */
 function Sidebar({ route, nav, me, onLogout }) {
+  const t = useT();
   const [playlists, setPlaylists] = useState([]);
   const load = useCallback(async () => { try { setPlaylists(await api.get('/api/playlists')); } catch {} }, []);
   useEffect(() => {
@@ -385,7 +390,7 @@ function Sidebar({ route, nav, me, onLogout }) {
   }, [load]);
 
   const createPlaylist = async () => {
-    const name = prompt('New playlist name');
+    const name = prompt(t('nav.newPlaylist'));
     if (!name) return;
     const pl = await api.post('/api/playlists', { name });
     load(); nav({ view: 'playlist', id: pl.id });
@@ -401,27 +406,26 @@ function Sidebar({ route, nav, me, onLogout }) {
     <aside className="sidebar">
       <div className="brand" onClick={() => nav({ view: 'home' })}><span className="brand-mark" /> Musicarr</div>
       <nav className="nav-main">
-        <NavItem view="home" icon="home" label="Home" />
-        <NavItem view="search" icon="search" label="Search" />
-        <NavItem view="explore" icon="compass" label="Explore" />
-        <NavItem view="mixes" icon="sparkles" label="Made for you" />
-        <NavItem view="library" icon="library" label="Library" />
-        <NavItem view="favorites" icon="heart" label="Liked songs" />
-        <NavItem view="following" icon="user" label="Following" />
-        <NavItem view="offline" icon="save" label="Offline" />
-        <NavItem view="downloads" icon="download" label="Downloads" />
+        <NavItem view="home" icon="home" label={t('nav.home')} />
+        <NavItem view="search" icon="search" label={t('nav.search')} />
+        <NavItem view="explore" icon="compass" label={t('nav.explore')} />
+        <NavItem view="mixes" icon="sparkles" label={t('nav.madeForYou')} />
+        <NavItem view="library" icon="library" label={t('nav.library')} />
+        <NavItem view="favorites" icon="heart" label={t('nav.liked')} />
+        <NavItem view="following" icon="user" label={t('nav.following')} />
+        <NavItem view="downloads" icon="download" label={t('nav.downloads')} />
       </nav>
       <div className="nav-divider" />
       <nav className="nav-main">
-        <NavItem view="stats" icon="chart" label="Your stats" />
-        <NavItem view="equalizer" icon="sliders" label="Equalizer" />
-        <NavItem view="profile" icon="user" label="Profile" />
-        {!!me.is_admin && <NavItem view="admin" icon="user" label="Users" />}
-        {!!me.is_admin && <NavItem view="settings" icon="settings" label="Settings" />}
+        <NavItem view="stats" icon="chart" label={t('nav.stats')} />
+        <NavItem view="equalizer" icon="sliders" label={t('nav.equalizer')} />
+        <NavItem view="profile" icon="user" label={t('nav.profile')} />
+        {!!me.is_admin && <NavItem view="admin" icon="user" label={t('nav.users')} />}
+        {!!me.is_admin && <NavItem view="settings" icon="settings" label={t('nav.settings')} />}
       </nav>
       <div className="pl-head">
-        <span>Playlists</span>
-        <button className="icon-btn" onClick={createPlaylist} title="New playlist"><Icon name="plus" size={18} /></button>
+        <span>{t('nav.playlists')}</span>
+        <button className="icon-btn" onClick={createPlaylist} title={t('nav.newPlaylist')}><Icon name="plus" size={18} /></button>
       </div>
       <div className="pl-scroll">
         {playlists.map(pl => (
@@ -436,11 +440,11 @@ function Sidebar({ route, nav, me, onLogout }) {
         ))}
       </div>
       <div className="user-foot">
-        <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title="Profile">
-          <Icon name="user" size={18} />
+        <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title={t('nav.profile')}>
+          <Avatar src={me.avatar} size={26} />
           <span className="user-name">{me.username}</span>
         </button>
-        <button className="icon-btn" onClick={onLogout} title="Sign out"><Icon name="logout" size={18} /></button>
+        <button className="icon-btn" onClick={onLogout} title={t('auth.signOut')}><Icon name="logout" size={18} /></button>
       </div>
     </aside>
   );
@@ -451,20 +455,22 @@ function Sidebar({ route, nav, me, onLogout }) {
 // (like Spotify's Friend Activity). Polls the following feed.
 function ActivityPanel({ nav, onClose }) {
   const [people, setPeople] = useState([]);
+  const userMenu = useUserMenu();
+  const load = useCallback(() => api.get('/api/social/following').then(setPeople).catch(() => {}), []);
   useEffect(() => {
-    const load = () => api.get('/api/social/following').then(setPeople).catch(() => {});
     load();
     const t = setInterval(load, 20000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
   return (
     <aside className="activity">
       <div className="activity-head"><span>Friend activity</span>
         <button className="icon-btn" onClick={onClose} title="Hide"><Icon name="close" size={16} /></button>
       </div>
       {people.length ? people.map(u => (
-        <button key={u.id} className="activity-row" onClick={() => nav({ view: 'user', id: u.id })}>
-          <div className="user-avatar sm"><Icon name="user" size={16} /></div>
+        <button key={u.id} className="activity-row" onClick={() => nav({ view: 'user', id: u.id })}
+          onContextMenu={(e) => userMenu(e, { ...u, following: true }, { onChange: load })}>
+          <Avatar src={u.avatar} size={34} className="sm" />
           <div className="activity-meta">
             <div className="activity-name">{u.username}</div>
             <div className="activity-sub">
@@ -482,6 +488,7 @@ function ActivityPanel({ nav, onClose }) {
 /* ----------------------------------------------------------- Player bar */
 function PlayerBar({ onToggleActivity, activityOpen }) {
   const p = usePlayer();
+  const tr = useT();
   const [seekVal, setSeekVal] = useState(null);
   const scrubbing = useRef(false);
   // Commit the scrub on release anywhere on the page, so the time display can
@@ -496,40 +503,89 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
     window.addEventListener('pointercancel', end);
     return () => { window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, [p.seek]);
-  if (!p.current) return <footer className="player empty">Nothing playing</footer>;
+
+  // Preview mode: a 30s clip takes over the bar with its own play/pause + seek.
+  if (p.previewId) {
+    const pt = p.previewTrackObj || {};
+    const pdur = p.previewDuration || 30;
+    const ppct = pdur ? (p.previewTime / pdur) * 100 : 0;
+    return (
+      <footer className="player">
+        <div className="player-track">
+          <Cover src={pt.cover} size={56} />
+          <div className="player-meta">
+            <div className="player-title">{pt.title || tr('player.preview')}</div>
+            <div className="player-artist">{pt.artist}<span className="preview-tag">{tr('player.preview')}</span></div>
+          </div>
+        </div>
+        <div className="player-center">
+          <div className="player-controls">
+            <button className="play-btn" onClick={p.previewToggle} title={tr('player.preview')}>
+              <Icon name={p.previewLoading ? 'spinner' : p.previewPlaying ? 'pause' : 'play'} size={22} fill="currentColor" />
+            </button>
+          </div>
+          <div className="player-seek">
+            <span className="t">{fmtTime(p.previewTime)}</span>
+            <input type="range" min={0} max={pdur} step="0.1" value={Math.min(p.previewTime, pdur)}
+              onChange={e => p.previewSeek(parseFloat(e.target.value))} style={{ '--pct': `${ppct}%` }} />
+            <span className="t">{fmtTime(pdur)}</span>
+          </div>
+        </div>
+        <div className="player-right">
+          <button className="btn-ghost sm" onClick={p.stopPreview} title={tr('player.stopPreview')}>
+            <Icon name="close" size={16} /> {tr('player.stopPreview')}
+          </button>
+          <Icon name="vol" size={18} />
+          <input className="vol" type="range" min={0} max={1} step="0.01" value={p.volume}
+            onChange={e => p.setVolume(parseFloat(e.target.value))} style={{ '--pct': `${p.volume * 100}%` }} />
+        </div>
+      </footer>
+    );
+  }
+
   const t = p.current;
   const pct = p.duration ? ((seekVal ?? p.time) / p.duration) * 100 : 0;
   return (
-    <footer className="player">
+    <footer className={`player ${t ? '' : 'idle'}`}>
       <div className="player-track">
-        <Cover src={t.cover} size={56} />
-        <div className="player-meta">
-          <div className="player-title">{t.title}</div>
-          <div className="player-artist">{t.artist}</div>
-        </div>
+        {t ? (
+          <>
+            <Cover src={t.cover} size={56} />
+            <div className="player-meta">
+              <div className="player-title">{t.title}</div>
+              <div className="player-artist">{t.artist}</div>
+            </div>
+          </>
+        ) : (
+          <div className="player-meta"><div className="player-artist">{tr('player.nothingPlaying')}</div></div>
+        )}
       </div>
       <div className="player-center">
-        <div className="player-controls">
-          <button className="icon-btn" onClick={p.prev} disabled={!p.hasPrev}><Icon name="prev" size={20} fill="currentColor" /></button>
-          <button className="play-btn" onClick={p.toggle}><Icon name={p.playing ? 'pause' : 'play'} size={22} fill="currentColor" /></button>
-          <button className="icon-btn" onClick={p.next} disabled={!p.hasNext}><Icon name="next" size={20} fill="currentColor" /></button>
-          <button className={`icon-btn repeat-btn ${p.repeat !== 'off' ? 'on' : ''}`} onClick={p.cycleRepeat}
-            title={p.repeat === 'off' ? 'Repeat: off' : p.repeat === 'all' ? 'Repeat: queue' : 'Repeat: this track'}>
-            <Icon name="repeat" size={16} />
-            {p.repeat === 'one' && <span className="repeat-badge">1</span>}
-          </button>
-        </div>
-        <div className="player-seek">
-          <span className="t">{fmtTime(seekVal ?? p.time)}</span>
-          <input type="range" min={0} max={p.duration || 0} step="0.5" value={seekVal ?? p.time}
-            onPointerDown={() => { scrubbing.current = true; }}
-            onChange={e => { const v = parseFloat(e.target.value); if (scrubbing.current) setSeekVal(v); else p.seek(v); }}
-            style={{ '--pct': `${pct}%` }} />
-          <span className="t">{fmtTime(p.duration)}</span>
-        </div>
+        {t && (
+          <>
+            <div className="player-controls">
+              <button className="icon-btn" onClick={p.prev} disabled={!p.hasPrev}><Icon name="prev" size={20} fill="currentColor" /></button>
+              <button className="play-btn" onClick={p.toggle}><Icon name={p.playing ? 'pause' : 'play'} size={22} fill="currentColor" /></button>
+              <button className="icon-btn" onClick={p.next} disabled={!p.hasNext}><Icon name="next" size={20} fill="currentColor" /></button>
+              <button className={`icon-btn repeat-btn ${p.repeat !== 'off' ? 'on' : ''}`} onClick={p.cycleRepeat}
+                title={p.repeat === 'off' ? 'Repeat: off' : p.repeat === 'all' ? 'Repeat: queue' : 'Repeat: this track'}>
+                <Icon name="repeat" size={16} />
+                {p.repeat === 'one' && <span className="repeat-badge">1</span>}
+              </button>
+            </div>
+            <div className="player-seek">
+              <span className="t">{fmtTime(seekVal ?? p.time)}</span>
+              <input type="range" min={0} max={p.duration || 0} step="0.5" value={seekVal ?? p.time}
+                onPointerDown={() => { scrubbing.current = true; }}
+                onChange={e => { const v = parseFloat(e.target.value); if (scrubbing.current) setSeekVal(v); else p.seek(v); }}
+                style={{ '--pct': `${pct}%` }} />
+              <span className="t">{fmtTime(p.duration)}</span>
+            </div>
+          </>
+        )}
       </div>
       <div className="player-right">
-        <button className="icon-btn" onClick={onToggleActivity} title="Friend activity"
+        <button className="icon-btn" onClick={onToggleActivity} title={tr('player.friendActivity')}
           style={{ color: activityOpen ? 'var(--accent)' : undefined }}>
           <Icon name="user" size={18} />
         </button>
@@ -584,6 +640,13 @@ function App() {
   // Signal the player store to pull this user's server-side playback prefs once
   // they're signed in (covers both an existing session and a fresh login).
   useEffect(() => { if (me && me.id) window.dispatchEvent(new Event('musicarr:authed')); }, [me?.id]);
+  // Refresh the signed-in user (e.g. after changing the profile picture) so the
+  // new avatar shows in the sidebar and elsewhere.
+  useEffect(() => {
+    const h = () => api.get('/api/auth/me').then(setMe).catch(() => {});
+    window.addEventListener('musicarr:me-updated', h);
+    return () => window.removeEventListener('musicarr:me-updated', h);
+  }, []);
 
   // Seed history state for the initial route, and follow browser back/forward.
   useEffect(() => {
@@ -602,6 +665,14 @@ function App() {
     setDepth(d => d + 1);
     document.querySelector('.main-scroll')?.scrollTo(0, 0);
   }, []);
+
+  // Global navigation requests (e.g. from the right-click context menu, which
+  // has no direct access to `nav`).
+  useEffect(() => {
+    const h = (e) => { if (e.detail?.view) nav(e.detail); };
+    window.addEventListener('musicarr:navigate', h);
+    return () => window.removeEventListener('musicarr:navigate', h);
+  }, [nav]);
   const back = useCallback(() => { window.history.back(); }, []);
 
   const logout = async () => { await api.post('/api/auth/logout'); setMe(null); };
@@ -618,7 +689,6 @@ function App() {
     case 'mixes': page = <MadeForYou nav={nav} />; break;
     case 'mix': page = <Mix id={route.id} nav={nav} />; break;
     case 'stats': page = <Stats nav={nav} />; break;
-    case 'offline': page = <Offline nav={nav} />; break;
     case 'genre': page = <Genre id={route.id} nav={nav} />; break;
     case 'mood': page = <Mood slug={route.id} nav={nav} />; break;
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
@@ -657,12 +727,22 @@ function App() {
 }
 
 createRoot(document.getElementById('root')).render(
-  <PlayerProvider><App /></PlayerProvider>
+  <LangProvider>
+    <ContextMenuProvider>
+      <PlayerProvider><App /></PlayerProvider>
+    </ContextMenuProvider>
+  </LangProvider>
 );
 
-// Register the service worker for offline support / installable PWA.
+// We no longer ship an offline service worker (a remote-only server can't be
+// reached offline anyway). Proactively unregister any previously-installed
+// worker and drop its caches so returning browsers stop serving stale assets.
+// The replacement /sw.js is itself a self-destruct that does the same.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[sw] registration failed:', err));
-  });
+  navigator.serviceWorker.getRegistrations?.()
+    .then(rs => rs.forEach(r => r.unregister()))
+    .catch(() => {});
+  if (typeof caches !== 'undefined') {
+    caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+  }
 }

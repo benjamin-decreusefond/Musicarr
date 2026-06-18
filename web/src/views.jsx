@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, usePlayer, useOffline } from './store.jsx';
-import { Icon, Cover, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
+import { api, usePlayer } from './store.jsx';
+import { Icon, Cover, Avatar, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
+import { useT, useLang, LANGS } from './i18n.jsx';
 
 function useAsync(fn, deps) {
   const [data, setData] = useState(null);
@@ -46,6 +47,7 @@ function ImportPlaylistButton({ playlist, nav }) {
 }
 
 export function Home({ nav }) {
+  const t = useT();
   const { data, err, loading } = useAsync(() => api.get('/api/home'), []);
   const [recs, setRecs] = useState(null);
   const [history, setHistory] = useState(null);
@@ -58,7 +60,7 @@ export function Home({ nav }) {
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
   const hour = new Date().getHours();
-  const greet = hour < 5 ? 'Late night' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const greet = hour < 5 ? t('greet.night') : hour < 12 ? t('greet.morning') : hour < 18 ? t('greet.afternoon') : t('greet.evening');
   return (
     <div className="page">
       <h1 className="page-h1">{greet}</h1>
@@ -985,38 +987,6 @@ export function Downloads({ nav }) {
   );
 }
 
-/* -------------------------------------------------------------- Offline */
-// Tracks saved to this device for playback without a connection (PWA).
-export function Offline({ nav }) {
-  const offline = useOffline();
-  const player = usePlayer();
-  const tracks = Object.values(offline).sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
-  return (
-    <div className="page">
-      <h1 className="page-h1">Offline</h1>
-      <p className="settings-hint">
-        Tracks saved to this device, playable without a connection. {tracks.length} saved.
-        Install Musicarr to your home screen for a full offline app.
-      </p>
-      {tracks.length ? (
-        <>
-          <div className="hero-actions" style={{ margin: '4px 0 18px' }}>
-            <button className="btn-primary" onClick={() => player.playList(tracks, 0)}>
-              <Icon name="play" size={18} fill="currentColor" /> Play all
-            </button>
-            <button className="btn-ghost" onClick={() => player.playList(tracks, 0, { shuffle: true })}>
-              <Icon name="shuffle" size={18} /> Shuffle
-            </button>
-          </div>
-          <TrackTable tracks={tracks} nav={nav} showAdded={false} />
-        </>
-      ) : (
-        <div className="state faint">Nothing saved yet. Tap the save icon on any available track to keep it offline.</div>
-      )}
-    </div>
-  );
-}
-
 /* -------------------------------------------------------- Listening stats */
 const STAT_RANGES = [['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time']];
 
@@ -1298,6 +1268,84 @@ function fmtDate(s) {
 }
 
 /* -------------------------------------------------------------- Profile */
+// Downscale a chosen image file to a small centered-square JPEG data URL, so
+// uploads stay tiny and the server only ever stores a uniform format.
+function fileToSquareJpeg(file, size = 256) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const s = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => reject(new Error('Could not read that image'));
+    const reader = new FileReader();
+    reader.onload = () => { img.src = reader.result; };
+    reader.onerror = () => reject(new Error('Could not read that file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Upload / remove your own profile picture.
+function AvatarSection({ me }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try {
+      const dataUrl = await fileToSquareJpeg(file);
+      await api.post('/api/avatar', { image: dataUrl });
+      window.dispatchEvent(new Event('musicarr:me-updated'));
+    } catch (err) { alert(err.message || 'Upload failed'); }
+    setBusy(false);
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await api.del('/api/avatar'); window.dispatchEvent(new Event('musicarr:me-updated')); }
+    catch (err) { alert(err.message); }
+    setBusy(false);
+  };
+  return (
+    <section className="page-block settings-section">
+      <h2 className="row-title">{t('settings.photo')}</h2>
+      <div className="avatar-edit">
+        <Avatar src={me.avatar} size={88} />
+        <div className="avatar-edit-actions">
+          <label className="btn-ghost">
+            <Icon name="camera" size={16} /> {busy ? '…' : t('settings.changePhoto')}
+            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} disabled={busy} />
+          </label>
+          {me.avatar && <button className="btn-ghost" onClick={remove} disabled={busy}>{t('settings.removePhoto')}</button>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Interface language selector (persisted to localStorage; applies instantly).
+function LanguagePicker() {
+  const { lang, setLang, t } = useLang();
+  return (
+    <section className="page-block settings-section">
+      <h2 className="row-title">{t('settings.language')}</h2>
+      <p className="settings-hint">{t('settings.languageHint')}</p>
+      <div className="lang-grid">
+        {LANGS.map(l => (
+          <button key={l.code} className={`lang-btn ${lang === l.code ? 'on' : ''}`} onClick={() => setLang(l.code)}>
+            {l.label}{lang === l.code ? <Icon name="check" size={16} /> : null}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function Profile({ me, nav }) {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
@@ -1333,6 +1381,8 @@ export function Profile({ me, nav }) {
           </div>
         </div>
       </section>
+      <AvatarSection me={me} />
+      <LanguagePicker />
       <section className="page-block settings-section">
         <h2 className="row-title">Change password</h2>
         <form className="profile-form" onSubmit={submit}>
@@ -1553,12 +1603,14 @@ function FollowButton({ user, onChange }) {
 }
 
 function UserRow({ u, nav, onChange }) {
+  const userMenu = useUserMenu();
   const sub = u.nowPlaying
     ? <span className="np-live"><span className="np-dot" /> {u.nowPlaying.title} · {u.nowPlaying.artist}</span>
     : <span>{u.lastPlayed ? `Last played: ${u.lastPlayed.title}` : `${u.followers} follower${u.followers === 1 ? '' : 's'}`}</span>;
   return (
-    <div className="user-row" onClick={() => nav({ view: 'user', id: u.id })}>
-      <div className="user-avatar"><Icon name="user" size={20} /></div>
+    <div className="user-row" onClick={() => nav({ view: 'user', id: u.id })}
+      onContextMenu={(e) => userMenu(e, u, { onChange })}>
+      <Avatar src={u.avatar} size={44} />
       <div className="user-row-meta">
         <div className="user-row-name">{u.username}{u.is_admin ? <span className="badge accent" style={{ marginLeft: 8 }}>Admin</span> : null}</div>
         <div className="user-row-sub">{sub}</div>
@@ -1577,7 +1629,7 @@ export function UserProfile({ id, nav }) {
   return (
     <div className="page">
       <header className="hero">
-        <div className="fav-art" style={{ background: 'var(--bg-elev-2)' }}><Icon name="user" size={72} /></div>
+        <Avatar src={data.avatar} size={200} className="hero-avatar" />
         <div className="hero-meta">
           <span className="hero-kind">Profile</span>
           <h1 className="hero-title">{data.username}</h1>
