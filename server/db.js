@@ -298,6 +298,17 @@ CREATE TABLE IF NOT EXISTS listen_members (
 CREATE INDEX IF NOT EXISTS idx_listen_members_user ON listen_members(user_id);
 `);
 
+// Per-user playback preferences (volume, equalizer, repeat mode) stored as a
+// JSON blob so they sync across all of a user's clients instead of living only
+// in each browser's localStorage. Created on boot for existing databases too.
+db.exec(`
+CREATE TABLE IF NOT EXISTS user_prefs (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  data TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
 /** Cheap readiness check that the SQLite handle is open and responsive. Throws on failure. */
 export function pingDb() {
   db.prepare('SELECT 1').get();

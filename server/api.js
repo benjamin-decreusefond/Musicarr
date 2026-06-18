@@ -805,6 +805,53 @@ api.get('/history', (req, res) => {
   `).all(req.user.id));
 });
 
+/* --------------------------------------------------- Playback preferences */
+// Per-user playback settings (volume, equalizer, repeat mode) live on the
+// server so they sync across all of a user's clients. The browser still keeps a
+// localStorage copy as an instant/offline cache; this is the source of truth.
+const REPEAT_MODES = new Set(['off', 'all', 'one']);
+
+// Coerce an arbitrary client-supplied object into a clean, validated subset.
+// Unknown keys are dropped; bad values are simply omitted (not stored).
+function sanitizePrefs(input) {
+  const out = {};
+  if (!input || typeof input !== 'object') return out;
+  if ('volume' in input) {
+    const v = Number(input.volume);
+    if (Number.isFinite(v)) out.volume = Math.min(1, Math.max(0, v));
+  }
+  if ('eqEnabled' in input) out.eqEnabled = !!input.eqEnabled;
+  if ('eqGains' in input && Array.isArray(input.eqGains)) {
+    const g = input.eqGains.map(Number);
+    if (g.every(Number.isFinite)) out.eqGains = g;
+  }
+  if ('repeat' in input && REPEAT_MODES.has(input.repeat)) out.repeat = input.repeat;
+  return out;
+}
+
+function readPrefs(userId) {
+  const row = db.prepare('SELECT data FROM user_prefs WHERE user_id = ?').get(userId);
+  if (!row) return {};
+  try { const obj = JSON.parse(row.data); return obj && typeof obj === 'object' ? obj : {}; }
+  catch { return {}; }
+}
+
+api.get('/preferences', (req, res) => {
+  res.json(readPrefs(req.user.id));
+});
+
+api.put('/preferences', (req, res) => {
+  // Merge the (validated) partial into whatever is already stored so keys the
+  // client didn't send are preserved.
+  const merged = { ...readPrefs(req.user.id), ...sanitizePrefs(req.body) };
+  db.prepare(`
+    INSERT INTO user_prefs (user_id, data, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+  `).run(req.user.id, JSON.stringify(merged));
+  res.json(merged);
+});
+
 /* ------------------------------------------------------- Listening stats */
 // A personal "Wrapped"-style dashboard computed from the user's play history.
 // `range` selects the window: 'month' (30d), 'year' (365d) or 'all' (default).

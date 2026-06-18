@@ -637,6 +637,9 @@ function App() {
     window.addEventListener('musicarr:unauth', h);
     return () => window.removeEventListener('musicarr:unauth', h);
   }, []);
+  // Signal the player store to pull this user's server-side playback prefs once
+  // they're signed in (covers both an existing session and a fresh login).
+  useEffect(() => { if (me && me.id) window.dispatchEvent(new Event('musicarr:authed')); }, [me?.id]);
   // Refresh the signed-in user (e.g. after changing the profile picture) so the
   // new avatar shows in the sidebar and elsewhere.
   useEffect(() => {

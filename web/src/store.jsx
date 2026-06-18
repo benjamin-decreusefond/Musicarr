@@ -142,6 +142,55 @@ export function PlayerProvider({ children }) {
     localStorage.setItem('musicarr:eq:gains', JSON.stringify(eqGains));
   }, [eqEnabled, eqGains]);
 
+  /* --------------------------------------------- Server-synced preferences */
+  // localStorage above stays the instant local cache / offline fallback; the
+  // server copy syncs these settings across all of a user's clients. We hydrate
+  // once when signed in, then debounce writes back. `hydratedRef` makes the
+  // save effect skip the burst of state updates that hydration itself causes.
+  const hydratedRef = useRef(false);
+  const saveTimerRef = useRef(null);
+  useEffect(() => {
+    const hydrate = () => {
+      if (hydratedRef.current) return;
+      api.get('/api/preferences').then(p => {
+        if (hydratedRef.current) return;
+        if (p && typeof p === 'object') {
+          if (Number.isFinite(p.volume)) setVolume(Math.min(1, Math.max(0, p.volume)));
+          if (typeof p.eqEnabled === 'boolean') setEqEnabled(p.eqEnabled);
+          if (Array.isArray(p.eqGains) && p.eqGains.length === EQ_BANDS.length) setEqGains(p.eqGains.map(Number));
+          if (p.repeat === 'all' || p.repeat === 'one' || p.repeat === 'off') {
+            setRepeat(p.repeat);
+            localStorage.setItem('musicarr:repeat', p.repeat);
+          }
+        }
+        // Flip the guard only after the hydration setters have flushed and the
+        // save effect has run (and bailed) for them — deferring past the render
+        // tick avoids a redundant write-back of the values we just loaded.
+        setTimeout(() => { hydratedRef.current = true; }, 0);
+      }).catch(() => {
+        // Leave the guard false (e.g. a 401 before sign-in) so a later
+        // `musicarr:authed` retries and the save-back stays disabled until we've
+        // actually loaded the server copy — avoids clobbering it with defaults.
+      });
+    };
+    window.addEventListener('musicarr:authed', hydrate);
+    // Also attempt immediately in case we mounted already authenticated.
+    hydrate();
+    return () => window.removeEventListener('musicarr:authed', hydrate);
+  }, [setVolume]);
+
+  // Debounce-coalesce changes to volume / EQ / repeat into a single PUT. Errors
+  // are swallowed: a sync failure must never affect playback (localStorage holds
+  // the value regardless).
+  useEffect(() => {
+    if (!hydratedRef.current) return; // skip the hydration write-back
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      api.put('/api/preferences', { volume, eqEnabled, eqGains, repeat }).catch(() => {});
+    }, 600);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [volume, eqEnabled, eqGains, repeat]);
+
   /** Advance to the next track. Reads live state from stateRef so it is safe
    *  to call from the once-attached audio listeners.
    *  `manual` skips repeat-one (pressing Next always moves on, like Spotify). */
