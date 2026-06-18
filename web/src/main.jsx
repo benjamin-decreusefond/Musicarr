@@ -501,37 +501,46 @@ function PlayerBar({ onToggleActivity, activityOpen }) {
     window.addEventListener('pointercancel', end);
     return () => { window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, [p.seek]);
-  if (!p.current) return <footer className="player empty">{tr('player.nothingPlaying')}</footer>;
   const t = p.current;
   const pct = p.duration ? ((seekVal ?? p.time) / p.duration) * 100 : 0;
   return (
-    <footer className="player">
+    <footer className={`player ${t ? '' : 'idle'}`}>
       <div className="player-track">
-        <Cover src={t.cover} size={56} />
-        <div className="player-meta">
-          <div className="player-title">{t.title}</div>
-          <div className="player-artist">{t.artist}</div>
-        </div>
+        {t ? (
+          <>
+            <Cover src={t.cover} size={56} />
+            <div className="player-meta">
+              <div className="player-title">{t.title}</div>
+              <div className="player-artist">{t.artist}</div>
+            </div>
+          </>
+        ) : (
+          <div className="player-meta"><div className="player-artist">{tr('player.nothingPlaying')}</div></div>
+        )}
       </div>
       <div className="player-center">
-        <div className="player-controls">
-          <button className="icon-btn" onClick={p.prev} disabled={!p.hasPrev}><Icon name="prev" size={20} fill="currentColor" /></button>
-          <button className="play-btn" onClick={p.toggle}><Icon name={p.playing ? 'pause' : 'play'} size={22} fill="currentColor" /></button>
-          <button className="icon-btn" onClick={p.next} disabled={!p.hasNext}><Icon name="next" size={20} fill="currentColor" /></button>
-          <button className={`icon-btn repeat-btn ${p.repeat !== 'off' ? 'on' : ''}`} onClick={p.cycleRepeat}
-            title={p.repeat === 'off' ? 'Repeat: off' : p.repeat === 'all' ? 'Repeat: queue' : 'Repeat: this track'}>
-            <Icon name="repeat" size={16} />
-            {p.repeat === 'one' && <span className="repeat-badge">1</span>}
-          </button>
-        </div>
-        <div className="player-seek">
-          <span className="t">{fmtTime(seekVal ?? p.time)}</span>
-          <input type="range" min={0} max={p.duration || 0} step="0.5" value={seekVal ?? p.time}
-            onPointerDown={() => { scrubbing.current = true; }}
-            onChange={e => { const v = parseFloat(e.target.value); if (scrubbing.current) setSeekVal(v); else p.seek(v); }}
-            style={{ '--pct': `${pct}%` }} />
-          <span className="t">{fmtTime(p.duration)}</span>
-        </div>
+        {t && (
+          <>
+            <div className="player-controls">
+              <button className="icon-btn" onClick={p.prev} disabled={!p.hasPrev}><Icon name="prev" size={20} fill="currentColor" /></button>
+              <button className="play-btn" onClick={p.toggle}><Icon name={p.playing ? 'pause' : 'play'} size={22} fill="currentColor" /></button>
+              <button className="icon-btn" onClick={p.next} disabled={!p.hasNext}><Icon name="next" size={20} fill="currentColor" /></button>
+              <button className={`icon-btn repeat-btn ${p.repeat !== 'off' ? 'on' : ''}`} onClick={p.cycleRepeat}
+                title={p.repeat === 'off' ? 'Repeat: off' : p.repeat === 'all' ? 'Repeat: queue' : 'Repeat: this track'}>
+                <Icon name="repeat" size={16} />
+                {p.repeat === 'one' && <span className="repeat-badge">1</span>}
+              </button>
+            </div>
+            <div className="player-seek">
+              <span className="t">{fmtTime(seekVal ?? p.time)}</span>
+              <input type="range" min={0} max={p.duration || 0} step="0.5" value={seekVal ?? p.time}
+                onPointerDown={() => { scrubbing.current = true; }}
+                onChange={e => { const v = parseFloat(e.target.value); if (scrubbing.current) setSeekVal(v); else p.seek(v); }}
+                style={{ '--pct': `${pct}%` }} />
+              <span className="t">{fmtTime(p.duration)}</span>
+            </div>
+          </>
+        )}
       </div>
       <div className="player-right">
         <button className="icon-btn" onClick={onToggleActivity} title={tr('player.friendActivity')}
