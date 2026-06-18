@@ -1100,6 +1100,30 @@ api.delete('/avatar', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ------------------------------------------------------- Track previews */
+// Stream Deezer's free ~30s preview for a track through our own origin. This
+// keeps playback under media-src 'self' (a cross-origin dzcdn URL would be
+// blocked by the CSP) and hides Deezer's signed, short-lived preview URLs from
+// the client. Used to audition songs that aren't downloaded yet.
+api.get('/preview/:trackId', async (req, res) => {
+  const id = parseInt(req.params.trackId, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid track id' });
+  try {
+    const t = await deezerGet(`track/${id}`);
+    const url = t?.preview;
+    if (!url) return res.status(404).json({ error: 'No preview available for this track' });
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return res.status(502).json({ error: `Preview source ${r.status}` });
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', buf.length);
+    res.setHeader('Cache-Control', 'private, max-age=1800');
+    res.end(buf);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 /* -------------------------------------------------------------- Lyrics */
 // Lyrics come from LRCLIB (https://lrclib.net) — a free, key-less database with
 // both plain and time-synced lyrics. Results are cached for a day.

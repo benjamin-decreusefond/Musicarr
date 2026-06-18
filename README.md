@@ -211,6 +211,15 @@ Recipients can "remove" a shared playlist to drop it from their own library with
 affecting the original. Only the owner can manage who it's shared with or delete it
 outright.
 
+## Track previews
+
+Songs that aren't downloaded yet can be **previewed** — a 30-second clip from
+Deezer — before committing to a Soulseek download. Hit the headphones button on
+any not-downloaded track (or use the right-click menu). Previews are proxied
+through the server (`GET /api/preview/:trackId`) so they play same-origin under
+the CSP and Deezer's signed preview URLs never reach the browser; playing a real
+track or pressing play stops the preview.
+
 ## Health checks
 
 Three unauthenticated probe endpoints, suitable for Docker/Kubernetes:
