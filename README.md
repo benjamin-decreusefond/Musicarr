@@ -97,52 +97,6 @@ one creates a local playlist with the same tracks and queues a Soulseek
 download for each track that isn't on disk yet (capped per run — re-add the
 playlist to continue). Re-adding also refreshes the track list.
 
-## CI / publishing the image
-
-A GitHub Actions workflow (`.github/workflows/docker.yml`) builds and pushes the
-image to Docker Hub as `paganim/musicarr:latest` (plus a commit-SHA tag) on every
-push to the default branch. It needs two repository secrets:
-
-- `DOCKERHUB_USERNAME` — the Docker Hub account (e.g. `paganim`)
-- `DOCKERHUB_TOKEN` — a Docker Hub access token with write scope
-
-## Caching
-
-Responses from Deezer are cached in memory for 5 minutes to avoid rate limits,
-with concurrent identical requests de-duplicated into a single upstream call.
-
-## Soulseek (slskd) setup
-
-slskd is both the search engine and the download client: it connects to the
-Soulseek network with an account you choose, and Musicarr drives it over its
-REST API. Two directory points to get right:
-
-1. **Download directory** — slskd writes completed files to its own downloads
-   folder; Musicarr imports from there (then hardlinks into the root folder).
-   Mount slskd's downloads volume so Musicarr can read it, and set **slskd
-   download directory** to that path.
-2. **Sharing back** — Soulseek is a give-and-take community; peers commonly ban
-   users who share nothing. Point slskd's shares at your music root folder so
-   you contribute back. This is slskd-side config, e.g.:
-
-```yaml
-# slskd.yml (or equivalent env)
-shares:
-  directories:
-    - /music            # your Musicarr root folder, mounted read-only into slskd
-directories:
-  downloads: /downloads # mount this same volume into Musicarr as SLSKD_DOWNLOAD_DIR
-web:
-  authentication:
-    api_keys:
-      musicarr:
-        key: <the API key you put in Musicarr>  # 16-255 chars, you choose it
-        role: readwrite
-```
-
-You'll need a Soulseek account (just a username/password you choose) configured
-in slskd (`SLSKD_SLSK_USERNAME` / `SLSKD_SLSK_PASSWORD`).
-
 ## Environment variables
 
 All of these are optional seeds for the first-run defaults; the ones marked
@@ -168,15 +122,6 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `RELEASE_TYPES` | `album,ep,single` | Which Deezer record types to auto-download (`compilation` excluded by default) |
 | `COOKIE_SECURE` | `true` | Mark the session cookie `Secure` and send HSTS. Set `false` for plain-HTTP/LAN |
 | `TRUST_PROXY` | `1` | Proxy hop count for real client IP (login rate limiting) |
-
-## First login
-
-On first boot an admin account is created. If you set `ADMIN_PASSWORD`, that
-seed is used; **if you don't, Musicarr generates a strong random password and
-prints it once to the container logs** (rather than falling back to a guessable
-default). Either way you're required to set your own password on first sign-in.
-Then go to **Users** (admin only) to add more accounts — each user gets their own
-playlists and liked songs but shares the downloaded audio library.
 
 ## API access tokens
 
@@ -255,20 +200,6 @@ Recipients can "remove" a shared playlist to drop it from their own library with
 affecting the original. Only the owner can manage who it's shared with or delete it
 outright.
 
-## Following artists (auto-download new releases)
-
-Open any artist and hit **Follow** to have Musicarr keep that artist current,
-Lidarr-style: a background watcher checks Deezer for new releases and queues each
-one through the normal Soulseek pipeline. Followed artists are listed under
-**Following** in the sidebar, where you can unfollow.
-
-The watcher only grabs releases that appear *after* you follow — when the first
-user follows an artist, their existing back-catalog is recorded as "already
-seen" so following doesn't trigger a flood of old-album downloads. Following is
-per-user, but because the audio library is shared, each new release is downloaded
-once for everyone. Tune it with `RELEASE_WATCH_ENABLED`,
-`RELEASE_CHECK_INTERVAL_MS`, and `RELEASE_TYPES` (see the table below).
-
 ## Health checks
 
 Three unauthenticated probe endpoints, suitable for Docker/Kubernetes:
@@ -292,25 +223,3 @@ Disable with `BACKUP_ENABLED=false`.
 - **8686** — HTTP (UI + API + audio streaming). Put it behind your own
   ingress/TLS.
 
-## Running as non-root
-
-The runtime image runs as the unprivileged `node` user (uid/gid **1000**). When
-the data, music, and slskd-downloads paths are mounted volumes, make them
-writable by that uid/gid — e.g. a one-time `chown -R 1000:1000` of existing data,
-and on Kubernetes a pod `securityContext` with `fsGroup: 1000` (plus
-`runAsNonRoot: true`, `runAsUser: 1000`).
-
-## Notes & limits
-
-- Authentication is cookie-session based (HttpOnly, SameSite=Lax) for the UI,
-  with personal access tokens for programmatic API access (see **API access
-  tokens**). Serve over HTTPS in production. Session tokens are stored only as
-  SHA-256 hashes, so a leaked database or backup can't be used to resume live
-  sessions. The slskd API key is never sent back to the browser — the Settings
-  page only shows whether one is configured and a masked tail.
-- Deezer is used purely for metadata and discovery; no audio comes from Deezer.
-- Streaming reads files directly from `/music` with range requests, so seeking
-  works in the browser for FLAC/MP3/M4A/OGG/Opus/WAV/AAC.
-- Soulseek availability is peer-dependent: a file exists as long as a user who
-  shares it is online. Failed transfers are retried against the next-best
-  candidate on the next sweep.
