@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { api, fmtTime, usePlayer, useMe, useOffline, saveTrackOffline, removeTrackOffline, offlineSupported } from './store.jsx';
+import { api, fmtTime, usePlayer, useMe } from './store.jsx';
 import { useContextMenu } from './menu.jsx';
 import { useT } from './i18n.jsx';
 
@@ -102,30 +102,6 @@ export function RadioButton({ seed }) {
   );
 }
 
-// Save/remove a track for offline playback (cached in the browser via the
-// service worker). Only shown for tracks already available on disk.
-export function OfflineButton({ track }) {
-  const offline = useOffline();
-  const [busy, setBusy] = useState(false);
-  if (!offlineSupported) return null;
-  const id = track.deezer_id || track.id;
-  const saved = !!offline[id];
-  const toggle = async (e) => {
-    e.stopPropagation();
-    setBusy(true);
-    try { if (saved) await removeTrackOffline(id); else await saveTrackOffline(track); }
-    catch (err) { alert(err.message); }
-    setBusy(false);
-  };
-  return (
-    <button className="icon-btn" onClick={toggle} disabled={busy}
-      title={saved ? 'Saved offline — tap to remove' : 'Save for offline'}
-      style={{ color: saved ? 'var(--accent)' : undefined }}>
-      <Icon name={busy ? 'spinner' : saved ? 'check' : 'save'} size={18} />
-    </button>
-  );
-}
-
 export function HeartButton({ trackId, track, initial, onChange }) {
   const [fav, setFav] = useState(!!initial);
   useEffect(() => setFav(!!initial), [initial]);
@@ -202,7 +178,6 @@ export function AddToPlaylist({ trackId, track }) {
 export function useTrackMenu() {
   const player = usePlayer();
   const me = useMe();
-  const offline = useOffline();
   const { openMenu } = useContextMenu() || {};
   const t = useT();
 
@@ -210,7 +185,6 @@ export function useTrackMenu() {
     if (!openMenu) return;
     const id = track.deezer_id || track.id;
     const available = track.available || track.file_path;
-    const isOffline = !!offline[id];
     const items = [];
 
     if (available) {
@@ -264,14 +238,6 @@ export function useTrackMenu() {
       items.push({ separator: true });
       if (track.artist_id) items.push({ label: t('ctx.goToArtist'), icon: 'user', onClick: () => navTo({ view: 'artist', id: track.artist_id }) });
       if (track.album_id) items.push({ label: t('ctx.goToAlbum'), icon: 'library', onClick: () => navTo({ view: 'album', id: track.album_id }) });
-    }
-
-    if (available && offlineSupported) {
-      items.push({ separator: true });
-      items.push({
-        label: isOffline ? t('ctx.removeOffline') : t('ctx.saveOffline'), icon: isOffline ? 'check' : 'save',
-        onClick: () => (isOffline ? removeTrackOffline(id) : saveTrackOffline(track)).catch(err => alert(err.message)),
-      });
     }
 
     if (available && me?.is_admin) {
@@ -340,7 +306,6 @@ export function TrackRow({ track, i, tracks, showAlbum, onFav, shuffle, onDelete
         <RadioButton seed={`track:${id}`} />
         <HeartButton trackId={id} track={track} initial={track.favorite} onChange={onFav} />
         <AddToPlaylist trackId={id} track={track} />
-        {available && <OfflineButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {canDelete && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}>
@@ -414,7 +379,6 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
       <div className="tt-actions" onClick={e => e.stopPropagation()}>
         <HeartButton trackId={id} track={track} initial={track.favorite} />
         <AddToPlaylist trackId={id} track={track} />
-        {available && <OfflineButton track={track} />}
         {!available && !pending && <DownloadButton kind="track" id={id} label={track.title} />}
         {available && me?.is_admin && (
           <button className="icon-btn" title="Delete from disk" onClick={doDelete}><Icon name="trash" size={16} /></button>
