@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from './store.jsx';
-import { Icon, Cover, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
+import { Icon, Cover, Avatar, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
 import { useT, useLang, LANGS } from './i18n.jsx';
 
 function useAsync(fn, deps) {
@@ -1268,6 +1268,66 @@ function fmtDate(s) {
 }
 
 /* -------------------------------------------------------------- Profile */
+// Downscale a chosen image file to a small centered-square JPEG data URL, so
+// uploads stay tiny and the server only ever stores a uniform format.
+function fileToSquareJpeg(file, size = 256) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const s = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => reject(new Error('Could not read that image'));
+    const reader = new FileReader();
+    reader.onload = () => { img.src = reader.result; };
+    reader.onerror = () => reject(new Error('Could not read that file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Upload / remove your own profile picture.
+function AvatarSection({ me }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try {
+      const dataUrl = await fileToSquareJpeg(file);
+      await api.post('/api/avatar', { image: dataUrl });
+      window.dispatchEvent(new Event('musicarr:me-updated'));
+    } catch (err) { alert(err.message || 'Upload failed'); }
+    setBusy(false);
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await api.del('/api/avatar'); window.dispatchEvent(new Event('musicarr:me-updated')); }
+    catch (err) { alert(err.message); }
+    setBusy(false);
+  };
+  return (
+    <section className="page-block settings-section">
+      <h2 className="row-title">{t('settings.photo')}</h2>
+      <div className="avatar-edit">
+        <Avatar src={me.avatar} size={88} />
+        <div className="avatar-edit-actions">
+          <label className="btn-ghost">
+            <Icon name="camera" size={16} /> {busy ? '…' : t('settings.changePhoto')}
+            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={onFile} disabled={busy} />
+          </label>
+          {me.avatar && <button className="btn-ghost" onClick={remove} disabled={busy}>{t('settings.removePhoto')}</button>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // Interface language selector (persisted to localStorage; applies instantly).
 function LanguagePicker() {
   const { lang, setLang, t } = useLang();
@@ -1321,6 +1381,7 @@ export function Profile({ me, nav }) {
           </div>
         </div>
       </section>
+      <AvatarSection me={me} />
       <LanguagePicker />
       <section className="page-block settings-section">
         <h2 className="row-title">Change password</h2>
@@ -1542,12 +1603,14 @@ function FollowButton({ user, onChange }) {
 }
 
 function UserRow({ u, nav, onChange }) {
+  const userMenu = useUserMenu();
   const sub = u.nowPlaying
     ? <span className="np-live"><span className="np-dot" /> {u.nowPlaying.title} · {u.nowPlaying.artist}</span>
     : <span>{u.lastPlayed ? `Last played: ${u.lastPlayed.title}` : `${u.followers} follower${u.followers === 1 ? '' : 's'}`}</span>;
   return (
-    <div className="user-row" onClick={() => nav({ view: 'user', id: u.id })}>
-      <div className="user-avatar"><Icon name="user" size={20} /></div>
+    <div className="user-row" onClick={() => nav({ view: 'user', id: u.id })}
+      onContextMenu={(e) => userMenu(e, u, { onChange })}>
+      <Avatar src={u.avatar} size={44} />
       <div className="user-row-meta">
         <div className="user-row-name">{u.username}{u.is_admin ? <span className="badge accent" style={{ marginLeft: 8 }}>Admin</span> : null}</div>
         <div className="user-row-sub">{sub}</div>
@@ -1566,7 +1629,7 @@ export function UserProfile({ id, nav }) {
   return (
     <div className="page">
       <header className="hero">
-        <div className="fav-art" style={{ background: 'var(--bg-elev-2)' }}><Icon name="user" size={72} /></div>
+        <Avatar src={data.avatar} size={200} className="hero-avatar" />
         <div className="hero-meta">
           <span className="hero-kind">Profile</span>
           <h1 className="hero-title">{data.username}</h1>

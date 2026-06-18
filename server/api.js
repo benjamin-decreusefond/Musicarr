@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
-import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer } from './db.js';
+import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer, avatarPath } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testSlskd } from './sources.js';
 import { queueDownload, deleteTrackFile, cleanupStaleTracks } from './downloader.js';
@@ -1041,6 +1041,20 @@ api.get('/track-status', (req, res) => {
 });
 
 /* ----------------------------------------------------------- Delete files */
+// Promote an already-downloaded track into the shared Library view. A track can
+// be on disk but `in_library = 0` (it only came along inside an album download,
+// or surfaced via another user's activity); this marks it as a first-class
+// library item. Only works for tracks whose audio actually exists.
+api.put('/library/:trackId', (req, res) => {
+  const id = parseInt(req.params.trackId, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid track id' });
+  const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(id);
+  if (!row) return res.status(404).json({ error: 'Track not found' });
+  if (!row.file_path) return res.status(400).json({ error: 'Track is not on the server yet' });
+  db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ?').run(id);
+  res.json({ ok: true });
+});
+
 // Permanently remove a track's audio from disk (both the library hardlink and
 // the original slskd download). Destructive + affects the shared library, so
 // it's admin-only.
@@ -1050,6 +1064,40 @@ api.delete('/library/:trackId', requireAdmin, (req, res) => {
   const result = deleteTrackFile(id);
   if (result.notFound) return res.status(404).json({ error: 'Track not found' });
   res.json({ ok: true, removed: result.removed.length });
+});
+
+/* ------------------------------------------------------- Profile avatars */
+// Avatars are small JPEGs the user uploads from their Profile. Stored on disk
+// (DATA_DIR/avatars/<id>.jpg) and served same-origin so the CSP covers them.
+const MAX_AVATAR_BYTES = 600 * 1024; // generous for a client-downscaled JPEG
+
+api.get('/avatar/:id', (req, res) => {
+  const p = avatarPath(req.params.id);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'No avatar' });
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  fs.createReadStream(p).on('error', () => { if (!res.headersSent) res.sendStatus(500); }).pipe(res);
+});
+
+// Upload/replace your own avatar. Body: { image: "data:image/jpeg;base64,..." }.
+// The client downscales to a small square JPEG before sending.
+api.post('/avatar', (req, res) => {
+  const data = (req.body?.image || '').toString();
+  const m = /^data:image\/jpe?g;base64,([A-Za-z0-9+/=]+)$/.exec(data);
+  if (!m) return res.status(400).json({ error: 'Expected a JPEG data URL' });
+  let buf;
+  try { buf = Buffer.from(m[1], 'base64'); } catch { return res.status(400).json({ error: 'Invalid image data' }); }
+  if (buf.length === 0 || buf.length > MAX_AVATAR_BYTES) return res.status(400).json({ error: 'Image too large' });
+  // Sanity-check the JPEG magic bytes (FF D8 FF) so we only store real images.
+  if (!(buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)) return res.status(400).json({ error: 'Not a JPEG image' });
+  try { fs.writeFileSync(avatarPath(req.user.id), buf); }
+  catch (e) { return res.status(500).json({ error: String(e.message || e) }); }
+  res.json({ ok: true });
+});
+
+api.delete('/avatar', (req, res) => {
+  try { fs.unlinkSync(avatarPath(req.user.id)); } catch { /* already gone */ }
+  res.json({ ok: true });
 });
 
 /* -------------------------------------------------------------- Lyrics */

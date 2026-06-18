@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { db } from './db.js';
+import { db, avatarUrl } from './db.js';
 
 // Social features for users of the same server: search/follow people and see
 // what they like and are listening to. Visibility is open within the server.
@@ -23,6 +23,7 @@ function userCard(u, viewerId) {
     following: !!db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?').get(viewerId, u.id),
     followers: db.prepare('SELECT COUNT(*) AS n FROM follows WHERE following_id = ?').get(u.id).n,
     nowPlaying: nowPlayingOf(u.id),
+    avatar: avatarUrl(u.id),
   };
 }
 
@@ -83,12 +84,12 @@ socialRouter.get('/users/:id', (req, res) => {
   if (!u) return res.status(404).json({ error: 'User not found' });
   const recent = db.prepare(`
     SELECT t.deezer_id, t.title, t.artist, t.artist_id, t.album, t.album_id, t.duration, t.cover,
-           (t.file_path IS NOT NULL) AS available, MAX(p.played_at) AS last_played
+           (t.file_path IS NOT NULL) AS available, t.in_library, MAX(p.played_at) AS last_played
     FROM plays p JOIN tracks t ON t.deezer_id = p.track_id WHERE p.user_id = ?
     GROUP BY p.track_id ORDER BY last_played DESC LIMIT 30`).all(id);
   const favorites = db.prepare(`
     SELECT t.deezer_id, t.title, t.artist, t.artist_id, t.album, t.album_id, t.duration, t.cover,
-           (t.file_path IS NOT NULL) AS available
+           (t.file_path IS NOT NULL) AS available, t.in_library
     FROM favorites f JOIN tracks t ON t.deezer_id = f.track_id WHERE f.user_id = ?
     ORDER BY f.added_at DESC LIMIT 50`).all(id);
   const playlists = db.prepare('SELECT * FROM playlists WHERE user_id = ? ORDER BY created_at').all(id);
