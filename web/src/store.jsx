@@ -24,53 +24,6 @@ export function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/* ------------------------------------------------------ Offline downloads */
-// Tracks the user has explicitly saved for offline playback. The audio bytes
-// live in the Cache Storage bucket the service worker reads from; the metadata
-// (so we can list/browse them) lives in localStorage.
-const OFFLINE_KEY = 'musicarr:offline';
-const AUDIO_CACHE = 'musicarr-audio-v1';
-export const offlineSupported = typeof caches !== 'undefined' && 'serviceWorker' in navigator;
-
-function loadOffline() { try { return JSON.parse(localStorage.getItem(OFFLINE_KEY)) || {}; } catch { return {}; } }
-const trackKey = (t) => t?.deezer_id || t?.id;
-
-export async function saveTrackOffline(track) {
-  const id = trackKey(track);
-  if (!id || !offlineSupported) throw new Error('Offline storage unavailable');
-  const res = await fetch(`/api/stream/${id}`, { credentials: 'same-origin' });
-  if (!res.ok) throw new Error('Could not download this track');
-  const cache = await caches.open(AUDIO_CACHE);
-  await cache.put(`/api/stream/${id}`, res.clone());
-  const map = loadOffline();
-  map[id] = {
-    deezer_id: id, title: track.title, artist: track.artist, artist_id: track.artist_id,
-    album: track.album, album_id: track.album_id, cover: track.cover, duration: track.duration,
-    available: true, saved_at: Date.now(),
-  };
-  localStorage.setItem(OFFLINE_KEY, JSON.stringify(map));
-  window.dispatchEvent(new Event('musicarr:offline-changed'));
-}
-
-export async function removeTrackOffline(id) {
-  if (offlineSupported) { try { (await caches.open(AUDIO_CACHE)).delete(`/api/stream/${id}`); } catch { /* ignore */ } }
-  const map = loadOffline();
-  delete map[id];
-  localStorage.setItem(OFFLINE_KEY, JSON.stringify(map));
-  window.dispatchEvent(new Event('musicarr:offline-changed'));
-}
-
-// Reactive view of the offline map; re-renders on any save/remove anywhere.
-export function useOffline() {
-  const [map, setMap] = useState(loadOffline);
-  useEffect(() => {
-    const h = () => setMap(loadOffline());
-    window.addEventListener('musicarr:offline-changed', h);
-    return () => window.removeEventListener('musicarr:offline-changed', h);
-  }, []);
-  return map;
-}
-
 /* ---------------------------------------------------------- Player store */
 const PlayerCtx = createContext(null);
 export const usePlayer = () => useContext(PlayerCtx);

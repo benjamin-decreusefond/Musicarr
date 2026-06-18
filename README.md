@@ -177,15 +177,13 @@ else. Share the short **code**; others **Join** and follow along, with the clien
 correcting drift every couple of seconds. The host controls playback; guests
 stream the same shared-library files. Leaving as the host ends the session.
 
-## Install & offline (PWA)
+## Install (PWA) & media keys
 
-Musicarr is an installable progressive web app: add it to your home screen / desktop
-for a standalone window, lock-screen and media-key controls (play/pause, next/prev,
-seek), and a synced scrubber via the Media Session API. A service worker caches the
-app shell, static assets and cover art so the UI loads offline. Tap the **save**
-icon on any available track to keep its audio on the device — saved tracks live
-under the **Offline** page and play back without a connection (with seeking), served
-from the browser cache with HTTP range support.
+Musicarr can be installed as a progressive web app — add it to your home screen /
+desktop for a standalone window — and integrates with the OS **Media Session API**
+for lock-screen and media-key controls (play/pause, next/prev, seek) plus a synced
+scrubber. There is intentionally **no offline mode**: Musicarr is a networked server,
+so there's nothing to do when it can't be reached.
 
 ## Shared playlists
 

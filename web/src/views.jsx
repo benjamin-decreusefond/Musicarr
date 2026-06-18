@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, usePlayer, useOffline } from './store.jsx';
+import { api, usePlayer } from './store.jsx';
 import { Icon, Cover, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads } from './ui.jsx';
 import { useT, useLang, LANGS } from './i18n.jsx';
 
@@ -983,38 +983,6 @@ export function Downloads({ nav }) {
         ))}
         {!items.length && <div className="state faint">No downloads yet.</div>}
       </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------- Offline */
-// Tracks saved to this device for playback without a connection (PWA).
-export function Offline({ nav }) {
-  const offline = useOffline();
-  const player = usePlayer();
-  const tracks = Object.values(offline).sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
-  return (
-    <div className="page">
-      <h1 className="page-h1">Offline</h1>
-      <p className="settings-hint">
-        Tracks saved to this device, playable without a connection. {tracks.length} saved.
-        Install Musicarr to your home screen for a full offline app.
-      </p>
-      {tracks.length ? (
-        <>
-          <div className="hero-actions" style={{ margin: '4px 0 18px' }}>
-            <button className="btn-primary" onClick={() => player.playList(tracks, 0)}>
-              <Icon name="play" size={18} fill="currentColor" /> Play all
-            </button>
-            <button className="btn-ghost" onClick={() => player.playList(tracks, 0, { shuffle: true })}>
-              <Icon name="shuffle" size={18} /> Shuffle
-            </button>
-          </div>
-          <TrackTable tracks={tracks} nav={nav} showAdded={false} />
-        </>
-      ) : (
-        <div className="state faint">Nothing saved yet. Tap the save icon on any available track to keep it offline.</div>
-      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESE
 import { Icon, Cover } from './ui.jsx';
 import { LangProvider, useT } from './i18n.jsx';
 import { ContextMenuProvider } from './menu.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix, Offline } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -413,7 +413,6 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="library" icon="library" label={t('nav.library')} />
         <NavItem view="favorites" icon="heart" label={t('nav.liked')} />
         <NavItem view="following" icon="user" label={t('nav.following')} />
-        <NavItem view="offline" icon="save" label={t('nav.offline')} />
         <NavItem view="downloads" icon="download" label={t('nav.downloads')} />
       </nav>
       <div className="nav-divider" />
@@ -629,7 +628,6 @@ function App() {
     case 'mixes': page = <MadeForYou nav={nav} />; break;
     case 'mix': page = <Mix id={route.id} nav={nav} />; break;
     case 'stats': page = <Stats nav={nav} />; break;
-    case 'offline': page = <Offline nav={nav} />; break;
     case 'genre': page = <Genre id={route.id} nav={nav} />; break;
     case 'mood': page = <Mood slug={route.id} nav={nav} />; break;
     case 'dplaylist': page = <DeezerPlaylist id={route.id} nav={nav} />; break;
@@ -675,9 +673,15 @@ createRoot(document.getElementById('root')).render(
   </LangProvider>
 );
 
-// Register the service worker for offline support / installable PWA.
+// We no longer ship an offline service worker (a remote-only server can't be
+// reached offline anyway). Proactively unregister any previously-installed
+// worker and drop its caches so returning browsers stop serving stale assets.
+// The replacement /sw.js is itself a self-destruct that does the same.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[sw] registration failed:', err));
-  });
+  navigator.serviceWorker.getRegistrations?.()
+    .then(rs => rs.forEach(r => r.unregister()))
+    .catch(() => {});
+  if (typeof caches !== 'undefined') {
+    caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+  }
 }
