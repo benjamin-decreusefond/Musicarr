@@ -581,6 +581,9 @@ function App() {
     window.addEventListener('musicarr:unauth', h);
     return () => window.removeEventListener('musicarr:unauth', h);
   }, []);
+  // Signal the player store to pull this user's server-side playback prefs once
+  // they're signed in (covers both an existing session and a fresh login).
+  useEffect(() => { if (me && me.id) window.dispatchEvent(new Event('musicarr:authed')); }, [me?.id]);
 
   // Seed history state for the initial route, and follow browser back/forward.
   useEffect(() => {
