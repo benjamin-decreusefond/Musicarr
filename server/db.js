@@ -303,6 +303,18 @@ export function pingDb() {
   db.prepare('SELECT 1').get();
 }
 
+/* --------------------------------------------------------------- Avatars */
+// User profile pictures are stored as JPEG files under DATA_DIR/avatars/<id>.jpg
+// (kept out of the DB so rows stay small and backups stay light).
+export const avatarDir = path.join(config.dataDir, 'avatars');
+fs.mkdirSync(avatarDir, { recursive: true });
+export const avatarPath = (id) => path.join(avatarDir, `${parseInt(id, 10)}.jpg`);
+// A cache-busting URL (mtime query) when the user has an avatar, else null.
+export function avatarUrl(id) {
+  try { return `/api/avatar/${parseInt(id, 10)}?v=${Math.floor(fs.statSync(avatarPath(id)).mtimeMs)}`; }
+  catch { return null; }
+}
+
 export function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 }

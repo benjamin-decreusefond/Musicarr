@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
-import { Icon, Cover } from './ui.jsx';
+import { Icon, Cover, Avatar, useUserMenu } from './ui.jsx';
 import { LangProvider, useT } from './i18n.jsx';
 import { ContextMenuProvider } from './menu.jsx';
 import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
@@ -441,7 +441,7 @@ function Sidebar({ route, nav, me, onLogout }) {
       </div>
       <div className="user-foot">
         <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title={t('nav.profile')}>
-          <Icon name="user" size={18} />
+          <Avatar src={me.avatar} size={26} />
           <span className="user-name">{me.username}</span>
         </button>
         <button className="icon-btn" onClick={onLogout} title={t('auth.signOut')}><Icon name="logout" size={18} /></button>
@@ -455,20 +455,22 @@ function Sidebar({ route, nav, me, onLogout }) {
 // (like Spotify's Friend Activity). Polls the following feed.
 function ActivityPanel({ nav, onClose }) {
   const [people, setPeople] = useState([]);
+  const userMenu = useUserMenu();
+  const load = useCallback(() => api.get('/api/social/following').then(setPeople).catch(() => {}), []);
   useEffect(() => {
-    const load = () => api.get('/api/social/following').then(setPeople).catch(() => {});
     load();
     const t = setInterval(load, 20000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
   return (
     <aside className="activity">
       <div className="activity-head"><span>Friend activity</span>
         <button className="icon-btn" onClick={onClose} title="Hide"><Icon name="close" size={16} /></button>
       </div>
       {people.length ? people.map(u => (
-        <button key={u.id} className="activity-row" onClick={() => nav({ view: 'user', id: u.id })}>
-          <div className="user-avatar sm"><Icon name="user" size={16} /></div>
+        <button key={u.id} className="activity-row" onClick={() => nav({ view: 'user', id: u.id })}
+          onContextMenu={(e) => userMenu(e, { ...u, following: true }, { onChange: load })}>
+          <Avatar src={u.avatar} size={34} className="sm" />
           <div className="activity-meta">
             <div className="activity-name">{u.username}</div>
             <div className="activity-sub">
@@ -594,6 +596,13 @@ function App() {
     const h = () => setMe(null);
     window.addEventListener('musicarr:unauth', h);
     return () => window.removeEventListener('musicarr:unauth', h);
+  }, []);
+  // Refresh the signed-in user (e.g. after changing the profile picture) so the
+  // new avatar shows in the sidebar and elsewhere.
+  useEffect(() => {
+    const h = () => api.get('/api/auth/me').then(setMe).catch(() => {});
+    window.addEventListener('musicarr:me-updated', h);
+    return () => window.removeEventListener('musicarr:me-updated', h);
   }, []);
 
   // Seed history state for the initial route, and follow browser back/forward.

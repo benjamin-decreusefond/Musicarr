@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { Router } from 'express';
-import { db, config } from './db.js';
+import { db, config, avatarUrl } from './db.js';
 
 const COOKIE = 'musicarr_session';
 // A fixed bcrypt hash compared against on unknown usernames so a failed login
@@ -175,7 +175,7 @@ authRouter.post('/logout', (req, res) => {
 
 authRouter.get('/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not signed in' });
-  res.json({ ...req.user, is_admin: !!req.user.is_admin, must_change_password: !!req.user.must_change_password });
+  res.json({ ...req.user, is_admin: !!req.user.is_admin, must_change_password: !!req.user.must_change_password, avatar: avatarUrl(req.user.id) });
 });
 
 authRouter.post('/password', requireAuth, (req, res) => {

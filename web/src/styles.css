@@ -465,3 +465,14 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .lang-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-elev); color: var(--text); font-size: 14px; font-weight: 600; }
 .lang-btn:hover { background: var(--surface-hover); }
 .lang-btn.on { border-color: var(--accent); color: var(--accent); }
+
+/* ---- Avatars ---- */
+.user-avatar { background-size: cover; background-position: center; overflow: hidden; }
+.hero-avatar { box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+.avatar-edit { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.avatar-edit-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.avatar-edit-actions label.btn-ghost { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+/* Keep the now-playing equalizer centered and clipped to its column so it can't
+   bleed into / overlap the adjacent cover art. */
+.tt-idx .eq, .track-idx .eq { justify-content: center; max-width: 100%; }
+.tt-idx, .track-idx { overflow: hidden; }

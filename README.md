@@ -185,6 +185,19 @@ for lock-screen and media-key controls (play/pause, next/prev, seek) plus a sync
 scrubber. There is intentionally **no offline mode**: Musicarr is a networked server,
 so there's nothing to do when it can't be reached.
 
+## Profiles & social
+
+Each user has a profile with their recently played, liked songs and playlists.
+Set a **profile picture** under **Profile** (it's downscaled in the browser and
+shown in the sidebar, friend activity and on profiles). **Right-click** anyone in
+the friend-activity panel or a user list to quickly **view their profile** or
+**follow / unfollow** them.
+
+Because the audio library is shared, a track another user has played is already
+on the server. If it isn't in your **Library** view yet, an **add-to-library**
+button (and right-click action) on their profile promotes it into the library in
+one click — no re-download.
+
 ## Shared playlists
 
 Playlists are private by default, but the owner can **share** one with other users
