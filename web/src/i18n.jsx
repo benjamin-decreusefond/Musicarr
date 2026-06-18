@@ -41,6 +41,7 @@ const STRINGS = {
     'player.nothingPlaying': 'Nothing playing', 'player.queue': 'Queue',
     'player.lyrics': 'Lyrics', 'player.friendActivity': 'Friend activity',
     'player.listenTogether': 'Listen together', 'player.next': 'Next', 'player.previous': 'Previous',
+    'player.preview': 'Preview', 'player.stopPreview': 'Stop preview', 'ctx.menuBack': 'Back',
 
     'auth.tagline': 'Your music, your server.', 'auth.username': 'Username',
     'auth.password': 'Password', 'auth.signIn': 'Sign in', 'auth.signingIn': 'Signing in…',
@@ -81,6 +82,7 @@ const STRINGS = {
     'player.nothingPlaying': 'Aucune lecture', 'player.queue': "File d'attente",
     'player.lyrics': 'Paroles', 'player.friendActivity': 'Activité des amis',
     'player.listenTogether': 'Écouter ensemble', 'player.next': 'Suivant', 'player.previous': 'Précédent',
+    'player.preview': 'Aperçu', 'player.stopPreview': "Arrêter l'aperçu", 'ctx.menuBack': 'Retour',
 
     'auth.tagline': 'Votre musique, votre serveur.', 'auth.username': "Nom d'utilisateur",
     'auth.password': 'Mot de passe', 'auth.signIn': 'Se connecter', 'auth.signingIn': 'Connexion…',
@@ -121,6 +123,7 @@ const STRINGS = {
     'player.nothingPlaying': 'Nada en reproducción', 'player.queue': 'Cola',
     'player.lyrics': 'Letras', 'player.friendActivity': 'Actividad de amigos',
     'player.listenTogether': 'Escuchar juntos', 'player.next': 'Siguiente', 'player.previous': 'Anterior',
+    'player.preview': 'Vista previa', 'player.stopPreview': 'Detener vista previa', 'ctx.menuBack': 'Atrás',
 
     'auth.tagline': 'Tu música, tu servidor.', 'auth.username': 'Usuario',
     'auth.password': 'Contraseña', 'auth.signIn': 'Entrar', 'auth.signingIn': 'Entrando…',
@@ -161,6 +164,7 @@ const STRINGS = {
     'player.nothingPlaying': 'Nichts wird abgespielt', 'player.queue': 'Warteschlange',
     'player.lyrics': 'Songtext', 'player.friendActivity': 'Freunde-Aktivität',
     'player.listenTogether': 'Zusammen hören', 'player.next': 'Weiter', 'player.previous': 'Zurück',
+    'player.preview': 'Vorschau', 'player.stopPreview': 'Vorschau stoppen', 'ctx.menuBack': 'Zurück',
 
     'auth.tagline': 'Deine Musik, dein Server.', 'auth.username': 'Benutzername',
     'auth.password': 'Passwort', 'auth.signIn': 'Anmelden', 'auth.signingIn': 'Anmeldung…',

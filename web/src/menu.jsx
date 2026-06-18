@@ -1,5 +1,8 @@
 import { createContext, useContext, useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { Icon } from './ui.jsx';
+import { useT } from './i18n.jsx';
+
+const navTo = (view) => () => window.dispatchEvent(new CustomEvent('musicarr:navigate', { detail: { view } }));
 
 // Custom right-click context menu. A single menu instance lives at the app root;
 // any component calls openMenu(event, items) from its onContextMenu handler to
@@ -14,6 +17,7 @@ export const useContextMenu = () => useContext(MenuCtx);
 
 export function ContextMenuProvider({ children }) {
   const [menu, setMenu] = useState(null); // { x, y, items }
+  const t = useT();
 
   const openMenu = useCallback((e, items) => {
     if (!items || !items.length) return;
@@ -22,6 +26,30 @@ export function ContextMenuProvider({ children }) {
     setMenu({ x: e.clientX, y: e.clientY, items });
   }, []);
   const close = useCallback(() => setMenu(null), []);
+
+  // Fallback app menu for right-clicks anywhere that a specific element (track,
+  // user, …) didn't already handle — so the whole interface has a custom menu
+  // instead of the browser default. Native menu is preserved over text inputs
+  // and selections so copy/paste still works.
+  useEffect(() => {
+    const onCtx = (e) => {
+      if (e.defaultPrevented) return; // a specific handler already ran
+      const el = e.target;
+      if (el.closest?.('input, textarea, [contenteditable="true"], [contenteditable=""]')) return;
+      if (String(window.getSelection?.() || '').trim()) return;
+      e.preventDefault();
+      setMenu({ x: e.clientX, y: e.clientY, items: [
+        { label: t('ctx.menuBack'), icon: 'prev', onClick: () => window.history.back() },
+        { separator: true },
+        { label: t('nav.home'), icon: 'home', onClick: navTo('home') },
+        { label: t('nav.search'), icon: 'search', onClick: navTo('search') },
+        { label: t('nav.madeForYou'), icon: 'sparkles', onClick: navTo('mixes') },
+        { label: t('nav.library'), icon: 'library', onClick: navTo('library') },
+      ] });
+    };
+    document.addEventListener('contextmenu', onCtx);
+    return () => document.removeEventListener('contextmenu', onCtx);
+  }, [t]);
 
   return (
     <MenuCtx.Provider value={{ openMenu }}>
