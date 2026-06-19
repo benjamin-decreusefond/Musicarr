@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   track_position INTEGER,
   duration INTEGER,
   cover TEXT,
+  isrc TEXT,
   file_path TEXT UNIQUE,
   added_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -243,6 +244,12 @@ if (!sessCols.includes('expires_at')) {
 const trackColsEarly = db.prepare(`PRAGMA table_info(tracks)`).all().map(c => c.name);
 if (!trackColsEarly.includes('source_path')) {
   db.exec(`ALTER TABLE tracks ADD COLUMN source_path TEXT`);
+}
+// Migration: store each track's ISRC (from Deezer) so a downloaded file can be
+// verified against the exact recording the user asked for, distinguishing e.g.
+// an original from a remix that shares the title and length.
+if (!trackColsEarly.includes('isrc')) {
+  db.exec(`ALTER TABLE tracks ADD COLUMN isrc TEXT`);
 }
 
 // Migration: `in_library` distinguishes tracks the user actually requested
@@ -363,5 +370,6 @@ export function trackRowFromDeezer(d, albumOverride) {
     track_position: d.track_position || null,
     duration: d.duration || null,
     cover: album.cover_medium || album.cover || d.album?.cover_medium || null,
+    isrc: d.isrc || null,
   };
 }

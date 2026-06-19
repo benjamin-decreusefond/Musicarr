@@ -514,15 +514,16 @@ async function importDownload(dl) {
   for (const f of files) {
     const base = path.basename(f);
     let title = path.basename(f, path.extname(f));
-    let trackNo = null, duration = null;
+    let trackNo = null, duration = null, isrc = null;
     try {
       const mm = await parseFile(f, { duration: true });
       title = mm.common.title || title;
       trackNo = mm.common.track?.no ?? null;
       duration = mm.format?.duration ?? null;          // actual audio length, in seconds
+      isrc = (Array.isArray(mm.common.isrc) ? mm.common.isrc[0] : mm.common.isrc) || null;
     } catch { /* fall back to filename */ }
     if (trackNo == null) trackNo = fileTrackNo(base);
-    fileInfos.push({ path: f, title, trackNo, base, duration });
+    fileInfos.push({ path: f, title, trackNo, base, duration, isrc });
   }
 
   const wanted = plan?.wantedTracks || [];
@@ -537,14 +538,37 @@ async function importDownload(dl) {
     if (!want.duration || !fi.duration) return null;
     return Math.abs(fi.duration - want.duration) <= durTol(want.duration);
   };
+
+  // ISRC is a unique code for a specific recording, so when both the Deezer
+  // track and the downloaded file carry one it's definitive proof of same/other
+  // recording — sharper than duration (it tells an original from a same-length
+  // remix). Tags vary in punctuation/case, so normalize to the bare 12 chars.
+  const normIsrc = s => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const isrcVerdict = (want, fi) => {
+    const a = normIsrc(want.isrc), b = normIsrc(fi.isrc);
+    if (a.length !== 12 || b.length !== 12) return null;   // can't judge
+    return a === b;
+  };
+
+  // Combined confidence that file `fi` IS the wanted recording. Negative means
+  // "proven wrong" (reject); higher positive means stronger proof.
+  const confidence = (want, fi) => {
+    const i = isrcVerdict(want, fi);
+    if (i === false) return -1;        // ISRC proves a different recording
+    const d = durVerdict(want, fi);
+    if (d === false) return -1;        // duration proves a different length
+    if (i === true) return 3;          // ISRC confirms the exact recording
+    if (d === true) return 2;          // duration confirms the length
+    return 1;                          // nothing contradicts it
+  };
   const pickMatch = (want) => {
     const cands = fileInfos.filter(fi => !fi.used && (
       (want.track_position && fi.trackNo === want.track_position) || titleMatches(fi, want.title)));
     const ranked = cands
-      .map(fi => ({ fi, v: durVerdict(want, fi) }))
-      .filter(x => x.v !== false)                       // drop clear duration mismatches
+      .map(fi => ({ fi, c: confidence(want, fi) }))
+      .filter(x => x.c >= 0)                            // drop ISRC/duration-proven mismatches
       .sort((a, b) => {
-        if ((a.v === true) !== (b.v === true)) return a.v === true ? -1 : 1; // confirmed first
+        if (a.c !== b.c) return b.c - a.c;              // strongest proof first (ISRC > duration)
         const da = (a.fi.duration && want.duration) ? Math.abs(a.fi.duration - want.duration) : 1e9;
         const db2 = (b.fi.duration && want.duration) ? Math.abs(b.fi.duration - want.duration) : 1e9;
         return da - db2;                                // then closest length
@@ -595,7 +619,7 @@ async function importDownload(dl) {
     // tag/filename matching failed — but only if the duration doesn't contradict it.
     if (!match && fileInfos.length === 1 && !fileInfos[0].used
         && (wanted.length === 1 || want.deezer_id === plan?.requiredId)
-        && durVerdict(want, fileInfos[0]) !== false) {
+        && confidence(want, fileInfos[0]) >= 0) {
       match = fileInfos[0];
     }
     if (!match) { unmatched.push(want); continue; }
@@ -612,7 +636,7 @@ async function importDownload(dl) {
     if (freeFiles.length && Math.abs(freeFiles.length - need.length) <= 1) {
       log.info(`#${dl.id} positional fallback: assigning ${Math.min(freeFiles.length, need.length)} leftover file(s) by track order`);
       for (let i = 0; i < need.length && i < freeFiles.length; i++) {
-        if (durVerdict(need[i], freeFiles[i]) === false) continue; // never mislabel by length
+        if (confidence(need[i], freeFiles[i]) < 0) continue; // never mislabel (length/ISRC)
         linkInto(need[i], freeFiles[i]);
       }
     }
