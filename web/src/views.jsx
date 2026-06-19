@@ -994,10 +994,13 @@ function StatCard({ value, label }) {
   return <div className="stat-card"><div className="stat-value">{value}</div><div className="stat-label">{label}</div></div>;
 }
 
-export function Stats({ nav }) {
+export function Stats({ nav, userId = null }) {
   const [range, setRange] = useState('all');
-  const { data, err, loading } = useAsync(() => api.get(`/api/stats?range=${range}`), [range]);
+  const qs = `?range=${range}${userId ? `&user=${userId}` : ''}`;
+  const { data, err, loading } = useAsync(() => api.get(`/api/stats${qs}`), [range, userId]);
   const player = usePlayer();
+  // For another user the server returns their username; otherwise it's "Your".
+  const title = (userId && data?.username) ? `${data.username}'s stats` : 'Your stats';
 
   const fmtMinutes = (sec) => {
     const m = Math.round((sec || 0) / 60);
@@ -1009,7 +1012,7 @@ export function Stats({ nav }) {
   return (
     <div className="page">
       <div className="stats-head">
-        <h1 className="page-h1">Your stats</h1>
+        <h1 className="page-h1">{title}</h1>
         <div className="seg">
           {STAT_RANGES.map(([key, label]) => (
             <button key={key} className={`seg-btn ${range === key ? 'on' : ''}`} onClick={() => setRange(key)}>{label}</button>
@@ -1634,7 +1637,12 @@ export function UserProfile({ id, nav }) {
           <span className="hero-kind">Profile</span>
           <h1 className="hero-title">{data.username}</h1>
           <span className="hero-sub faint">{data.followers} followers · {data.following_count} following</span>
-          <div className="hero-actions"><FollowButton user={data} /></div>
+          <div className="hero-actions">
+            <FollowButton user={data} />
+            <button className="btn-ghost sm" onClick={() => nav({ view: 'stats', id: data.id })}>
+              <Icon name="chart" size={16} /> View stats
+            </button>
+          </div>
           {data.nowPlaying && (
             <div className="np-live" style={{ marginTop: 12 }}>
               <span className="np-dot" /> Listening to <b style={{ margin: '0 5px' }}>{data.nowPlaying.title}</b> · {data.nowPlaying.artist}
