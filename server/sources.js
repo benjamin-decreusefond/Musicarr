@@ -78,11 +78,18 @@ async function slskdFetch(pathAndQuery, opts = {}) {
 }
 
 /** True when an slskd error is transient — slskd is briefly not connected to
- *  the Soulseek server (e.g. just after a VPN reconnect) and the same call
- *  will likely succeed once it finishes logging in. */
+ *  the Soulseek server (e.g. just after a VPN reconnect), the API timed out, or
+ *  the HTTP connection itself failed (slskd restarting / momentarily
+ *  unreachable). The same call will likely succeed once it recovers, so the
+ *  caller should wait and retry rather than give up. */
 export function isTransientSlskdError(e) {
+  const msg = `${e?.message || ''} ${e?.cause?.message || ''}`;
+  const code = `${e?.cause?.code || e?.code || ''}`;
   return e?.status === 500 || e?.status === 503
-    || /must be connected|logged ?in|connecting|not connected/i.test(e?.message || '');
+    || e?.name === 'AbortError' || e?.name === 'TimeoutError'
+    || /must be connected|logged ?in|connecting|not connected/i.test(msg)
+    || /fetch failed|network|socket hang ?up|terminated/i.test(msg)
+    || /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|EPIPE|UND_ERR/i.test(`${code} ${msg}`);
 }
 
 /** True when slskd is connected to and logged in to the Soulseek network. */
