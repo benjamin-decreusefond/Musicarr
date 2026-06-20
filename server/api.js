@@ -135,13 +135,6 @@ api.post('/settings/test', requireAdmin, async (req, res) => {
 // A track is "available" to a user if its file exists on disk. Ownership is
 // implicit: any signed-in user can play any imported file (shared library),
 // but favorites/playlists are per-user.
-function trackWithFlags(userId) {
-  return db.prepare(`
-    SELECT t.*, (t.file_path IS NOT NULL) AS available,
-           EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = ? AND f.track_id = t.deezer_id) AS favorite
-    FROM tracks t WHERE t.deezer_id = ?
-  `).pluck(false);
-}
 
 // The library shows every track on disk, plus tracks currently being fetched
 // so a download shows up the moment it's clicked. Each row carries `available`
