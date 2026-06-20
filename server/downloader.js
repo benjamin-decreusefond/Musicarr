@@ -191,16 +191,20 @@ async function trackViaSlskd(dl) {
   // artist name and the Deezer duration.
   const queries = searchVariants(row.artist, row.title);
 
+  // Distinguish "slskd was unavailable" from "genuinely no candidates": only the
+  // latter should end as not_found (terminal). Transient slskd trouble ends as a
+  // retriable error so the sweep re-attempts it once slskd recovers.
+  let slskdDown = false;
   for (const q of queries) {
     log.info(`#${dl.id} slskd search: "${q}"`);
     let files = [];
     try { files = await slskdSearch(q); }
-    catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); continue; }
+    catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); if (isTransientSlskdError(e)) slskdDown = true; continue; }
     const ranked = scoreSlskdFiles(files, row.artist, row.title, tr.duration || null)
       .filter(f => !isExcluded(dl, f.username, f.filename));
     log.info(`#${dl.id} "${q}": ${files.length} audio file(s), ${ranked.length} viable`);
 
-    if (ranked.length) await ensureSlskdReady(dl.id);
+    if (ranked.length && !await ensureSlskdReady(dl.id)) slskdDown = true;
     // Try candidates in order until one peer accepts the request.
     for (const file of ranked.slice(0, 5)) {
       try {
@@ -218,8 +222,12 @@ async function trackViaSlskd(dl) {
         return;
       } catch (e) {
         log.warn(`#${dl.id} slskd peer ${file.username} rejected the file: ${e.message}`);
+        if (isTransientSlskdError(e)) slskdDown = true;
       }
     }
+  }
+  if (slskdDown) {
+    return setStatus(dl.id, 'error', 'slskd was unreachable or offline during search — will retry automatically');
   }
   setStatus(dl.id, 'not_found', dl.attempts > 0
     ? `No more Soulseek candidates after ${dl.attempts} failed attempt(s)`
@@ -245,18 +253,19 @@ async function albumViaSlskd(dl) {
 
   setStatus(dl.id, 'searching', 'Searching Soulseek');
   const queries = searchVariants(artist, title);
+  let slskdDown = false;
   for (const q of queries) {
     log.info(`#${dl.id} slskd album search: "${q}"`);
     let files = [];
     try { files = await slskdSearch(q); }
-    catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); continue; }
+    catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); if (isTransientSlskdError(e)) slskdDown = true; continue; }
 
     // Rank per-peer folders by how much of the tracklist they cover.
     const folders = scoreSlskdFolders(files, wantedTracks.map(w => w.title))
       .filter(f => !isExcluded(dl, f.username, f.files[0]?.filename));
     log.info(`#${dl.id} "${q}": ${files.length} file(s) in ${folders.length} viable folder(s)`);
 
-    if (folders.length) await ensureSlskdReady(dl.id);
+    if (folders.length && !await ensureSlskdReady(dl.id)) slskdDown = true;
     for (const folder of folders.slice(0, 5)) {
       try {
         await enqueueWithRetry(dl.id, folder.username, folder.files);
@@ -274,8 +283,12 @@ async function albumViaSlskd(dl) {
         return;
       } catch (e) {
         log.warn(`#${dl.id} slskd peer ${folder.username} rejected the folder: ${e.message}`);
+        if (isTransientSlskdError(e)) slskdDown = true;
       }
     }
+  }
+  if (slskdDown) {
+    return setStatus(dl.id, 'error', 'slskd was unreachable or offline during search — will retry automatically');
   }
   setStatus(dl.id, 'not_found', dl.attempts > 0
     ? `No more Soulseek album folders after ${dl.attempts} failed attempt(s)`
@@ -403,6 +416,27 @@ export async function sweepUnimported() {
       log.debug(`sweep: #${dl.id} retry failed: ${err.message}`);
     } finally {
       pendingImports.delete(dl.id);
+    }
+  }
+
+  // Re-drive searches that failed only because slskd was temporarily down
+  // (status 'error', nothing ever started transferring). Retry once slskd is
+  // healthy again, at most every 30 min per download, for up to a day.
+  let healthy = false;
+  try { healthy = await slskdReady(); } catch { /* treat as not healthy */ }
+  if (healthy) {
+    const retry = db.prepare(`
+      SELECT * FROM downloads
+      WHERE status = 'error' AND slskd_user IS NULL
+        AND updated_at > datetime('now','-1 days')
+    `).all();
+    for (const dl of retry) {
+      const last = sweepAttempts.get(dl.id) || 0;
+      if (Date.now() - last < 30 * 60 * 1000) continue;
+      sweepAttempts.set(dl.id, Date.now());
+      log.info(`sweep: re-searching #${dl.id} (${dl.label}) after a transient slskd outage`);
+      setStatus(dl.id, 'searching', 'Retrying after slskd recovered');
+      runSearch(dl.id);
     }
   }
 }
