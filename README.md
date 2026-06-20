@@ -243,3 +243,15 @@ Disable with `BACKUP_ENABLED=false`.
 - **8686** — HTTP (UI + API + audio streaming). Put it behind your own
   ingress/TLS.
 
+## Testing
+
+The server ships with a comprehensive test suite (Node's built-in test runner,
+no extra dependencies) and a CI-enforced coverage gate (~99.5% lines):
+
+```bash
+npm test         # run the suite
+npm run coverage # run with the coverage gate (what CI enforces)
+```
+
+See [TESTING.md](TESTING.md) for details.
+

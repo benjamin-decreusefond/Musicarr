@@ -1,0 +1,33 @@
+name: test
+
+# Runs the server test suite with coverage enforcement on every push and PR.
+# The build fails if coverage drops below the thresholds in `npm run coverage`
+# (see package.json): lines 99%, functions 90%, branches 78%.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage gate
+        run: npm run coverage
