@@ -316,6 +316,32 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 );
 `);
 
+// Cached artist metadata (id, name, picture). The library's artist view used to
+// fetch one Deezer request per artist on every load; this lets it read pictures
+// from SQLite instead. Populated opportunistically whenever we fetch a full
+// artist from Deezer (artist page, follow, or a first library-view backfill).
+db.exec(`
+CREATE TABLE IF NOT EXISTS artists (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  picture TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
+/** Cache an artist's name/picture. COALESCE keeps a previously-known value when
+ *  the new one is missing, so a partial update never wipes a good picture. */
+export function upsertArtist(id, name, picture) {
+  if (!Number.isFinite(Number(id))) return;
+  db.prepare(`
+    INSERT INTO artists (id, name, picture, updated_at) VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      name = COALESCE(excluded.name, name),
+      picture = COALESCE(excluded.picture, picture),
+      updated_at = excluded.updated_at
+  `).run(id, name ?? null, picture ?? null);
+}
+
 /** Cheap readiness check that the SQLite handle is open and responsive. Throws on failure. */
 export function pingDb() {
   db.prepare('SELECT 1').get();

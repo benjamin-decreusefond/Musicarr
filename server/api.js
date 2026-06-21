@@ -1,15 +1,31 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
-import { db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer, avatarPath } from './db.js';
+import { db, config, setSetting, upsertTrack, upsertArtist, trackRowFromDeezer, avatarPath } from './db.js';
 import { requireAuth, requireAdmin } from './auth.js';
 import { deezerGet, testSlskd } from './sources.js';
 import { queueDownload, deleteTrackFile, cleanupStaleTracks } from './downloader.js';
 import { seedSeenAlbums } from './releases.js';
 import { createCache } from './cache.js';
+import { rateLimit } from './ratelimit.js';
 import { logger } from './log.js';
 
 const log = logger('api');
+
+// Per-user throttles for the endpoints that fan out to Deezer/slskd, so one
+// client can't stampede those upstreams. Tuned well above normal interactive
+// use; only runaway scripts hit them.
+const searchLimit = rateLimit({ windowMs: 60_000, max: 60 });
+const downloadLimit = rateLimit({ windowMs: 60_000, max: 60 });
+const importLimit = rateLimit({ windowMs: 5 * 60_000, max: 20 });
+
+// Run async `fn` over `items` with at most `limit` calls in flight at once, so a
+// big list doesn't fire every request simultaneously (and get rate-limited).
+async function mapLimit(items, limit, fn) {
+  const queue = [...items];
+  const worker = async () => { while (queue.length) await fn(queue.shift()); };
+  await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, worker));
+}
 
 export const api = Router();
 api.use(requireAuth);
@@ -160,24 +176,32 @@ api.get('/library', (req, res) => {
 });
 
 // Artists present in the library, with their real Deezer artist picture (the
-// track cover is the album art, which isn't the artist photo).
+// track cover is the album art, which isn't the artist photo). Pictures are read
+// from the local `artists` cache; only the ones we've never seen are fetched
+// from Deezer (bounded concurrency) and then cached, so a large library doesn't
+// fan out hundreds of simultaneous Deezer requests on every load.
 api.get('/library/artists', async (req, res) => {
   const rows = db.prepare(`
-    SELECT artist_id AS id, artist AS name, COUNT(*) AS count
-    FROM tracks WHERE file_path IS NOT NULL AND artist_id IS NOT NULL
-    GROUP BY artist_id ORDER BY count DESC, artist`).all();
-  const out = await Promise.all(rows.map(async r => {
-    let picture = null;
-    try { const a = await deezerGet(`artist/${r.id}`); picture = a.picture_medium || a.picture || null; } catch { /* fall back to no image */ }
-    return { id: r.id, name: r.name, count: r.count, picture };
-  }));
-  res.json(out);
+    SELECT t.artist_id AS id, t.artist AS name, COUNT(*) AS count, a.picture AS picture
+    FROM tracks t LEFT JOIN artists a ON a.id = t.artist_id
+    WHERE t.file_path IS NOT NULL AND t.artist_id IS NOT NULL
+    GROUP BY t.artist_id ORDER BY count DESC, t.artist`).all();
+
+  const missing = rows.filter(r => !r.picture);
+  await mapLimit(missing, 5, async r => {
+    try {
+      const a = await deezerGet(`artist/${r.id}`);
+      r.picture = a.picture_medium || a.picture || null;
+      upsertArtist(r.id, r.name, r.picture);
+    } catch { /* leave it null; retried on a later load */ }
+  });
+  res.json(rows.map(r => ({ id: r.id, name: r.name, count: r.count, picture: r.picture })));
 });
 
 /* --------------------------------------------------------------- Search */
 // Unified search: returns artists, albums and tracks from Deezer, each tagged
 // with whether we already have the file locally.
-api.get('/search', async (req, res) => {
+api.get('/search', searchLimit, async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.json({ artists: [], albums: [], tracks: [] });
   try {
@@ -221,6 +245,9 @@ api.get('/artist/:id', async (req, res) => {
     const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
     const following = !!db.prepare('SELECT 1 FROM followed_artists WHERE user_id = ? AND artist_id = ?')
       .get(req.user.id, id);
+    // Warm the artist-picture cache so the library view doesn't have to fetch it.
+    upsertArtist(artist.id, artist.name, artist.picture_medium || artist.picture_big || artist.picture_xl || artist.picture || null);
+    for (const a of (related.data || [])) upsertArtist(a.id, a.name, a.picture_medium || a.picture || null);
     res.json({
       artist: { id: artist.id, name: artist.name, picture: artist.picture_xl || artist.picture_big, nb_fan: artist.nb_fan },
       following,
@@ -258,6 +285,7 @@ api.put('/following/:artistId', async (req, res) => {
     const a = await deezerGet(`artist/${id}`);
     if (!a?.name) return res.status(404).json({ error: 'Unknown artist' });
     const picture = a.picture_medium || a.picture_big || null;
+    upsertArtist(id, a.name, picture); // warm the library-view picture cache
     // Seed the existing back-catalog as "seen" the first time *anyone* follows
     // this artist, so we only auto-grab releases that appear from now on.
     const firstFollower = !db.prepare('SELECT 1 FROM followed_artists WHERE artist_id = ? LIMIT 1').get(id);
@@ -481,7 +509,7 @@ api.get('/genre/:id', async (req, res) => {
 });
 
 /* ----------------------------------------------------------- Downloads */
-api.post('/download', async (req, res) => {
+api.post('/download', downloadLimit, async (req, res) => {
   const { kind } = req.body || {};
   const deezer_id = parseInt(req.body?.deezer_id, 10);
   if (!['album', 'track'].includes(kind) || !Number.isFinite(deezer_id) || deezer_id <= 0) {
@@ -624,7 +652,7 @@ api.post('/playlists', (req, res) => {
 // don't have on disk yet so the playlist becomes fully playable. Missing
 // tracks are queued as individual Soulseek downloads.
 const IMPORT_QUEUE_CAP = 50; // tracks per run; re-import to continue
-api.post('/playlists/import-deezer', async (req, res) => {
+api.post('/playlists/import-deezer', importLimit, async (req, res) => {
   const deezerId = parseInt(req.body?.deezer_playlist_id, 10);
   if (!deezerId) return res.status(400).json({ error: 'deezer_playlist_id required' });
   try {

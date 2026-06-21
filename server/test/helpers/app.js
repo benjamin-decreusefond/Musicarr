@@ -24,7 +24,7 @@ export function makeAuthedApp() {
   app.use('/api/social', requireAuth, socialRouter);
   app.use('/api/listen', requireAuth, listenRouter);
   app.use('/api', api);
-  app.use('/api', (err, req, res, next) => { // eslint-disable-line no-unused-vars
+  app.use('/api', (err, req, res, next) => {
     if (res.headersSent) return next(err);
     res.status(500).json({ error: String(err.message || err) });
   });
