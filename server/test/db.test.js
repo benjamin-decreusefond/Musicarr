@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  db, config, getSetting, setSetting, upsertTrack, trackRowFromDeezer,
+  db, config, getSetting, setSetting, upsertTrack, upsertArtist, trackRowFromDeezer,
   pingDb, avatarPath, avatarUrl,
 } from '../db.js';
 
@@ -66,6 +66,17 @@ test('trackRowFromDeezer maps Deezer shapes including overrides and fallbacks', 
   const override = trackRowFromDeezer({ id: 7, title: 'T3', album: { id: 1 } }, { title: 'OverAlb', id: 99, cover: 'oc' });
   assert.equal(override.album, 'OverAlb');
   assert.equal(override.album_id, 99);
+});
+
+test('upsertArtist caches metadata and never overwrites a good picture with null', () => {
+  upsertArtist(500, 'Artist', 'pic.jpg');
+  assert.equal(db.prepare('SELECT picture FROM artists WHERE id = 500').get().picture, 'pic.jpg');
+  upsertArtist(500, 'Artist Renamed', null);   // null picture must not clobber the cached one
+  const row = db.prepare('SELECT name, picture FROM artists WHERE id = 500').get();
+  assert.equal(row.name, 'Artist Renamed');
+  assert.equal(row.picture, 'pic.jpg');
+  upsertArtist(undefined);                       // invalid id is ignored (no throw)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM artists').get().n, 1);
 });
 
 test('pingDb succeeds and avatar helpers behave', () => {

@@ -3,7 +3,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, setSetting, db as rawDb } from '../db.js';
+import { config, setSetting } from '../db.js';
 import * as fm from './helpers/fetchmock.js';
 import { makeAuthedApp, listen, req, setUser } from './helpers/app.js';
 import { createUser, addTrack, wipe, db } from './helpers/seed.js';
@@ -78,18 +78,31 @@ test('settings/cleanup-now and settings/test', async () => {
 });
 
 /* ----------------------------------------------------------- Library/search */
-test('library lists on-disk and in-flight tracks; library/artists adds pictures', async () => {
+test('library lists on-disk and in-flight tracks; library/artists fetches and caches pictures', async () => {
   const a = addTrack({ deezer_id: uid(), artist_id: 4242, file_path: '/x.flac' });
-  fm.on(`deezer.test/artist/4242`, () => ({ picture_medium: 'pic' }));
+  let calls = 0;
+  fm.on(`deezer.test/artist/4242`, () => { calls++; return { picture_medium: 'pic' }; });
   const lib = await req(srv.url, 'GET', '/api/library');
   assert.ok(lib.body.find(t => t.deezer_id === a.deezer_id));
   const artists = await req(srv.url, 'GET', '/api/library/artists');
   assert.equal(artists.body[0].picture, 'pic');
+  assert.equal(calls, 1);
+  // The picture is now cached in the artists table.
+  assert.equal(db.prepare('SELECT picture FROM artists WHERE id = 4242').get().picture, 'pic');
 
   // Artist picture fetch failure falls back to null.
   wipe(); addTrack({ deezer_id: uid(), artist_id: 5252, file_path: '/y.flac' });
   fm.on(`deezer.test/artist/5252`, () => { throw new Error('x'); });
   assert.equal((await req(srv.url, 'GET', '/api/library/artists')).body[0].picture, null);
+});
+
+test('library/artists serves cached pictures without hitting Deezer', async () => {
+  // Pre-cache an artist picture; with no fetch route registered, any Deezer call
+  // would throw — so a successful response proves it came from the cache.
+  db.prepare('INSERT INTO artists (id, name, picture) VALUES (7000, ?, ?)').run('Pre', 'cached.jpg');
+  addTrack({ deezer_id: uid(), artist_id: 7000, file_path: '/c.flac' });
+  const r = await req(srv.url, 'GET', '/api/library/artists');
+  assert.equal(r.body.find(x => x.id === 7000).picture, 'cached.jpg');
 });
 
 test('search: empty query, results, and upstream failure', async () => {

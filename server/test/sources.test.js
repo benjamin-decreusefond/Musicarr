@@ -1,10 +1,10 @@
 import './helpers/env.js';
-import { test, beforeEach, afterEach, mock } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setSetting } from '../db.js';
 import * as fm from './helpers/fetchmock.js';
 import {
-  deezerGet, deezerRouter, isTransientSlskdError, slskdReady, testSlskd,
+  deezerGet, isTransientSlskdError, slskdReady, testSlskd,
   slskdServerState, slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel,
   scoreSlskdFiles, scoreSlskdFolders,
 } from '../sources.js';

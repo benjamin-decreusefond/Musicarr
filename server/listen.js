@@ -8,11 +8,8 @@ import { db } from './db.js';
 // seconds, which is plenty for keeping playback loosely in sync.
 export const listenRouter = Router();
 
-// Sessions with no host update for this long are considered abandoned and get
-// reaped; guests not seen for MEMBER_STALE_MS drop out of the member list.
-const SESSION_STALE_MS = 2 * 60 * 60 * 1000; // 2h
-const MEMBER_STALE_MS = 60 * 1000;           // 1m
-
+// Sessions with no host update for 2h are considered abandoned and get reaped;
+// guests not seen for 1m drop out of the member list (see pruneStale below).
 const nowIso = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 // Unambiguous human-typable code (no 0/O/1/I).
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
