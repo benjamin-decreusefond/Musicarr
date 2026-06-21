@@ -7,9 +7,17 @@ import { deezerGet, testSlskd } from './sources.js';
 import { queueDownload, deleteTrackFile, cleanupStaleTracks } from './downloader.js';
 import { seedSeenAlbums } from './releases.js';
 import { createCache } from './cache.js';
+import { rateLimit } from './ratelimit.js';
 import { logger } from './log.js';
 
 const log = logger('api');
+
+// Per-user throttles for the endpoints that fan out to Deezer/slskd, so one
+// client can't stampede those upstreams. Tuned well above normal interactive
+// use; only runaway scripts hit them.
+const searchLimit = rateLimit({ windowMs: 60_000, max: 60 });
+const downloadLimit = rateLimit({ windowMs: 60_000, max: 60 });
+const importLimit = rateLimit({ windowMs: 5 * 60_000, max: 20 });
 
 // Run async `fn` over `items` with at most `limit` calls in flight at once, so a
 // big list doesn't fire every request simultaneously (and get rate-limited).
@@ -193,7 +201,7 @@ api.get('/library/artists', async (req, res) => {
 /* --------------------------------------------------------------- Search */
 // Unified search: returns artists, albums and tracks from Deezer, each tagged
 // with whether we already have the file locally.
-api.get('/search', async (req, res) => {
+api.get('/search', searchLimit, async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.json({ artists: [], albums: [], tracks: [] });
   try {
@@ -501,7 +509,7 @@ api.get('/genre/:id', async (req, res) => {
 });
 
 /* ----------------------------------------------------------- Downloads */
-api.post('/download', async (req, res) => {
+api.post('/download', downloadLimit, async (req, res) => {
   const { kind } = req.body || {};
   const deezer_id = parseInt(req.body?.deezer_id, 10);
   if (!['album', 'track'].includes(kind) || !Number.isFinite(deezer_id) || deezer_id <= 0) {
@@ -644,7 +652,7 @@ api.post('/playlists', (req, res) => {
 // don't have on disk yet so the playlist becomes fully playable. Missing
 // tracks are queued as individual Soulseek downloads.
 const IMPORT_QUEUE_CAP = 50; // tracks per run; re-import to continue
-api.post('/playlists/import-deezer', async (req, res) => {
+api.post('/playlists/import-deezer', importLimit, async (req, res) => {
   const deezerId = parseInt(req.body?.deezer_playlist_id, 10);
   if (!deezerId) return res.status(400).json({ error: 'deezer_playlist_id required' });
   try {
