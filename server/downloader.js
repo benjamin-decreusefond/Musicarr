@@ -277,6 +277,17 @@ async function albumViaSlskd(dl) {
   });
   if (!missing.length) return setStatus(dl.id, 'done', 'Already in library', { progress: 1 });
 
+  // Don't re-download tracks we already have on disk (e.g. a song previously
+  // grabbed as a single): skip folder files whose name matches an on-disk track.
+  const haveTitles = wantedTracks
+    .filter(w => !missing.includes(w))
+    .map(w => normTitle(w.title))
+    .filter(t => t.length >= 4); // short titles are too ambiguous to match safely
+  const alreadyOnDisk = (file) => {
+    const base = normTitle((file.filename || '').split(/[\\/]/).pop());
+    return haveTitles.some(h => base.includes(h));
+  };
+
   setStatus(dl.id, 'searching', 'Searching Soulseek');
   const queries = searchVariants(artist, title);
   let slskdDown = false;
@@ -286,25 +297,28 @@ async function albumViaSlskd(dl) {
     try { files = await slskdSearch(q); }
     catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); if (isTransientSlskdError(e)) slskdDown = true; continue; }
 
-    // Rank per-peer folders by how much of the tracklist they cover.
-    const folders = scoreSlskdFolders(files, wantedTracks.map(w => w.title))
+    // Rank per-peer folders by how much of the *missing* tracklist they cover.
+    const folders = scoreSlskdFolders(files, missing.map(w => w.title))
       .filter(f => !isExcluded(dl, f.username, f.files[0]?.filename));
     log.info(`#${dl.id} "${q}": ${files.length} file(s) in ${folders.length} viable folder(s)`);
 
     if (folders.length && !await ensureSlskdReady(dl.id)) slskdDown = true;
     for (const folder of folders.slice(0, 5)) {
+      // Grab only the files we still need from the folder.
+      const needed = folder.files.filter(f => !alreadyOnDisk(f));
+      if (!needed.length) continue; // folder only holds tracks we already have
       try {
-        await enqueueWithRetry(dl.id, folder.username, folder.files);
+        await enqueueWithRetry(dl.id, folder.username, needed);
         const dirBase = folder.directory.split(/[\\/]/).pop() || folder.directory;
-        log.info(`#${dl.id} slskd queued folder "${dirBase}" (${folder.files.length} files, covers ${folder.matched}/${wantedTracks.length}) from ${folder.username}`);
-        setStatus(dl.id, 'downloading', `Soulseek: ${dirBase} (${folder.files.length} files)`, {
+        log.info(`#${dl.id} slskd queued folder "${dirBase}" (${needed.length} files, covers ${folder.matched}/${missing.length} missing) from ${folder.username}`);
+        setStatus(dl.id, 'downloading', `Soulseek: ${dirBase} (${needed.length} files)`, {
           slskd_user: folder.username,
-          slskd_file: JSON.stringify(folder.files.map(f => f.filename)),
+          slskd_file: JSON.stringify(needed.map(f => f.filename)),
           release_title: dirBase, progress: 0,
         });
         pendingImports.set(dl.id, {
           wantedTracks, kind: 'album', requiredId: null,
-          slskdUser: folder.username, slskdFiles: folder.files.map(f => f.filename),
+          slskdUser: folder.username, slskdFiles: needed.map(f => f.filename),
         });
         return;
       } catch (e) {

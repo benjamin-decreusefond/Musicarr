@@ -341,6 +341,37 @@ test('album flow: searches, ranks a folder, enqueues, and imports', async () => 
   assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
 });
 
+test('album flow skips tracks already on disk (no re-download of a single)', async () => {
+  // "Heavy" is already on disk (e.g. grabbed earlier as a single); only "Battle" is missing.
+  const have = path.join(musicDir(), 'Heavy.wav'); writeWav(have, 2);
+  addTrack({ deezer_id: 231, title: 'Heavy', album_id: 23, file_path: have });
+
+  fm.on('deezer.test/album/23', () => ({ id: 23, title: 'Rec', artist: { name: 'Grp', id: 3 },
+    tracks: { data: [
+      { id: 231, title: 'Heavy', artist: { name: 'Grp', id: 3 }, track_position: 1, duration: 2 },
+      { id: 232, title: 'Battle Symphony', artist: { name: 'Grp', id: 3 }, track_position: 2, duration: 2 },
+    ] } }));
+  fm.on('slskd.test/api/v0/server', () => ({ state: 'Connected, LoggedIn' }));
+  fm.on(/api\/v0\/searches$/, () => ({ id: 'sk' }));
+  fm.on(/searches\/sk$/, (u, o) => o.method === 'DELETE' ? fm.json({}, 200) : { isComplete: true, responseCount: 1 });
+  fm.on(/searches\/sk\/responses$/, () => ([{ username: 'peer', hasFreeUploadSlot: true, queueLength: 0, uploadSpeed: 1000, files: [
+    { filename: 'Grp/Rec/01 Heavy.wav', size: 100, length: 2 },
+    { filename: 'Grp/Rec/02 Battle Symphony.wav', size: 100, length: 2 },
+  ] }]));
+  let enqueued = null;
+  fm.on(/transfers\/downloads\/peer$/, (u, o) => {
+    if (o.method === 'POST') { enqueued = JSON.parse(o.body).map(f => f.filename); return fm.json({}, 200); }
+    return { directories: [] };
+  });
+
+  const id = queueDownload(uid, 'album', 23, 'Grp - Rec', 'c');
+  const dl = await waitStatus(id, ['downloading', 'not_found', 'error']);
+  assert.equal(dl.status, 'downloading');
+  // Only the missing track was enqueued; the already-on-disk one was skipped.
+  assert.deepEqual(enqueued, ['Grp/Rec/02 Battle Symphony.wav']);
+  assert.deepEqual(JSON.parse(dl.slskd_file), ['Grp/Rec/02 Battle Symphony.wav']);
+});
+
 /* ----------------------------------------------- importDownload branch coverage */
 // Insert an active album/track download and let resumeOnBoot rebuild its plan.
 async function activeDownload(kind, deezerId, deezerMock, remoteFiles) {
