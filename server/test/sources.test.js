@@ -227,9 +227,23 @@ test('slskdSearch throws when slskd returns no search id, and tolerates a failin
   await assert.rejects(slskdSearch('q'), /did not return a search id/);
 });
 
-test('slskdSearch breaks early once enough responses arrive', async () => {
+test('slskdSearch waits for completion before fetching responses', async () => {
+  // slskd only persists responses once the search completes; while it is
+  // InProgress, GET /responses is empty even though responseCount is high. So a
+  // high responseCount must NOT make us fetch early — we have to wait for
+  // isComplete or popular tracks come back as zero results.
+  let polled = 0;
   fm.on(/api\/v0\/searches$/, () => ({ id: 'e' }));
-  fm.on(/searches\/e$/, (url, opts) => opts.method === 'DELETE' ? fm.json({}, 200) : { isComplete: false, responseCount: 60 });
-  fm.on(/searches\/e\/responses$/, () => ([{ username: 'p', files: [{ filename: 'p/a.mp3', size: 1, length: 10 }] }]));
+  fm.on(/searches\/e$/, (url, opts) => {
+    if (opts.method === 'DELETE') return fm.json({}, 200);
+    // First poll: still running with plenty of responses received; only later
+    // does it actually complete.
+    return ++polled >= 2 ? { isComplete: true, state: 'Completed', responseCount: 60 }
+      : { isComplete: false, state: 'InProgress', responseCount: 60 };
+  });
+  // Mirror slskd: no responses are retrievable until the search has completed.
+  fm.on(/searches\/e\/responses$/, () => (polled >= 2
+    ? [{ username: 'p', files: [{ filename: 'p/a.mp3', size: 1, length: 10 }] }]
+    : []));
   assert.equal((await slskdSearch('q', { timeoutMs: 20000 })).length, 1);
 });
