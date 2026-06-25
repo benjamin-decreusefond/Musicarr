@@ -18,11 +18,7 @@ export const api = {
   del: (u) => req('DELETE', u),
 };
 
-export function fmtTime(sec) {
-  if (!sec && sec !== 0) return '--:--';
-  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
+export { fmtTime } from './util.js';
 
 /* ---------------------------------------------------------- Player store */
 const PlayerCtx = createContext(null);

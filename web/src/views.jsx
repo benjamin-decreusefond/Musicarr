@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from './store.jsx';
-import { Icon, Cover, Avatar, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
+import { Icon, Cover, Avatar, TrackTable, CardRow, TileCard, DownloadButton, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
 import { useT, useLang, LANGS } from './i18n.jsx';
 
 function useAsync(fn, deps) {
@@ -395,7 +395,7 @@ const LIB_TABS = [
   ['playlists', 'Playlists'], ['albums', 'Albums'], ['artists', 'Artists'], ['history', 'History'],
 ];
 
-export function Library({ me, nav }) {
+export function Library({ nav }) {
   const player = usePlayer();
   const [tab, setTab] = useState('overview');
   const [lib, setLib] = useState(null);
@@ -424,19 +424,16 @@ export function Library({ me, nav }) {
   if (!lib) return <Loading />;
 
   const playable = lib.filter(t => t.available);
-  // Group the downloaded tracks into albums and artists.
-  const albumMap = new Map(), artistMap = new Map();
+  // Group the downloaded tracks into albums (the Artists tab uses the dedicated
+  // /api/library/artists endpoint).
+  const albumMap = new Map();
   for (const t of playable) {
     if (t.album_id) {
       if (!albumMap.has(t.album_id)) albumMap.set(t.album_id, { id: t.album_id, title: t.album, artist: t.artist, cover: t.cover, count: 0 });
       albumMap.get(t.album_id).count++;
     }
-    if (t.artist_id) {
-      if (!artistMap.has(t.artist_id)) artistMap.set(t.artist_id, { id: t.artist_id, name: t.artist, cover: t.cover, count: 0 });
-      artistMap.get(t.artist_id).count++;
-    }
   }
-  const albums = [...albumMap.values()], artists = [...artistMap.values()];
+  const albums = [...albumMap.values()];
 
   const createPlaylist = async () => {
     const name = prompt('New playlist name');

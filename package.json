@@ -6,7 +6,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "lint": "eslint server/",
+    "lint": "eslint server/ web/",
     "test": "node --test server/test/*.test.js",
     "coverage": "node --test --experimental-test-coverage --test-coverage-exclude='server/test/**' --test-coverage-exclude='server/index.js' --test-coverage-lines=99 --test-coverage-functions=90 --test-coverage-branches=78 server/test/*.test.js"
   },
@@ -19,6 +19,8 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.6.0"
   }
 }
