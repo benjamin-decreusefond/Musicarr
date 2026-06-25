@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   db, config, getSetting, setSetting, upsertTrack, upsertArtist, trackRowFromDeezer,
-  pingDb, avatarPath, avatarUrl,
+  getMoodImages, setMoodImage, pingDb, avatarPath, avatarUrl,
 } from '../db.js';
 
 test('getSetting/setSetting round-trip and upsert semantics', () => {
@@ -77,6 +77,16 @@ test('upsertArtist caches metadata and never overwrites a good picture with null
   assert.equal(row.picture, 'pic.jpg');
   upsertArtist(undefined);                       // invalid id is ignored (no throw)
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM artists').get().n, 1);
+});
+
+test('mood image cache round-trips and ignores empty images', () => {
+  assert.deepEqual(getMoodImages(), {});
+  setMoodImage('happy', 'happy.jpg');
+  setMoodImage('happy', 'happy2.jpg'); // overwrite
+  setMoodImage('chill', null);          // no-op for a falsy image
+  const all = getMoodImages();
+  assert.equal(all.happy, 'happy2.jpg');
+  assert.equal('chill' in all, false);
 });
 
 test('pingDb succeeds and avatar helpers behave', () => {

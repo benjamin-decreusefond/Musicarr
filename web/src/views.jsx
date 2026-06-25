@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from './store.jsx';
-import { Icon, Cover, Avatar, TrackRow, TrackTable, CardRow, TileCard, DownloadButton, HeartButton, AddToPlaylist, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
+import { Icon, Cover, Avatar, TrackTable, CardRow, TileCard, DownloadButton, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
 import { useT, useLang, LANGS } from './i18n.jsx';
 
 function useAsync(fn, deps) {
@@ -395,7 +395,7 @@ const LIB_TABS = [
   ['playlists', 'Playlists'], ['albums', 'Albums'], ['artists', 'Artists'], ['history', 'History'],
 ];
 
-export function Library({ me, nav }) {
+export function Library({ nav }) {
   const player = usePlayer();
   const [tab, setTab] = useState('overview');
   const [lib, setLib] = useState(null);
@@ -424,19 +424,16 @@ export function Library({ me, nav }) {
   if (!lib) return <Loading />;
 
   const playable = lib.filter(t => t.available);
-  // Group the downloaded tracks into albums and artists.
-  const albumMap = new Map(), artistMap = new Map();
+  // Group the downloaded tracks into albums (the Artists tab uses the dedicated
+  // /api/library/artists endpoint).
+  const albumMap = new Map();
   for (const t of playable) {
     if (t.album_id) {
       if (!albumMap.has(t.album_id)) albumMap.set(t.album_id, { id: t.album_id, title: t.album, artist: t.artist, cover: t.cover, count: 0 });
       albumMap.get(t.album_id).count++;
     }
-    if (t.artist_id) {
-      if (!artistMap.has(t.artist_id)) artistMap.set(t.artist_id, { id: t.artist_id, name: t.artist, cover: t.cover, count: 0 });
-      artistMap.get(t.artist_id).count++;
-    }
   }
-  const albums = [...albumMap.values()], artists = [...artistMap.values()];
+  const albums = [...albumMap.values()];
 
   const createPlaylist = async () => {
     const name = prompt('New playlist name');
@@ -949,6 +946,7 @@ export function Downloads({ nav }) {
   const load = useCallback(async () => { try { setItems(await api.get('/api/downloads')); } catch {} }, []);
   useEffect(() => { load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
   const remove = async (id) => { await api.del(`/api/downloads/${id}`); load(); };
+  const retry = async (id) => { try { await api.post(`/api/downloads/${id}/retry`, {}); } catch (e) { alert(e.message); } load(); };
   const statusLabel = { searching: 'Searching', downloading: 'Downloading', importing: 'Importing', done: 'Done', not_found: 'Not found', error: 'Error' };
 
   // Click a finished download: play the track and jump to the library; for an
@@ -978,7 +976,10 @@ export function Downloads({ nav }) {
               )}
             </div>
             <span className={`dl-status s-${d.status}`}>{statusLabel[d.status] || d.status}</span>
-            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Remove from this list (does not delete the downloaded file)"><Icon name="trash" size={16} /></button>
+            {(d.status === 'error' || d.status === 'not_found') && (
+              <button className="icon-btn" onClick={(e) => { e.stopPropagation(); retry(d.id); }} title="Retry this download"><Icon name="refresh" size={16} /></button>
+            )}
+            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Remove (cancels the transfer; does not delete an already-imported file)"><Icon name="trash" size={16} /></button>
           </div>
         ))}
         {!items.length && <div className="state faint">No downloads yet.</div>}

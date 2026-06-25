@@ -57,6 +57,32 @@ export function queueDownload(userId, kind, deezerId, label, cover) {
   return id;
 }
 
+/** Cancel any in-flight slskd transfers for a download (best-effort) and drop
+ *  its in-memory import/progress state, so slskd stops pulling files the user
+ *  no longer wants. Called when a download is dismissed or cancelled. */
+export async function cancelDownloadTransfers(dl) {
+  pendingImports.delete(dl.id);
+  progressTrack.delete(dl.id);
+  if (!dl.slskd_user) return;
+  try {
+    const transfers = await slskdTransfers(dl.slskd_user);
+    const mine = new Set(slskdFilesOf(dl));
+    for (const t of transfers) {
+      if (mine.has(t.filename)) await slskdCancel(dl.slskd_user, t.id);
+    }
+  } catch { /* best-effort */ }
+}
+
+/** Manually re-queue a failed download for another search, clearing prior retry
+ *  bookkeeping so it can try peers/candidates again from scratch. */
+export function retryDownload(dl) {
+  log.info(`#${dl.id} manual retry requested`);
+  setStatus(dl.id, 'searching', 'Retrying…', {
+    slskd_user: null, slskd_file: null, progress: 0, attempts: 0, failed_candidates: null,
+  });
+  runSearch(dl.id);
+}
+
 /* ---------------------------------------------------- Search concurrency gate */
 // Limit how many downloads actively search/enqueue at once. Excess work waits
 // in a FIFO queue rather than hammering slskd all at once (e.g. a 50-track

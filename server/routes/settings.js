@@ -26,6 +26,7 @@ function currentSettings() {
     slskd_enabled: config.slskdEnabled,
     cleanup_enabled: config.autoCleanupEnabled,
     cleanup_after_days: config.cleanupAfterDays,
+    transcode_enabled: config.transcodeEnabled,
   };
 }
 
@@ -87,6 +88,9 @@ api.put('/settings', requireAdmin, (req, res) => {
       if (Number.isNaN(n) || n < 0) throw new Error('Cleanup period must be 0 or more days');
       setSetting('cleanup_after_days', String(n));
     }
+
+    // --- Streaming: on-the-fly transcoding (needs ffmpeg on the server) ---
+    if (has('transcode_enabled')) setSetting('transcode_enabled', b.transcode_enabled ? '1' : '0');
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }
