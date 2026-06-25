@@ -42,9 +42,11 @@ test('settings: read, admin gate, and validated updates', async () => {
   const ok = await req(srv.url, 'PUT', '/api/settings', { body: {
     root_folder: root, slskd_url: 'https://new.slskd', slskd_api_key: 'newkey',
     slskd_download_dir: path.join(config.dataDir, 'dl2'), cleanup_enabled: true, cleanup_after_days: 14,
+    transcode_enabled: true,
   } });
   assert.equal(ok.status, 200);
   assert.equal(ok.body.cleanup_after_days, 14);
+  assert.equal(ok.body.transcode_enabled, true);
 
   // Clearing the key, and validation failures.
   await req(srv.url, 'PUT', '/api/settings', { body: { slskd_api_key_clear: true } });
@@ -493,6 +495,40 @@ test('track-status batch lookup', async () => {
 });
 
 /* ------------------------------------------------- Library mgmt / avatars */
+test('streaming: optional on-the-fly transcoding', async () => {
+  const t = uid();
+  const f = path.join(config.musicDir, 'tc.flac');
+  fs.writeFileSync(f, Buffer.alloc(2048, 9));
+  addTrack({ deezer_id: t, file_path: f });
+
+  // When disabled, ?fmt is ignored and the file streams directly.
+  setSetting('transcode_enabled', '0');
+  const off = await req(srv.url, 'GET', `/api/stream/${t}?fmt=opus`);
+  assert.equal(off.headers.get('content-type'), 'audio/flac');
+
+  setSetting('transcode_enabled', '1');
+  const fake = path.join(config.dataDir, 'fake-ffmpeg');
+  fs.writeFileSync(fake, '#!/bin/sh\nprintf TRANSCODED\n', { mode: 0o755 });
+  process.env.FFMPEG_PATH = fake;
+  try {
+    const opus = await req(srv.url, 'GET', `/api/stream/${t}?fmt=opus&br=96&t=5`);
+    assert.equal(opus.status, 200);
+    assert.equal(opus.headers.get('content-type'), 'audio/ogg');
+    assert.equal(opus.raw, 'TRANSCODED');
+    assert.equal((await req(srv.url, 'GET', `/api/stream/${t}?fmt=mp3`)).headers.get('content-type'), 'audio/mpeg');
+    // An unknown format falls through to a direct stream.
+    assert.equal((await req(srv.url, 'GET', `/api/stream/${t}?fmt=bogus`)).headers.get('content-type'), 'audio/flac');
+    // HEAD returns headers with no body.
+    assert.equal((await req(srv.url, 'HEAD', `/api/stream/${t}?fmt=opus`)).status, 200);
+    // ffmpeg missing -> 500.
+    process.env.FFMPEG_PATH = path.join(config.dataDir, 'no-such-ffmpeg');
+    assert.equal((await req(srv.url, 'GET', `/api/stream/${t}?fmt=opus`)).status, 500);
+  } finally {
+    delete process.env.FFMPEG_PATH;
+    setSetting('transcode_enabled', '0');
+  }
+});
+
 test('promote to library, admin delete, and avatars + streaming', async () => {
   const t = uid();
   const f = path.join(config.musicDir, 'stream.flac');

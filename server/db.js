@@ -53,6 +53,10 @@ export const config = {
   // favorited and playlisted tracks are always kept.
   get autoCleanupEnabled() { return getSetting('cleanup_enabled') === '1'; },
   get cleanupAfterDays() { return Math.max(0, parseInt(getSetting('cleanup_after_days') || '0', 10) || 0); },
+
+  // On-the-fly transcoding for low-bandwidth streaming (requires ffmpeg on the
+  // server). Off by default; when on, /stream?fmt=opus|mp3 transcodes.
+  get transcodeEnabled() { return getSetting('transcode_enabled') === '1'; },
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });

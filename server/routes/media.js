@@ -1,7 +1,19 @@
 import fs from 'node:fs';
-import { db, avatarPath } from '../db.js';
+import { spawn } from 'node:child_process';
+import { db, config, avatarPath } from '../db.js';
 import { deezerGet } from '../sources.js';
 import { createCache } from '../cache.js';
+import { logger } from '../log.js';
+
+const log = logger('stream');
+
+// Optional on-the-fly transcode targets (?fmt=). Lower bitrate = less bandwidth
+// for remote/mobile listening, at the cost of CPU. Requires ffmpeg on the server.
+const TRANSCODE = {
+  opus: { codec: 'libopus', container: 'ogg', type: 'audio/ogg' },
+  mp3: { codec: 'libmp3lame', container: 'mp3', type: 'audio/mpeg' },
+};
+
 export function registerMedia(api) {
 /* ------------------------------------------------------- Profile avatars */
 // Avatars are small JPEGs the user uploads from their Profile. Stored on disk
@@ -131,9 +143,41 @@ api.get('/lyrics/:trackId', async (req, res) => {
 });
 
 /* ------------------------------------------------------------- Streaming */
+// Transcode a file to the requested codec and pipe it to the response. Byte
+// ranges don't apply (output length is unknown), so this returns a plain 200;
+// the client buffers, and seeking re-requests with ?t=<seconds>.
+function streamTranscoded(req, res, filePath, fmt) {
+  const t = TRANSCODE[fmt];
+  const bitrate = Math.min(320, Math.max(32, parseInt(req.query.br, 10) || 128));
+  const seek = Math.max(0, Number(req.query.t) || 0);
+  const args = [
+    ...(seek ? ['-ss', String(seek)] : []),
+    '-i', filePath, '-vn',
+    '-c:a', t.codec, '-b:a', `${bitrate}k`,
+    '-f', t.container, 'pipe:1',
+  ];
+  const ff = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  let started = false;
+  ff.on('spawn', () => {
+    started = true;
+    res.writeHead(200, { 'Content-Type': t.type, 'Cache-Control': 'no-store', 'Accept-Ranges': 'none' });
+    if (req.method === 'HEAD') { ff.kill('SIGKILL'); return res.end(); }
+    ff.stdout.pipe(res);
+  });
+  ff.on('error', (e) => {
+    log.warn(`transcode failed to start (is ffmpeg installed?): ${e.message}`);
+    if (!started && !res.headersSent) res.status(500).json({ error: 'Transcoding is unavailable on this server' });
+  });
+  res.on('close', () => ff.kill('SIGKILL'));
+}
+
 api.get('/stream/:trackId', (req, res) => {
   const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(req.params.trackId);
   if (!row?.file_path || !fs.existsSync(row.file_path)) return res.status(404).json({ error: 'Not in library' });
+
+  // Opt-in transcoding for low-bandwidth clients (admin-enabled, needs ffmpeg).
+  const fmt = String(req.query.fmt || '').toLowerCase();
+  if (config.transcodeEnabled && TRANSCODE[fmt]) return streamTranscoded(req, res, row.file_path, fmt);
 
   const stat = fs.statSync(row.file_path);
   const size = stat.size;
