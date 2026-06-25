@@ -45,6 +45,20 @@ function sanitizePrefs(input) {
     if (g.every(Number.isFinite)) out.eqGains = g;
   }
   if ('repeat' in input && REPEAT_MODES.has(input.repeat)) out.repeat = input.repeat;
+  // Named equalizer presets the user saved: { name: number[] }. Bounded in count,
+  // name length and band count; non-numeric or malformed entries are dropped.
+  if ('eqPresets' in input && input.eqPresets && typeof input.eqPresets === 'object' && !Array.isArray(input.eqPresets)) {
+    const presets = {};
+    let n = 0;
+    for (const [rawName, gains] of Object.entries(input.eqPresets)) {
+      if (n >= 30) break;
+      const name = String(rawName).trim().slice(0, 40);
+      if (!name || !Array.isArray(gains) || !gains.length || gains.length > 12) continue;
+      const g = gains.map(Number);
+      if (g.every(Number.isFinite)) { presets[name] = g; n++; }
+    }
+    out.eqPresets = presets;
+  }
   return out;
 }
 

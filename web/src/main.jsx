@@ -12,6 +12,9 @@ import './styles.css';
 // standalone Equalizer page (so it's usable even when nothing is playing).
 function EqControls() {
   const p = usePlayer();
+  const [presetName, setPresetName] = useState('');
+  const customNames = Object.keys(p.eqPresets || {});
+  const saveCurrent = () => { if (presetName.trim()) { p.savePreset(presetName); setPresetName(''); } };
   return (
     <>
       <div className="eq-head">
@@ -34,10 +37,33 @@ function EqControls() {
       <div className="eq-presets">
         <select value="" onChange={e => { if (e.target.value) p.applyPreset(e.target.value); }}>
           <option value="">Presets…</option>
-          {Object.keys(EQ_PRESETS).map(name => <option key={name} value={name}>{name}</option>)}
+          <optgroup label="Built-in">
+            {Object.keys(EQ_PRESETS).map(name => <option key={name} value={name}>{name}</option>)}
+          </optgroup>
+          {customNames.length > 0 && (
+            <optgroup label="My presets">
+              {customNames.map(name => <option key={name} value={name}>{name}</option>)}
+            </optgroup>
+          )}
         </select>
         <button className="btn-ghost sm" onClick={p.resetEq}>Reset</button>
       </div>
+      <div className="eq-save">
+        <input className="eq-save-input" type="text" maxLength={40} placeholder="Save current as…"
+          value={presetName} onChange={e => setPresetName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') saveCurrent(); }} />
+        <button className="btn-ghost sm" onClick={saveCurrent} disabled={!presetName.trim()}>Save</button>
+      </div>
+      {customNames.length > 0 && (
+        <div className="eq-mine">
+          {customNames.map(name => (
+            <span className="eq-chip" key={name}>
+              <button className="eq-chip-name" onClick={() => p.applyPreset(name)} title={`Apply "${name}"`}>{name}</button>
+              <button className="eq-chip-del" onClick={() => p.deletePreset(name)} title="Delete preset" aria-label="Delete preset">×</button>
+            </span>
+          ))}
+        </div>
+      )}
     </>
   );
 }

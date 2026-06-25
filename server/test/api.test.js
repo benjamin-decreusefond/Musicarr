@@ -370,6 +370,20 @@ test('plays (dedupe + unknown), history, and preferences', async () => {
   // Invalid values are ignored; existing prefs preserved on merge.
   const merged = await req(srv.url, 'PUT', '/api/preferences', { body: { volume: 'x', eqGains: ['a'], repeat: 'bad' } });
   assert.equal(merged.body.volume, 1);
+
+  // Saved equalizer presets: valid ones kept, malformed entries dropped.
+  const withPresets = await req(srv.url, 'PUT', '/api/preferences', { body: { eqPresets: {
+    'My Bass': [6, 4, 2, 0, 0, 0],
+    '  ': [1, 2, 3],                          // blank name -> dropped
+    Bad: [1, 'x', 3],                          // non-numeric -> dropped
+    Empty: [],                                 // no bands -> dropped
+    TooMany: Array(13).fill(0),                // > 12 bands -> dropped
+  } } });
+  assert.deepEqual(Object.keys(withPresets.body.eqPresets), ['My Bass']);
+  assert.deepEqual(withPresets.body.eqPresets['My Bass'], [6, 4, 2, 0, 0, 0]);
+  // A non-object eqPresets is ignored entirely (existing prefs preserved).
+  const ignored = await req(srv.url, 'PUT', '/api/preferences', { body: { eqPresets: [1, 2, 3] } });
+  assert.deepEqual(Object.keys(ignored.body.eqPresets), ['My Bass']);
 });
 
 /* ----------------------------------------------------------- Stats */

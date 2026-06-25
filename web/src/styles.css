@@ -288,6 +288,15 @@ input[type=range].eq-slider::-moz-range-thumb { width: 14px; height: 14px; backg
 .eq-presets { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .eq-presets select { flex: 1; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 8px 10px; font-size: 13px; outline: none; }
 .btn-ghost.sm { padding: 6px 12px; font-size: 12.5px; }
+.eq-save { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.eq-save-input { flex: 1; min-width: 0; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 8px 10px; font-size: 13px; outline: none; }
+.eq-save-input:focus { border-color: var(--accent); }
+.eq-mine { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.eq-chip { display: inline-flex; align-items: center; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.eq-chip-name { background: none; border: none; color: var(--text); font-size: 12.5px; padding: 5px 4px 5px 11px; cursor: pointer; }
+.eq-chip-name:hover { color: var(--accent); }
+.eq-chip-del { background: none; border: none; color: var(--text-faint); font-size: 15px; line-height: 1; padding: 5px 9px 5px 5px; cursor: pointer; }
+.eq-chip-del:hover { color: var(--danger); }
 .eq-page-panel { max-width: 460px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-top: 14px; }
 .src-pill { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-faint); vertical-align: middle; margin-left: 8px; }
 .src-pill.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
