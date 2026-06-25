@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { db } from '../db.js';
 import { deezerGet } from '../sources.js';
-import { queueDownload } from '../downloader.js';
+import { queueDownload, cancelDownloadTransfers, retryDownload } from '../downloader.js';
 import { rateLimit } from '../ratelimit.js';
 export function registerDownloads(api) {
   const downloadLimit = rateLimit({ windowMs: 60_000, max: 60 });
@@ -47,11 +47,34 @@ api.get('/downloads', (req, res) => {
   res.json(rows);
 });
 
-api.delete('/downloads/:id', (req, res) => {
-  // Admins can dismiss any download; users only their own.
-  if (req.user.is_admin) db.prepare('DELETE FROM downloads WHERE id = ?').run(req.params.id);
-  else db.prepare('DELETE FROM downloads WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+// Find a download the requester is allowed to act on (admins: any; users: own).
+function ownedDownload(req) {
+  const id = parseInt(req.params.id, 10);
+  return req.user.is_admin
+    ? db.prepare('SELECT * FROM downloads WHERE id = ?').get(id)
+    : db.prepare('SELECT * FROM downloads WHERE id = ? AND user_id = ?').get(id, req.user.id);
+}
+
+api.delete('/downloads/:id', async (req, res) => {
+  // Dismissing a download also cancels any in-flight slskd transfer so it stops
+  // pulling files we no longer want.
+  const dl = ownedDownload(req);
+  if (dl) {
+    await cancelDownloadTransfers(dl);
+    db.prepare('DELETE FROM downloads WHERE id = ?').run(dl.id);
+  }
   res.json({ ok: true });
+});
+
+// Manually retry a failed download (status error/not_found) from scratch.
+api.post('/downloads/:id/retry', (req, res) => {
+  const dl = ownedDownload(req);
+  if (!dl) return res.status(404).json({ error: 'Download not found' });
+  if (dl.status !== 'error' && dl.status !== 'not_found') {
+    return res.status(400).json({ error: 'Only failed downloads can be retried' });
+  }
+  retryDownload(dl);
+  res.json({ ok: true, status: 'searching' });
 });
 
 }

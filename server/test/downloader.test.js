@@ -9,7 +9,7 @@ import { stubTimers } from './helpers/timers.js';
 import { writeWav } from './helpers/wav.js';
 import {
   queueDownload, cleanupStaleTracks, scanLibrary, deleteTrackFile,
-  sweepUnimported, resumeOnBoot, startPoller,
+  sweepUnimported, resumeOnBoot, startPoller, cancelDownloadTransfers, retryDownload,
 } from '../downloader.js';
 import { createUser, addTrack, wipe, db } from './helpers/seed.js';
 
@@ -61,6 +61,33 @@ test('queueDownload records an already-on-disk track as done without searching',
   addTrack({ deezer_id: 1, file_path: f });
   const id = queueDownload(uid, 'track', 1, 'A - T', 'c');
   assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+});
+
+test('cancelDownloadTransfers cancels matching slskd transfers (best-effort)', async () => {
+  let cancelled = 0;
+  fm.on(/transfers\/downloads\/peer/, (u, o) => {
+    if (o.method === 'DELETE') { cancelled++; return fm.json({}, 200); } // .../peer/<id>
+    return { directories: [{ files: [
+      { id: 7, filename: 'A/Song.wav', state: 'InProgress' },
+      { id: 8, filename: 'A/Other.wav', state: 'InProgress' }, // not ours
+    ] }] };
+  });
+  await cancelDownloadTransfers({ id: 500, slskd_user: 'peer', slskd_file: JSON.stringify(['A/Song.wav']) });
+  assert.equal(cancelled, 1); // only our file's transfer was cancelled
+
+  // No slskd_user -> nothing to cancel, returns cleanly.
+  await cancelDownloadTransfers({ id: 501 });
+});
+
+test('retryDownload re-queues a failed download and resets retry state', async () => {
+  config.maxConcurrentDownloads = 0; // keep the re-queued search from running
+  const info = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine, attempts, failed_candidates) VALUES (?, 'track', 510, 'L', 'not_found', 'soulseek', 4, '{"x":2}')`).run(uid);
+  const id = Number(info.lastInsertRowid);
+  retryDownload(db.prepare('SELECT * FROM downloads WHERE id = ?').get(id));
+  const row = db.prepare('SELECT status, attempts, failed_candidates FROM downloads WHERE id = ?').get(id);
+  assert.equal(row.status, 'searching');
+  assert.equal(row.attempts, 0);
+  assert.equal(row.failed_candidates, null);
 });
 
 test('startSearch errors when slskd is not configured', async () => {

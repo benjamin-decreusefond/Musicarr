@@ -946,6 +946,7 @@ export function Downloads({ nav }) {
   const load = useCallback(async () => { try { setItems(await api.get('/api/downloads')); } catch {} }, []);
   useEffect(() => { load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
   const remove = async (id) => { await api.del(`/api/downloads/${id}`); load(); };
+  const retry = async (id) => { try { await api.post(`/api/downloads/${id}/retry`, {}); } catch (e) { alert(e.message); } load(); };
   const statusLabel = { searching: 'Searching', downloading: 'Downloading', importing: 'Importing', done: 'Done', not_found: 'Not found', error: 'Error' };
 
   // Click a finished download: play the track and jump to the library; for an
@@ -975,7 +976,10 @@ export function Downloads({ nav }) {
               )}
             </div>
             <span className={`dl-status s-${d.status}`}>{statusLabel[d.status] || d.status}</span>
-            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Remove from this list (does not delete the downloaded file)"><Icon name="trash" size={16} /></button>
+            {(d.status === 'error' || d.status === 'not_found') && (
+              <button className="icon-btn" onClick={(e) => { e.stopPropagation(); retry(d.id); }} title="Retry this download"><Icon name="refresh" size={16} /></button>
+            )}
+            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); remove(d.id); }} title="Remove (cancels the transfer; does not delete an already-imported file)"><Icon name="trash" size={16} /></button>
           </div>
         ))}
         {!items.length && <div className="state faint">No downloads yet.</div>}

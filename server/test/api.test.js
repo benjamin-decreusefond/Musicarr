@@ -261,6 +261,26 @@ test('downloads listing (admin vs user) and deletion', async () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM downloads').get().n, 1); // not theirs -> kept
 });
 
+test('a failed download can be retried; others cannot', async () => {
+  asUser();
+  config.maxConcurrentDownloads = 0; // don't actually run the re-queued search
+  assert.equal((await req(srv.url, 'POST', '/api/downloads/99999/retry')).status, 404);
+
+  // A succeeded download is not retriable.
+  db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine) VALUES (?, 'track', 1, 'L', 'done', 'soulseek')`).run(user.id);
+  const doneId = db.prepare('SELECT id FROM downloads ORDER BY id DESC LIMIT 1').get().id;
+  assert.equal((await req(srv.url, 'POST', `/api/downloads/${doneId}/retry`)).status, 400);
+
+  // A failed one is re-queued (status flips to searching, retry state reset).
+  db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine, attempts) VALUES (?, 'track', 2, 'L', 'not_found', 'soulseek', 3)`).run(user.id);
+  const failId = db.prepare('SELECT id FROM downloads ORDER BY id DESC LIMIT 1').get().id;
+  const r = await req(srv.url, 'POST', `/api/downloads/${failId}/retry`);
+  assert.equal(r.body.status, 'searching');
+  const row = db.prepare('SELECT status, attempts FROM downloads WHERE id = ?').get(failId);
+  assert.equal(row.status, 'searching');
+  assert.equal(row.attempts, 0);
+});
+
 /* ----------------------------------------------------------- Favorites */
 test('favorites: ensureTrack upserts from body, toggle, and unknown rejection', async () => {
   asUser();
