@@ -52,6 +52,14 @@ const loadGains = () => {
   } catch { /* ignore */ }
   return [...EQ_ZERO];
 };
+// User-saved equalizer presets: { name: number[] }. Synced via /api/preferences.
+const loadPresets = () => {
+  try {
+    const p = JSON.parse(localStorage.getItem('musicarr:eq:presets'));
+    if (p && typeof p === 'object' && !Array.isArray(p)) return p;
+  } catch { /* ignore */ }
+  return {};
+};
 
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
@@ -84,6 +92,7 @@ export function PlayerProvider({ children }) {
   });
   const [eqEnabled, setEqEnabled] = useState(() => localStorage.getItem('musicarr:eq:on') === '1');
   const [eqGains, setEqGains] = useState(loadGains);
+  const [eqPresets, setEqPresets] = useState(loadPresets);
 
   const current = index >= 0 ? queue[index] : null;
 
@@ -142,6 +151,10 @@ export function PlayerProvider({ children }) {
     localStorage.setItem('musicarr:eq:gains', JSON.stringify(eqGains));
   }, [eqEnabled, eqGains]);
 
+  useEffect(() => {
+    localStorage.setItem('musicarr:eq:presets', JSON.stringify(eqPresets));
+  }, [eqPresets]);
+
   /* --------------------------------------------- Server-synced preferences */
   // localStorage above stays the instant local cache / offline fallback; the
   // server copy syncs these settings across all of a user's clients. We hydrate
@@ -158,6 +171,7 @@ export function PlayerProvider({ children }) {
           if (Number.isFinite(p.volume)) setVolume(Math.min(1, Math.max(0, p.volume)));
           if (typeof p.eqEnabled === 'boolean') setEqEnabled(p.eqEnabled);
           if (Array.isArray(p.eqGains) && p.eqGains.length === EQ_BANDS.length) setEqGains(p.eqGains.map(Number));
+          if (p.eqPresets && typeof p.eqPresets === 'object' && !Array.isArray(p.eqPresets)) setEqPresets(p.eqPresets);
           if (p.repeat === 'all' || p.repeat === 'one' || p.repeat === 'off') {
             setRepeat(p.repeat);
             localStorage.setItem('musicarr:repeat', p.repeat);
@@ -186,10 +200,10 @@ export function PlayerProvider({ children }) {
     if (!hydratedRef.current) return; // skip the hydration write-back
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      api.put('/api/preferences', { volume, eqEnabled, eqGains, repeat }).catch(() => {});
+      api.put('/api/preferences', { volume, eqEnabled, eqGains, repeat, eqPresets }).catch(() => {});
     }, 600);
     return () => clearTimeout(saveTimerRef.current);
-  }, [volume, eqEnabled, eqGains, repeat]);
+  }, [volume, eqEnabled, eqGains, repeat, eqPresets]);
 
   /** Advance to the next track. Reads live state from stateRef so it is safe
    *  to call from the once-attached audio listeners.
@@ -551,12 +565,21 @@ export function PlayerProvider({ children }) {
     if (!eqEnabled) setEqEnabled(true);
   }, [eqEnabled]);
   const applyPreset = useCallback((name) => {
-    const preset = EQ_PRESETS[name];
+    const preset = EQ_PRESETS[name] || eqPresets[name];
     if (!preset) return;
-    setEqGains([...preset]);
+    setEqGains(preset.slice(0, EQ_BANDS.length).map(Number));
     setEqEnabled(true);
-  }, []);
+  }, [eqPresets]);
   const resetEq = useCallback(() => setEqGains([...EQ_ZERO]), []);
+  // Save the current band gains as a named preset (overwrites a same-named one).
+  const savePreset = useCallback((name) => {
+    const key = (name || '').trim().slice(0, 40);
+    if (!key) return;
+    setEqPresets(prev => ({ ...prev, [key]: [...eqGains] }));
+  }, [eqGains]);
+  const deletePreset = useCallback((name) => {
+    setEqPresets(prev => { const next = { ...prev }; delete next[name]; return next; });
+  }, []);
 
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
     playList, playTrack, playOrToggle, toggle, play, pause, next, prev, seek,
@@ -567,6 +590,7 @@ export function PlayerProvider({ children }) {
     repeat, cycleRepeat,
     hasNext: index < queue.length - 1 || (repeat !== 'off' && queue.length > 0),
     hasPrev: index > 0,
-    eqEnabled, setEqEnabled, eqGains, setEqBand, applyPreset, resetEq };
+    eqEnabled, setEqEnabled, eqGains, setEqBand, applyPreset, resetEq,
+    eqPresets, savePreset, deletePreset };
   return <PlayerCtx.Provider value={value}>{children}</PlayerCtx.Provider>;
 }
