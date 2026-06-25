@@ -142,15 +142,19 @@ export async function slskdSearch(query, { timeoutMs = 45000 } = {}) {
   const id = search?.id;
   if (!id) throw new Error('slskd did not return a search id');
 
-  // Wait for the search to actually finish (slskd flips isComplete when its
-  // searchTimeout elapses); don't bail early on a transient empty state.
+  // Wait for the search to actually COMPLETE before fetching responses. slskd
+  // only persists a search's responses once it finishes (it accumulates them in
+  // memory during the search and writes them in one shot at the end); while the
+  // search is InProgress, GET /responses returns an empty list even though the
+  // live responseCount is climbing. So we must not bail out early on a high
+  // responseCount — doing so fetches nothing and makes popular tracks look like
+  // zero results. Wait for isComplete (slskd flips it when searchTimeout elapses).
   const deadline = Date.now() + timeoutMs;
   let state = search;
   while (Date.now() < deadline) {
     await new Promise(res => setTimeout(res, 1500));
     state = await slskdFetch(`searches/${id}`);
     if (state?.isComplete) break;
-    if ((state?.responseCount ?? 0) >= 50) break; // plenty already
   }
   let responses = [];
   try { responses = await slskdFetch(`searches/${id}/responses`) || []; } catch { /* ignore */ }
