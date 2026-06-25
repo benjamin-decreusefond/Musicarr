@@ -1,4 +1,4 @@
-import { db, upsertArtist } from '../db.js';
+import { db, upsertArtist, getMoodImages, setMoodImage } from '../db.js';
 import { deezerGet } from '../sources.js';
 import { seedSeenAlbums } from '../releases.js';
 import { rateLimit } from '../ratelimit.js';
@@ -203,15 +203,20 @@ api.get('/explore', async (req, res) => {
       deezerGet('chart/0/playlists?limit=20').catch(() => ({ data: [] })),
       deezerGet('chart/0/artists?limit=20').catch(() => ({ data: [] })),
     ]);
-    // Give each mood a real cover image from the top matching Deezer playlist
-    // (cached). Falls back to no image -> the UI shows a gradient.
+    // Give each mood a real cover image from the top matching Deezer playlist.
+    // Cached persistently (mood_images): only moods we haven't seen hit Deezer,
+    // so a warm Explore makes zero cover requests. Missing -> UI gradient.
+    const cachedMoods = getMoodImages();
     const moods = await Promise.all(MOODS.map(async m => {
-      let image = null;
-      try {
-        const r = await deezerGet(`search/playlist?q=${encodeURIComponent(m.q)}&limit=1`);
-        const p = r.data?.[0];
-        image = p?.picture_xl || p?.picture_big || p?.picture_medium || p?.picture || null;
-      } catch { /* gradient fallback in the UI */ }
+      let image = cachedMoods[m.slug] || null;
+      if (!image) {
+        try {
+          const r = await deezerGet(`search/playlist?q=${encodeURIComponent(m.q)}&limit=1`);
+          const p = r.data?.[0];
+          image = p?.picture_xl || p?.picture_big || p?.picture_medium || p?.picture || null;
+          setMoodImage(m.slug, image);
+        } catch { /* gradient fallback in the UI */ }
+      }
       return { slug: m.slug, name: m.name, image };
     }));
     res.json({

@@ -199,6 +199,17 @@ test('explore feed with mood cover art', async () => {
   const ex = await req(srv.url, 'GET', '/api/explore');
   assert.ok(ex.body.genres.find(g => g.name === 'Rock'));
   assert.equal(ex.body.moods.length, 20);
+  assert.ok(ex.body.moods.every(m => m.image === 'x')); // fetched + cached
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mood_images').get().n, 20);
+
+  // Second load with the search route removed: mood images come from the cache.
+  fm.reset(); fm.install();
+  fm.on(/\/genre$/, () => ({ data: [] }));
+  fm.on('deezer.test/editorial/0/releases', () => ({ data: [] }));
+  fm.on(/chart\/0\/(albums|playlists|artists)/, () => ({ data: [] }));
+  // No search/playlist route -> a Deezer call would throw "no route".
+  const ex2 = await req(srv.url, 'GET', '/api/explore');
+  assert.ok(ex2.body.moods.every(m => m.image === 'x'));
 });
 
 test('mood feed: known and unknown slugs', async () => {

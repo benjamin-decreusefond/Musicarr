@@ -39,7 +39,7 @@ export function addTrack(t = {}) {
 export function wipe() {
   for (const t of ['plays', 'favorites', 'playlist_items', 'playlist_shares', 'playlists',
     'follows', 'followed_artists', 'now_playing', 'downloads', 'tracks', 'seen_artist_albums',
-    'listen_members', 'listen_sessions', 'user_prefs', 'api_tokens', 'artists', 'sessions', 'users']) {
+    'listen_members', 'listen_sessions', 'user_prefs', 'api_tokens', 'artists', 'mood_images', 'sessions', 'users']) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
 }

@@ -342,6 +342,33 @@ export function upsertArtist(id, name, picture) {
   `).run(id, name ?? null, picture ?? null);
 }
 
+// Cached cover image for each Explore "mood". These map to fixed Deezer search
+// terms whose top-playlist art rarely changes, so caching them avoids ~20 Deezer
+// requests on every cold Explore load.
+db.exec(`
+CREATE TABLE IF NOT EXISTS mood_images (
+  slug TEXT PRIMARY KEY,
+  image TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
+/** All cached mood images as a { slug: image } map. */
+export function getMoodImages() {
+  const out = {};
+  for (const r of db.prepare('SELECT slug, image FROM mood_images').all()) out[r.slug] = r.image;
+  return out;
+}
+
+/** Cache a mood's cover image (no-op for a falsy image). */
+export function setMoodImage(slug, image) {
+  if (!image) return;
+  db.prepare(`
+    INSERT INTO mood_images (slug, image, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(slug) DO UPDATE SET image = excluded.image, updated_at = excluded.updated_at
+  `).run(slug, image);
+}
+
 /** Cheap readiness check that the SQLite handle is open and responsive. Throws on failure. */
 export function pingDb() {
   db.prepare('SELECT 1').get();
