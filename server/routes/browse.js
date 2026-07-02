@@ -1,5 +1,5 @@
 import { db, upsertArtist, getMoodImages, setMoodImage } from '../db.js';
-import { deezerGet } from '../sources.js';
+import { deezerGet, deezerPlaylistTracks } from '../sources.js';
 import { seedSeenAlbums } from '../releases.js';
 import { rateLimit } from '../ratelimit.js';
 export function registerBrowse(api) {
@@ -163,12 +163,12 @@ api.get('/deezer-playlist/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid playlist id' });
   try {
-    const pl = await deezerGet(`playlist/${id}`);
+    const { playlist: pl, tracks: allTracks } = await deezerPlaylistTracks(id);
     const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     res.json({
       id: pl.id, title: pl.title, cover: pl.picture_big || pl.picture_medium,
       by: pl.creator?.name || pl.user?.name || 'Deezer', nb_tracks: pl.nb_tracks,
-      tracks: (pl.tracks?.data || []).map(t => ({
+      tracks: allTracks.map(t => ({
         id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
         duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,

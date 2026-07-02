@@ -9,12 +9,16 @@ import { registerPlaylists } from './routes/playlists.js';
 import { registerActivity } from './routes/activity.js';
 import { registerDiscovery } from './routes/discovery.js';
 import { registerMedia } from './routes/media.js';
+import { sseHandler } from './events.js';
 
 // The signed-in API surface. Routes live in ./routes/*, grouped by domain;
 // each register* call mounts its handlers onto this shared router (preserving
 // the original registration order).
 export const api = Router();
 api.use(requireAuth);
+
+// Live updates (downloads, Listen Together) over Server-Sent Events.
+api.get('/events', sseHandler);
 
 registerSettings(api);   // /settings*
 registerLibrary(api);    // /library*, /library/:trackId, track-status helpers

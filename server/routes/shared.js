@@ -20,6 +20,7 @@ export function ensureTrack(trackId, body) {
       track_position: body.track_position || null,
       duration: body.duration || null,
       cover: body.cover || null,
+      isrc: body.isrc || null,
     });
   }
   return db.prepare('SELECT 1 FROM tracks WHERE deezer_id = ?').get(id) ? id : null;

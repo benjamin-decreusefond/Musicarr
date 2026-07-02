@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { db, upsertTrack, trackRowFromDeezer } from '../db.js';
-import { deezerGet } from '../sources.js';
+import { deezerPlaylistTracks } from '../sources.js';
 import { queueDownload } from '../downloader.js';
 import { rateLimit } from '../ratelimit.js';
 import { logger } from '../log.js';
@@ -62,8 +62,10 @@ api.post('/playlists/import-deezer', importLimit, async (req, res) => {
   const deezerId = parseInt(req.body?.deezer_playlist_id, 10);
   if (!deezerId) return res.status(400).json({ error: 'deezer_playlist_id required' });
   try {
-    const pl = await deezerGet(`playlist/${deezerId}`);
-    const tracks = (pl.tracks?.data || []).filter(t => t?.id && t?.title);
+    // Follow Deezer's pagination — the playlist endpoint embeds only the first
+    // page of tracks, which silently truncated big imports.
+    const { playlist: pl, tracks: allTracks } = await deezerPlaylistTracks(deezerId);
+    const tracks = allTracks.filter(t => t?.id && t?.title);
     if (!tracks.length) return res.status(400).json({ error: 'Playlist has no tracks' });
 
     const rows = tracks.map(t => trackRowFromDeezer(t));
@@ -92,7 +94,9 @@ api.post('/playlists/import-deezer', importLimit, async (req, res) => {
     let queued = 0;
     for (const m of missing) {
       if (queued >= IMPORT_QUEUE_CAP) break;
-      queueDownload(req.user.id, 'track', m.deezer_id, `${m.artist} – ${m.title}`, m.cover);
+      // toLibrary:false — playlist tracks live in the playlist, they shouldn't
+      // flood everyone's shared Library view.
+      queueDownload(req.user.id, 'track', m.deezer_id, `${m.artist} – ${m.title}`, m.cover, { toLibrary: false });
       queued++;
     }
     log.info(`playlist import "${name}": ${rows.length} tracks, ${missing.length} missing, ${queued} download(s) queued`);
@@ -127,6 +131,42 @@ api.get('/playlists/:id', (req, res) => {
     WHERE pi.playlist_id = ? ORDER BY pi.position
   `).all(list.id);
   res.json(list);
+});
+
+// Rename a playlist (owner only — editors can change tracks, not identity).
+api.put('/playlists/:id', (req, res) => {
+  const { found, role } = playlistRole(req.params.id, req.user.id);
+  if (!found) return res.status(404).json({ error: 'Not found' });
+  if (role !== 'owner') return res.status(403).json({ error: 'Only the owner can rename a playlist' });
+  const name = (req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  if (name.length > 120) return res.status(400).json({ error: 'Name must be 120 characters or fewer' });
+  db.prepare('UPDATE playlists SET name = ? WHERE id = ?').run(name, req.params.id);
+  res.json({ ok: true, name });
+});
+
+// Reorder a playlist. Body: { track_ids: [...] } — the complete new order.
+// Ids must be a permutation of the current items so a stale client (someone
+// else just added a track) can't silently drop songs.
+api.put('/playlists/:id/reorder', (req, res) => {
+  const { found, role } = playlistRole(req.params.id, req.user.id);
+  if (!found || !canEditRole(role)) return res.status(found ? 403 : 404).json({ error: found ? 'No edit access' : 'Not found' });
+  const ids = Array.isArray(req.body?.track_ids) ? req.body.track_ids.map(x => parseInt(x, 10)) : null;
+  if (!ids || !ids.length || ids.some(x => !Number.isFinite(x))) {
+    return res.status(400).json({ error: 'track_ids (array of track ids) required' });
+  }
+  const current = db.prepare('SELECT track_id FROM playlist_items WHERE playlist_id = ?').all(req.params.id).map(r => r.track_id);
+  const sortedA = [...ids].sort((a, b) => a - b).join(',');
+  const sortedB = [...current].sort((a, b) => a - b).join(',');
+  if (sortedA !== sortedB) {
+    return res.status(409).json({ error: 'The playlist changed while you were reordering — reload and try again' });
+  }
+  db.transaction(() => {
+    db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(req.params.id);
+    const ins = db.prepare('INSERT INTO playlist_items (playlist_id, position, track_id) VALUES (?, ?, ?)');
+    ids.forEach((tid, i) => ins.run(req.params.id, i, tid));
+  })();
+  res.json({ ok: true });
 });
 
 api.delete('/playlists/:id', (req, res) => {

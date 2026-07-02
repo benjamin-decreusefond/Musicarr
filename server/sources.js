@@ -35,6 +35,28 @@ export async function deezerGet(pathAndQuery) {
   });
 }
 
+/**
+ * Full track list of a Deezer playlist, following pagination. The playlist
+ * endpoint embeds only the first page (~up to 400 tracks) with a `next` URL;
+ * without following it, big playlist imports silently truncate. Returns
+ * { playlist, tracks } with `tracks` complete up to `cap`.
+ */
+export async function deezerPlaylistTracks(playlistId, { cap = 2000 } = {}) {
+  const pl = await deezerGet(`playlist/${playlistId}`);
+  const tracks = [...(pl.tracks?.data || [])];
+  let next = pl.tracks?.next || null;
+  while (next && tracks.length < cap) {
+    // `next` is an absolute api.deezer.com URL; re-issue it through deezerGet
+    // (cache + error handling) by stripping the base.
+    const rel = next.replace(/^https?:\/\/[^/]+\//, '');
+    const page = await deezerGet(rel);
+    if (!page?.data?.length) break;
+    tracks.push(...page.data);
+    next = page.next || null;
+  }
+  return { playlist: pl, tracks: tracks.slice(0, cap) };
+}
+
 export const deezerRouter = Router();
 deezerRouter.get(/^\/(.*)$/, async (req, res) => {
   const p = req.params[0];

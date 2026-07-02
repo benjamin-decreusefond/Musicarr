@@ -135,6 +135,7 @@
 .tt-row { padding: 7px 12px; border-radius: 7px; cursor: pointer; }
 .tt-row:hover { background: var(--bg-elev-2); }
 .tt-row.dim { opacity: .55; }
+.tt-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
 .tt-row.current .tt-name { color: var(--accent); }
 .tt-idx { position: relative; text-align: center; color: var(--text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
 .tt-idx .num { display: inline; }

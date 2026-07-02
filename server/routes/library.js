@@ -2,6 +2,7 @@ import { db, upsertArtist } from '../db.js';
 import { requireAdmin } from '../auth.js';
 import { deezerGet } from '../sources.js';
 import { deleteTrackFile } from '../downloader.js';
+import { startImportScan, scanState } from '../scanner.js';
 export function registerLibrary(api) {
   // Run async `fn` over `items` with at most `limit` calls in flight at once.
   async function mapLimit(items, limit, fn) {
@@ -74,6 +75,23 @@ api.put('/library/:trackId', (req, res) => {
   if (!row.file_path) return res.status(400).json({ error: 'Track is not on the server yet' });
   db.prepare('UPDATE tracks SET in_library = 1 WHERE deezer_id = ?').run(id);
   res.json({ ok: true });
+});
+
+/* --------------------------------------------------- Import existing files */
+// Scan the root folder for audio files Musicarr doesn't know about, match each
+// to a Deezer track by tags (title/artist/duration), and link matches into the
+// catalog in place. Runs in the background; poll GET /library/scan (or listen
+// for 'scan' SSE events) for progress. Admin-only: it touches the shared library.
+api.post('/library/scan', requireAdmin, (req, res) => {
+  try {
+    res.json({ ...startImportScan() });
+  } catch (e) {
+    res.status(409).json({ error: String(e.message || e) });
+  }
+});
+
+api.get('/library/scan', requireAdmin, (req, res) => {
+  res.json({ ...scanState });
 });
 
 // Permanently remove a track's audio from disk (both the library hardlink and
