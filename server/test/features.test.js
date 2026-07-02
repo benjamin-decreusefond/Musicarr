@@ -12,7 +12,8 @@ import * as fm from './helpers/fetchmock.js';
 import { makeAuthedApp, listen, req, setUser } from './helpers/app.js';
 import { createUser, addTrack, wipe } from './helpers/seed.js';
 import { deezerPlaylistTracks } from '../sources.js';
-import { queueDownload, resumeOnBoot, startPoller } from '../downloader.js';
+import { queueDownload, resumeOnBoot, startPoller, cancelDownloadTransfers,
+  recordPeerStrike, clearPeerStrikes, blockedPeers } from '../downloader.js';
 import { sseHandler, publish } from '../events.js';
 import { startImportScan, scanState } from '../scanner.js';
 import { stubTimers } from './helpers/timers.js';
@@ -228,12 +229,167 @@ test('GET /api/events streams events to the signed-in user', async () => {
   ac.abort();
 });
 
+/* --------------------------------------------------- queue persistence prefs */
+test('preferences: queue persistence fields are validated and round-trip', async () => {
+  const r = await req(srv.url, 'PUT', '/api/preferences', {
+    body: { queue: [7, 'x', -2, 3.6, null], queueIndex: 2.4, queueTime: -5 },
+  });
+  assert.deepEqual(r.body.queue, [7, 4]); // junk dropped, floats rounded
+  assert.equal(r.body.queueIndex, 2);
+  assert.equal(r.body.queueTime, 0);
+  const got = await req(srv.url, 'GET', '/api/preferences');
+  assert.deepEqual(got.body.queue, [7, 4]);
+});
+
+test('GET /api/tracks rehydrates ids in request order', async () => {
+  const a = uid(), b = uid();
+  addTrack({ deezer_id: a, title: 'A', file_path: `/x/${a}.wav` });
+  addTrack({ deezer_id: b, title: 'B' });
+  const r = await req(srv.url, 'GET', `/api/tracks?ids=${b},${a},999999999`);
+  assert.deepEqual(r.body.map(t => t.deezer_id), [b, a]);
+  assert.equal(r.body[1].available, 1);
+  assert.equal(r.body[0].available, 0);
+  assert.deepEqual((await req(srv.url, 'GET', '/api/tracks?ids=')).body, []);
+});
+
+/* ------------------------------------------------- library search + albums */
+test('library: server-side q filter (LIKE-escaped) and pagination', async () => {
+  const t1 = uid(), t2 = uid(), t3 = uid();
+  addTrack({ deezer_id: t1, title: 'Zebra Crossing', artist: 'Painters', album_id: 7001, file_path: `/lib/${t1}.wav` });
+  addTrack({ deezer_id: t2, title: 'Alpha', artist: 'Others', album_id: 7001, file_path: `/lib/${t2}.wav` });
+  addTrack({ deezer_id: t3, title: '100% Pure', artist: 'Others', album_id: 7002, file_path: `/lib/${t3}.wav` });
+
+  const zebra = await req(srv.url, 'GET', '/api/library?q=zebra');
+  assert.deepEqual(zebra.body.map(t => t.deezer_id), [t1]);
+  // "%" matches only the literal percent title, not everything.
+  const pct = await req(srv.url, 'GET', `/api/library?q=${encodeURIComponent('%')}`);
+  assert.deepEqual(pct.body.map(t => t.deezer_id), [t3]);
+  // Pagination slices the full list.
+  const all = await req(srv.url, 'GET', '/api/library');
+  const page = await req(srv.url, 'GET', '/api/library?limit=1&offset=1');
+  assert.equal(all.body.length, 3);
+  assert.deepEqual(page.body.map(t => t.deezer_id), [all.body[1].deezer_id]);
+
+  const albums = await req(srv.url, 'GET', '/api/library/albums');
+  const al = albums.body.find(x => x.id === 7001);
+  assert.equal(al.count, 2);
+  assert.ok(albums.body.find(x => x.id === 7002));
+});
+
+test('social user search treats LIKE wildcards literally', async () => {
+  createUser({ username: 'percy' });
+  createUser({ username: '50%off' });
+  const r = await req(srv.url, 'GET', `/api/social/users?q=${encodeURIComponent('%')}`);
+  assert.deepEqual(r.body.map(u => u.username), ['50%off']);
+});
+
+/* ---------------------------------------------------------- peer blocklist */
+test('peers over the strike threshold are skipped as candidates', async () => {
+  for (let i = 0; i < 5; i++) recordPeerStrike('badpeer');
+  assert.deepEqual(blockedPeers().map(p => p.username), ['badpeer']);
+
+  config.maxConcurrentDownloads = 3;
+  const tid = uid();
+  fm.on(`deezer.test/track/${tid}`, () => ({ id: tid, title: 'Song', artist: { name: 'A', id: 1 }, album: { id: 2 }, duration: 2 }));
+  fm.on('slskd.test/api/v0/server', () => ({ state: 'Connected, LoggedIn' }));
+  fm.on(/api\/v0\/searches$/, () => ({ id: 's1' }));
+  fm.on(/searches\/s1$/, (u, o) => o.method === 'DELETE' ? fm.json({}, 200) : { isComplete: true });
+  fm.on(/searches\/s1\/responses$/, () => ([{ username: 'badpeer', hasFreeUploadSlot: true, queueLength: 0, uploadSpeed: 1000,
+    files: [{ filename: 'A/Al/Song.wav', size: 100, length: 2 }] }]));
+
+  const id = queueDownload(user.id, 'track', tid, 'A – Song', null);
+  const deadline = Date.now() + 8000;
+  let row;
+  while (Date.now() < deadline) {
+    row = db.prepare('SELECT * FROM downloads WHERE id = ?').get(id);
+    if (['not_found', 'error', 'downloading'].includes(row.status)) break;
+    await settle(50);
+  }
+  // The only candidate came from a blocked peer -> nothing viable.
+  assert.equal(row.status, 'not_found');
+
+  clearPeerStrikes('badpeer');
+  assert.equal(blockedPeers().length, 0);
+});
+
+/* ----------------------------------------------- dismiss removes leftovers */
+test('dismissing a download deletes leftover files but never imported sources', async () => {
+  const dir = path.join(config.slskdDownloadDir, 'Dir');
+  fs.mkdirSync(dir, { recursive: true });
+  const left = path.join(dir, 'left.wav'); writeWav(left, 1);
+  const keep = path.join(dir, 'keep.wav'); writeWav(keep, 1);
+  const kid = uid();
+  addTrack({ deezer_id: kid, title: 'Kept', file_path: `/lib/${kid}.wav` });
+  db.prepare('UPDATE tracks SET source_path = ? WHERE deezer_id = ?').run(keep, kid);
+
+  fm.on(/transfers\/downloads\/peer$/, () => ({ directories: [] }));
+  const mkDl = (status) => {
+    const info = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine, slskd_user, slskd_file) VALUES (?, 'album', ?, 'L', ?, 'soulseek', 'peer', ?)`)
+      .run(user.id, uid(), status, JSON.stringify(['A/Dir/left.wav', 'A/Dir/keep.wav']));
+    return db.prepare('SELECT * FROM downloads WHERE id = ?').get(info.lastInsertRowid);
+  };
+
+  // A finished download's files are imported — dismissing must not touch them.
+  await cancelDownloadTransfers(mkDl('done'));
+  assert.ok(fs.existsSync(left) && fs.existsSync(keep));
+
+  // A cancelled/failed download's leftovers go, except files tracked as a source.
+  await cancelDownloadTransfers(mkDl('error'));
+  assert.ok(!fs.existsSync(left), 'leftover removed');
+  assert.ok(fs.existsSync(keep), 'imported source kept');
+});
+
+/* ------------------------------------------------------------ health page */
+test('library health reports missing, low-bitrate, duplicates and peers (admin only)', async () => {
+  // On disk, fine: a lossless wav.
+  const okId = uid();
+  const okFile = path.join(config.musicDir, 'ok.wav'); writeWav(okFile, 2);
+  addTrack({ deezer_id: okId, title: 'Fine', artist: 'A', file_path: okFile });
+  // Missing: catalog points at a vanished file.
+  const missId = uid();
+  addTrack({ deezer_id: missId, title: 'Gone', artist: 'A', file_path: path.join(config.musicDir, 'gone.wav') });
+  // Low bitrate: a small "mp3" whose size/duration implies ~120 kbps.
+  const lowId = uid();
+  const lowFile = path.join(config.musicDir, 'low.mp3');
+  fs.writeFileSync(lowFile, Buffer.alloc(150000));
+  addTrack({ deezer_id: lowId, title: 'Crunchy', artist: 'A', duration: 10, file_path: lowFile });
+  // Duplicates: same artist+title, two ids, both on disk.
+  const d1 = uid(), d2 = uid();
+  const df1 = path.join(config.musicDir, 'dup1.wav'); writeWav(df1, 1);
+  const df2 = path.join(config.musicDir, 'dup2.wav'); writeWav(df2, 1);
+  addTrack({ deezer_id: d1, title: 'Twice', artist: 'Dup', file_path: df1 });
+  addTrack({ deezer_id: d2, title: 'Twice', artist: 'Dup', file_path: df2 });
+  for (let i = 0; i < 5; i++) recordPeerStrike('flaky');
+
+  assert.equal((await req(srv.url, 'GET', '/api/library/health')).status, 403); // not admin
+  setUser({ id: admin.id, username: 'admin', is_admin: 1 });
+  const h = (await req(srv.url, 'GET', '/api/library/health')).body;
+  assert.ok(h.tracks >= 5);
+  assert.ok(h.totalBytes > 0);
+  assert.deepEqual(h.missing.map(t => t.deezer_id), [missId]);
+  assert.deepEqual(h.lowBitrate.map(t => t.deezer_id), [lowId]);
+  assert.equal(h.lowBitrate[0].kbps, 120);
+  assert.deepEqual(h.duplicates[0].ids.sort(), [d1, d2].sort());
+  assert.ok(Array.isArray(h.unmatched));
+  assert.deepEqual(h.blockedPeers.map(p => p.username), ['flaky']);
+
+  // Prune clears the dead link; unblocking clears the peer.
+  const pr = await req(srv.url, 'POST', '/api/library/health/prune');
+  assert.ok(pr.body.pruned >= 1);
+  assert.equal(db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(missId).file_path, null);
+  await req(srv.url, 'DELETE', '/api/library/health/peers/flaky');
+  assert.equal(blockedPeers().length, 0);
+  setUser({ id: user.id, username: 'user', is_admin: 0 });
+});
+
 /* -------------------------------------------------------- library import scan */
 test('import scan matches on-disk files to Deezer and links them in place', async () => {
   // An untagged file in Artist/Album layout; identification falls back to the path.
   const dir = path.join(config.musicDir, 'The Band', 'Great Album');
   fs.mkdirSync(dir, { recursive: true });
   writeWav(path.join(dir, '01 - Hit Song.wav'), 2);
+  // A second copy of the same song: whichever scans second is a duplicate.
+  writeWav(path.join(dir, 'Hit Song copy.wav'), 2);
   // A file that matches nothing stays untouched.
   writeWav(path.join(config.musicDir, 'mystery.wav'), 2);
 
@@ -252,9 +408,13 @@ test('import scan matches on-disk files to Deezer and links them in place', asyn
 
   assert.equal(scanState.running, false);
   assert.equal(scanState.imported, 1);
-  assert.equal(scanState.skipped, 1);
+  assert.equal(scanState.skipped, 2); // the duplicate + the mystery file
+  // Unmatched files are remembered (with reasons) for the health page.
+  assert.equal(scanState.unmatched.length, 2);
+  assert.ok(scanState.unmatched.some(u => /Duplicate/.test(u.reason)));
+  assert.ok(scanState.unmatched.some(u => /No confident/.test(u.reason)));
   const row = db.prepare('SELECT file_path, in_library FROM tracks WHERE deezer_id = ?').get(hitId);
-  assert.equal(row.file_path, path.join(dir, '01 - Hit Song.wav'));
+  assert.ok([path.join(dir, '01 - Hit Song.wav'), path.join(dir, 'Hit Song copy.wav')].includes(row.file_path));
   assert.equal(row.in_library, 1);
   assert.ok(fs.existsSync(path.join(config.musicDir, 'mystery.wav')), 'unmatched file left untouched');
 

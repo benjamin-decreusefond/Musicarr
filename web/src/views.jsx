@@ -404,13 +404,26 @@ export function Library({ nav }) {
   const [history, setHistory] = useState([]);
   const [favs, setFavs] = useState([]);
   const [artistsData, setArtistsData] = useState(null);
+  const [albumsData, setAlbumsData] = useState(null);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState(null);
   const [err, setErr] = useState(null);
 
   const loadLib = useCallback(() => api.get('/api/library').then(setLib).catch(e => setErr(e.message)), []);
   const loadPlaylists = useCallback(() => api.get('/api/playlists').then(setPlaylists).catch(() => {}), []);
   useEffect(() => {
     if (tab === 'artists' && !artistsData) api.get('/api/library/artists').then(setArtistsData).catch(() => setArtistsData([]));
-  }, [tab, artistsData]);
+    if (tab === 'albums' && !albumsData) api.get('/api/library/albums').then(setAlbumsData).catch(() => setAlbumsData([]));
+  }, [tab, artistsData, albumsData]);
+  // Server-side library search (debounced) — scales past what the client holds.
+  useEffect(() => {
+    const query = q.trim();
+    if (!query) { setResults(null); return; }
+    const t = setTimeout(() => {
+      api.get(`/api/library?q=${encodeURIComponent(query)}&limit=200`).then(setResults).catch(() => setResults([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
   useEffect(() => {
     loadLib(); loadPlaylists();
     api.get('/api/history').then(h => setHistory((h || []).map(t => ({ ...t, available: !!t.file_path })))).catch(() => {});
@@ -425,16 +438,6 @@ export function Library({ nav }) {
   if (!lib) return <Loading />;
 
   const playable = lib.filter(t => t.available);
-  // Group the downloaded tracks into albums (the Artists tab uses the dedicated
-  // /api/library/artists endpoint).
-  const albumMap = new Map();
-  for (const t of playable) {
-    if (t.album_id) {
-      if (!albumMap.has(t.album_id)) albumMap.set(t.album_id, { id: t.album_id, title: t.album, artist: t.artist, cover: t.cover, count: 0 });
-      albumMap.get(t.album_id).count++;
-    }
-  }
-  const albums = [...albumMap.values()];
 
   const createPlaylist = async () => {
     const name = prompt('New playlist name');
@@ -457,8 +460,17 @@ export function Library({ nav }) {
         {LIB_TABS.map(([k, label]) => (
           <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{label}</button>
         ))}
+        <input className="settings-input lib-search" type="search" placeholder="Search your library…"
+          value={q} onChange={e => setQ(e.target.value)} style={{ marginLeft: 'auto', maxWidth: 260 }} />
       </div>
 
+      {q.trim() ? (
+        results === null ? <Loading />
+        : results.length
+          ? <TrackTable tracks={results} nav={nav} />
+          : <div className="state faint">Nothing in your library matches “{q.trim()}”.</div>
+      ) : (
+      <>
       {tab === 'overview' && (
         <>
           {!!history.length && (
@@ -489,11 +501,13 @@ export function Library({ nav }) {
 
       {tab === 'playlists' && <PlaylistsGrid playlists={playlists} nav={nav} onCreate={createPlaylist} />}
 
-      {tab === 'albums' && (albums.length
-        ? <div className="card-grid">{albums.map(a => (
-            <TileCard key={a.id} cover={a.cover} title={a.title} sub={`${a.artist} · ${a.count} song${a.count > 1 ? 's' : ''}`}
-              onClick={() => nav({ view: 'album', id: a.id })} />))}</div>
-        : <div className="state faint">No full albums in your library yet.</div>)}
+      {tab === 'albums' && (
+        albumsData === null ? <Loading />
+        : albumsData.length
+          ? <div className="card-grid">{albumsData.map(a => (
+              <TileCard key={a.id} cover={a.cover} title={a.title} sub={`${a.artist} · ${a.count} song${a.count > 1 ? 's' : ''}`}
+                onClick={() => nav({ view: 'album', id: a.id })} />))}</div>
+          : <div className="state faint">No full albums in your library yet.</div>)}
 
       {tab === 'artists' && (
         artistsData === null ? <Loading />
@@ -506,6 +520,8 @@ export function Library({ nav }) {
       {tab === 'history' && (history.length
         ? <TrackTable tracks={history} nav={nav} />
         : <div className="state faint">No listening history yet.</div>)}
+      </>
+      )}
     </div>
   );
 }
@@ -1651,6 +1667,137 @@ export function Settings() {
         <button className="btn-primary lg" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save all settings'}</button>
         {msg && <span className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</span>}
       </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------- Library health */
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log2(b) / 10));
+  return `${(b / 2 ** (10 * i)).toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+// Admin dashboard for everything that otherwise only lives in the logs:
+// vanished files, low-bitrate (upgradable) tracks, duplicate recordings,
+// files the import scan couldn't match, and blocked Soulseek peers.
+export function LibraryHealth() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [pruning, setPruning] = useState(false);
+  const load = useCallback(() => api.get('/api/library/health').then(setData).catch(e => setErr(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  const prune = async () => {
+    setPruning(true);
+    try { await api.post('/api/library/health/prune'); await load(); }
+    catch (e) { alert(e.message); }
+    setPruning(false);
+  };
+  const unblock = async (u) => {
+    try { await api.del(`/api/library/health/peers/${encodeURIComponent(u)}`); await load(); }
+    catch (e) { alert(e.message); }
+  };
+  if (err) return <ErrState msg={err} />;
+  if (!data) return <Loading />;
+
+  const Row = ({ t, extra }) => (
+    <div className="dl-item">
+      <Cover src={t.cover} size={40} />
+      <div className="dl-main">
+        <div className="dl-label">{t.title}</div>
+        <div className="dl-detail">{t.artist}{t.album ? ` · ${t.album}` : ''}</div>
+      </div>
+      {extra}
+    </div>
+  );
+
+  return (
+    <div className="page">
+      <h1 className="page-h1">Library health</h1>
+      <div className="stat-grid">
+        <StatCard value={data.tracks} label="Tracks on disk" />
+        <StatCard value={data.inLibrary} label="In the Library" />
+        <StatCard value={fmtBytes(data.totalBytes)} label="Disk used" />
+        <StatCard value={data.missing.length} label="Missing files" />
+      </div>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Missing files</h2>
+        <p className="settings-hint">
+          Tracks the catalog says are on disk but whose file has vanished (moved, deleted outside
+          Musicarr, or an unmounted volume). Prune clears the dead links so they show as
+          downloadable again — and relinks any file that reappeared.
+        </p>
+        <div className="settings-actions">
+          <button className="btn-ghost" onClick={prune} disabled={pruning || !data.missing.length}>
+            {pruning ? 'Pruning…' : `Prune ${data.missing.length} dead link${data.missing.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
+        {data.missing.slice(0, 50).map(t => <Row key={t.deezer_id} t={t} />)}
+        {!data.missing.length && <div className="state faint">Every catalog entry has its file. ✓</div>}
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Low quality ({data.lowBitrate.length})</h2>
+        <p className="settings-hint">
+          Non-lossless files estimated under 200 kbps — candidates for a re-download in better
+          quality. Delete one from the library (admin) and download it again to upgrade.
+        </p>
+        {data.lowBitrate.slice(0, 50).map(t => (
+          <Row key={t.deezer_id} t={t} extra={<span className="dl-status">{t.kbps} kbps</span>} />
+        ))}
+        {!data.lowBitrate.length && <div className="state faint">No obviously low-quality files. ✓</div>}
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Duplicates ({data.duplicates.length})</h2>
+        <p className="settings-hint">The same artist + title stored under multiple Deezer ids.</p>
+        {data.duplicates.map(d => (
+          <div className="dl-item" key={`${d.artist}|${d.title}`}>
+            <div className="dl-main">
+              <div className="dl-label">{d.title}</div>
+              <div className="dl-detail">{d.artist} · {d.count} copies</div>
+            </div>
+          </div>
+        ))}
+        {!data.duplicates.length && <div className="state faint">No duplicate recordings. ✓</div>}
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Unmatched scan files ({data.unmatched.length})</h2>
+        <p className="settings-hint">
+          Files the last import scan couldn't confidently match to a Deezer track. Fix their tags
+          (or folder layout) and re-run the scan from Settings.
+        </p>
+        {data.unmatched.slice(0, 50).map(u => (
+          <div className="dl-item" key={u.file}>
+            <div className="dl-main">
+              <div className="dl-label mono">{u.file}</div>
+              <div className="dl-detail">{u.reason}</div>
+            </div>
+          </div>
+        ))}
+        {!data.unmatched.length && <div className="state faint">Nothing left unmatched by the last scan. ✓</div>}
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Blocked peers ({data.blockedPeers.length})</h2>
+        <p className="settings-hint">
+          Soulseek peers skipped after repeated failures (stalls, rejects, wrong files). A
+          successful transfer clears a peer automatically; strikes also expire after a week.
+        </p>
+        {data.blockedPeers.map(p => (
+          <div className="dl-item" key={p.username}>
+            <div className="dl-main">
+              <div className="dl-label mono">{p.username}</div>
+              <div className="dl-detail">{p.strikes} strikes · last {p.last_strike}</div>
+            </div>
+            <button className="btn-ghost sm" onClick={() => unblock(p.username)}>Unblock</button>
+          </div>
+        ))}
+        {!data.blockedPeers.length && <div className="state faint">No peers are currently blocked. ✓</div>}
+      </section>
     </div>
   );
 }

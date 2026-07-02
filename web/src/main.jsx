@@ -5,7 +5,7 @@ import { events } from './events.js';
 import { Icon, Cover, Avatar, TrackArtists, useUserMenu } from './ui.jsx';
 import { LangProvider, useT } from './i18n.jsx';
 import { ContextMenuProvider } from './menu.jsx';
-import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix } from './views.jsx';
+import { Home, Search, Explore, Genre, Mood, Artist, Album, Library, Favorites, Following, Playlist, DeezerPlaylist, Downloads, Admin, Settings, Profile, UserProfile, Stats, MadeForYou, Mix, LibraryHealth } from './views.jsx';
 import './styles.css';
 
 /* --------------------------------------------------------- EQ controls */
@@ -467,6 +467,7 @@ function Sidebar({ route, nav, me, onLogout }) {
         <NavItem view="equalizer" icon="sliders" label={t('nav.equalizer')} />
         <NavItem view="profile" icon="user" label={t('nav.profile')} />
         {!!me.is_admin && <NavItem view="admin" icon="user" label={t('nav.users')} />}
+        {!!me.is_admin && <NavItem view="health" icon="save" label="Health" />}
         {!!me.is_admin && <NavItem view="settings" icon="settings" label={t('nav.settings')} />}
       </nav>
       <div className="pl-head">
@@ -747,6 +748,7 @@ function App() {
     case 'downloads': page = <Downloads nav={nav} />; break;
     case 'user': page = <UserProfile id={route.id} nav={nav} />; break;
     case 'admin': page = <Admin me={me} nav={nav} />; break;
+    case 'health': page = <LibraryHealth />; break;
     case 'settings': page = <Settings />; break;
     case 'profile': page = <Profile me={me} nav={nav} />; break;
     case 'equalizer': page = <EqualizerPage />; break;

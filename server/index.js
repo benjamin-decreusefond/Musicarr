@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { config, pingDb } from './db.js';
 import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth } from './auth.js';
+import { rateLimit } from './ratelimit.js';
 import { deezerRouter } from './sources.js';
 import { socialRouter } from './social.js';
 import { listenRouter } from './listen.js';
@@ -79,8 +80,9 @@ app.use(authMiddleware);
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 // The Deezer proxy is metadata-only but must still require a signed-in user
-// (it was previously reachable unauthenticated).
-app.use('/api/deezer', requireAuth, deezerRouter);
+// (it was previously reachable unauthenticated) and, like /search, be rate
+// limited so one runaway client can't get the server blocked by Deezer.
+app.use('/api/deezer', requireAuth, rateLimit({ windowMs: 60_000, max: 120 }), deezerRouter);
 app.use('/api/social', requireAuth, socialRouter);
 app.use('/api/listen', requireAuth, listenRouter);
 app.use('/api', api);
