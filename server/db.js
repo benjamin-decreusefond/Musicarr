@@ -403,16 +403,20 @@ export function setSetting(key, value) {
 
 fs.mkdirSync(config.musicDir, { recursive: true });
 
-/** Insert or refresh a track's catalog metadata without touching file_path. */
+/** Insert or refresh a track's catalog metadata without touching file_path.
+ *  ISRC is kept via COALESCE: Deezer's album tracklist doesn't carry it, so a
+ *  later album-flavoured upsert must not wipe a value learned from the full
+ *  track endpoint. Callers may omit `isrc` entirely (defaults to null). */
 export function upsertTrack(t) {
   db.prepare(`
-    INSERT INTO tracks (deezer_id, title, artist, artist_id, album, album_id, track_position, duration, cover)
-    VALUES (@deezer_id, @title, @artist, @artist_id, @album, @album_id, @track_position, @duration, @cover)
+    INSERT INTO tracks (deezer_id, title, artist, artist_id, album, album_id, track_position, duration, cover, isrc)
+    VALUES (@deezer_id, @title, @artist, @artist_id, @album, @album_id, @track_position, @duration, @cover, @isrc)
     ON CONFLICT(deezer_id) DO UPDATE SET
       title=excluded.title, artist=excluded.artist, artist_id=excluded.artist_id,
       album=excluded.album, album_id=excluded.album_id,
-      track_position=excluded.track_position, duration=excluded.duration, cover=excluded.cover
-  `).run(t);
+      track_position=excluded.track_position, duration=excluded.duration, cover=excluded.cover,
+      isrc=COALESCE(excluded.isrc, isrc)
+  `).run({ isrc: null, ...t });
 }
 
 export function trackRowFromDeezer(d, albumOverride) {
@@ -425,6 +429,9 @@ export function trackRowFromDeezer(d, albumOverride) {
     album: album.title || null,
     album_id: album.id || null,
     track_position: d.track_position || null,
+    // Disc number disambiguates multi-disc albums where track_position restarts
+    // per disc (in-memory only; used by the import matcher).
+    disk_number: d.disk_number || null,
     duration: d.duration || null,
     cover: album.cover_medium || album.cover || d.album?.cover_medium || null,
     isrc: d.isrc || null,

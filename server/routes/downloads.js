@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { db } from '../db.js';
 import { deezerGet } from '../sources.js';
 import { queueDownload, cancelDownloadTransfers, retryDownload } from '../downloader.js';
+import { publish } from '../events.js';
 import { rateLimit } from '../ratelimit.js';
 export function registerDownloads(api) {
   const downloadLimit = rateLimit({ windowMs: 60_000, max: 60 });
@@ -62,6 +63,7 @@ api.delete('/downloads/:id', async (req, res) => {
   if (dl) {
     await cancelDownloadTransfers(dl);
     db.prepare('DELETE FROM downloads WHERE id = ?').run(dl.id);
+    publish('download', { id: dl.id, removed: true }, { userId: dl.user_id, adminAlso: true });
   }
   res.json({ ok: true });
 });

@@ -45,6 +45,11 @@ function sanitizePrefs(input) {
     if (g.every(Number.isFinite)) out.eqGains = g;
   }
   if ('repeat' in input && REPEAT_MODES.has(input.repeat)) out.repeat = input.repeat;
+  // Crossfade between tracks, in seconds (0 = off / plain gapless).
+  if ('crossfade' in input) {
+    const c = Number(input.crossfade);
+    if (Number.isFinite(c)) out.crossfade = Math.min(12, Math.max(0, Math.round(c)));
+  }
   // Named equalizer presets the user saved: { name: number[] }. Bounded in count,
   // name length and band count; non-numeric or malformed entries are dropped.
   if ('eqPresets' in input && input.eqPresets && typeof input.eqPresets === 'object' && !Array.isArray(input.eqPresets)) {

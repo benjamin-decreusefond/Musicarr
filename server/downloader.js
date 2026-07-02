@@ -4,9 +4,19 @@ import { parseFile } from 'music-metadata';
 import { db, config, upsertTrack, trackRowFromDeezer } from './db.js';
 import { deezerGet, slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel, scoreSlskdFiles, scoreSlskdFolders,
   slskdReady, isTransientSlskdError } from './sources.js';
+import { publish } from './events.js';
 import { logger } from './log.js';
 
 const log = logger('download');
+
+/** Push a download row to its owner (and admins) over SSE, so the Downloads
+ *  view updates live instead of polling. Best-effort. */
+function publishDownload(id) {
+  try {
+    const row = db.prepare('SELECT * FROM downloads WHERE id = ?').get(id);
+    if (row) publish('download', row, { userId: row.user_id, adminAlso: true });
+  } catch { /* never let a push failure break the download flow */ }
+}
 
 const AUDIO_EXT = new Set(['.flac', '.mp3', '.m4a', '.ogg', '.opus', '.wav', '.aac', '.wma']);
 
@@ -17,6 +27,7 @@ function setStatus(id, status, detail, extra = {}) {
     .run({ id, ...fields });
   if (status === 'error' || status === 'not_found') log.warn(`#${id} -> ${status}`, detail || '');
   else log.info(`#${id} -> ${status}`, detail || '');
+  publishDownload(id);
 }
 
 /** The slskd_file column stores one filename (track) or a JSON array (album). */
@@ -40,19 +51,22 @@ function trackOnDisk(deezerId) {
   return !!(f && fs.existsSync(f));
 }
 
-export function queueDownload(userId, kind, deezerId, label, cover) {
+export function queueDownload(userId, kind, deezerId, label, cover, { toLibrary = true } = {}) {
+  const toLib = toLibrary ? 1 : 0;
   // Dedupe: if a single track is already on disk, record it as done instead of
   // searching Soulseek for a copy we already have.
   if (kind === 'track' && trackOnDisk(deezerId)) {
-    const done = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, status, detail, progress) VALUES (?, ?, ?, ?, ?, 'soulseek', 'done', 'Already in library', 1)`)
-      .run(userId, kind, deezerId, label, cover || null);
+    const done = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, status, detail, progress, to_library) VALUES (?, ?, ?, ?, ?, 'soulseek', 'done', 'Already in library', 1, ?)`)
+      .run(userId, kind, deezerId, label, cover || null, toLib);
     log.info(`#${done.lastInsertRowid} ${kind} ${deezerId} already on disk — skipped download`);
+    publishDownload(done.lastInsertRowid);
     return done.lastInsertRowid;
   }
-  const existing = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine) VALUES (?, ?, ?, ?, ?, 'soulseek')`)
-    .run(userId, kind, deezerId, label, cover || null);
+  const existing = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, to_library) VALUES (?, ?, ?, ?, ?, 'soulseek', ?)`)
+    .run(userId, kind, deezerId, label, cover || null, toLib);
   const id = existing.lastInsertRowid;
   log.info(`#${id} queued ${kind} ${deezerId} by user ${userId}: ${label}`);
+  publishDownload(id);
   runSearch(id);
   return id;
 }
@@ -539,6 +553,17 @@ function fileTrackNo(base) {
   return m ? parseInt(m[1], 10) : null;
 }
 
+/** Best-effort disc number from a filename ("1-03 x" / "1.03 x" -> 1), or from
+ *  the parent folder ("CD2", "Disc 2"). Null when there's no disc hint. */
+function fileDiscNo(fullPath) {
+  const base = fullPath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  let m = base.match(/^\s*(\d{1,2})\s*[-_.]\s*\d{1,3}(?:\D|$)/);
+  if (m) return parseInt(m[1], 10);
+  const parent = fullPath.split(/[\\/]/).slice(-2, -1)[0] || '';
+  m = parent.match(/\b(?:cd|disc|disk)\s*(\d{1,2})\b/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 /** True when a downloaded file's title/name plausibly matches a wanted title,
  *  in either direction (handles "(feat. …)" and punctuation differences). */
 function titleMatches(fi, wantTitle) {
@@ -588,16 +613,18 @@ async function importDownload(dl) {
   for (const f of files) {
     const base = path.basename(f);
     let title = path.basename(f, path.extname(f));
-    let trackNo = null, duration = null, isrc = null;
+    let trackNo = null, disc = null, duration = null, isrc = null;
     try {
       const mm = await parseFile(f, { duration: true });
       title = mm.common.title || title;
       trackNo = mm.common.track?.no ?? null;
+      disc = mm.common.disk?.no ?? null;
       duration = mm.format?.duration ?? null;          // actual audio length, in seconds
       isrc = (Array.isArray(mm.common.isrc) ? mm.common.isrc[0] : mm.common.isrc) || null;
     } catch { /* fall back to filename */ }
     if (trackNo == null) trackNo = fileTrackNo(base);
-    fileInfos.push({ path: f, title, trackNo, base, duration, isrc });
+    if (disc == null) disc = fileDiscNo(f);
+    fileInfos.push({ path: f, title, trackNo, disc, base, duration, isrc });
   }
 
   const wanted = plan?.wantedTracks || [];
@@ -635,9 +662,16 @@ async function importDownload(dl) {
     if (d === true) return 2;          // duration confirms the length
     return 1;                          // nothing contradicts it
   };
+  // Multi-disc guard: Deezer's track_position restarts on each disc, so a bare
+  // track-number match is ambiguous across discs. When both sides know their
+  // disc, require it to agree; when either side doesn't, fall through (duration
+  // and title still gate the match).
+  const discOk = (want, fi) =>
+    want.disk_number == null || fi.disc == null || fi.disc === want.disk_number;
   const pickMatch = (want) => {
     const cands = fileInfos.filter(fi => !fi.used && (
-      (want.track_position && fi.trackNo === want.track_position) || titleMatches(fi, want.title)));
+      (want.track_position && fi.trackNo === want.track_position && discOk(want, fi))
+        || titleMatches(fi, want.title)));
     const ranked = cands
       .map(fi => ({ fi, c: confidence(want, fi) }))
       .filter(x => x.c >= 0)                            // drop ISRC/duration-proven mismatches
@@ -650,13 +684,31 @@ async function importDownload(dl) {
     return ranked[0]?.fi || null;
   };
 
+  // Playlist imports (to_library = 0) leave their tracks as "Available" instead
+  // of promoting every song into the shared Library view.
+  const promote = dl.to_library == null || !!dl.to_library;
+
   // Link one downloaded file into the library for a wanted track.
   const linkInto = (want, fi) => {
     fi.used = true;
     const ext = path.extname(fi.path);
     const destDir = path.join(config.musicDir, safeName(want.artist), safeName(want.album || 'Singles'));
     fs.mkdirSync(destDir, { recursive: true });
-    const dest = path.join(destDir, `${safeName(want.title)}${ext}`);
+    // Two different tracks can sanitize to the same "Title.ext" (reprises,
+    // deluxe duplicates). tracks.file_path is UNIQUE, and blindly unlinking the
+    // existing file would replace the other track's audio — so when the plain
+    // name is owned by a DIFFERENT track, disambiguate with the track number,
+    // then with the Deezer id as a last resort.
+    const ownedByOther = (p) => {
+      const owner = db.prepare('SELECT deezer_id FROM tracks WHERE file_path = ?').get(p);
+      return owner && owner.deezer_id !== want.deezer_id;
+    };
+    let dest = path.join(destDir, `${safeName(want.title)}${ext}`);
+    if (ownedByOther(dest)) {
+      const num = want.track_position ? `${String(want.track_position).padStart(2, '0')} - ` : '';
+      dest = path.join(destDir, `${num}${safeName(want.title)}${ext}`);
+      if (ownedByOther(dest)) dest = path.join(destDir, `${safeName(want.title)} (${want.deezer_id})${ext}`);
+    }
     // Hardlink into the root folder (instant, no extra disk space). Falls back
     // to a copy when the slskd download dir and root folder are on different
     // filesystems.
@@ -674,8 +726,9 @@ async function importDownload(dl) {
     }
     // Record the exact source so deletion can reclaim it later even if the
     // downloaded filename differs from the library name (or the download row
-    // is gone).
-    db.prepare('UPDATE tracks SET file_path = ?, source_path = ?, in_library = 1 WHERE deezer_id = ?').run(dest, fi.path, want.deezer_id);
+    // is gone). in_library is only raised for downloads meant for the Library.
+    db.prepare('UPDATE tracks SET file_path = ?, source_path = ?, in_library = CASE WHEN ? THEN 1 ELSE in_library END WHERE deezer_id = ?')
+      .run(dest, fi.path, promote ? 1 : 0, want.deezer_id);
     log.info(`#${dl.id} imported "${want.artist} - ${want.title}" -> ${dest}`);
     imported++;
   };
@@ -705,8 +758,9 @@ async function importDownload(dl) {
   // Only when the leftover counts line up closely, to avoid mislabeling.
   if (unmatched.length && dl.kind === 'album') {
     const freeFiles = fileInfos.filter(fi => !fi.used)
-      .sort((a, b) => (a.trackNo ?? 1e9) - (b.trackNo ?? 1e9) || a.base.localeCompare(b.base));
-    const need = [...unmatched].sort((a, b) => (a.track_position ?? 1e9) - (b.track_position ?? 1e9));
+      .sort((a, b) => (a.disc ?? 1) - (b.disc ?? 1) || (a.trackNo ?? 1e9) - (b.trackNo ?? 1e9) || a.base.localeCompare(b.base));
+    const need = [...unmatched].sort((a, b) =>
+      (a.disk_number ?? 1) - (b.disk_number ?? 1) || (a.track_position ?? 1e9) - (b.track_position ?? 1e9));
     if (freeFiles.length && Math.abs(freeFiles.length - need.length) <= 1) {
       log.info(`#${dl.id} positional fallback: assigning ${Math.min(freeFiles.length, need.length)} leftover file(s) by track order`);
       for (let i = 0; i < need.length && i < freeFiles.length; i++) {
@@ -771,12 +825,18 @@ export function scanLibrary() {
     }
   }
 
-  for (const t of db.prepare('SELECT deezer_id, artist, album, title FROM tracks WHERE file_path IS NULL').all()) {
+  const taken = (p) => !!db.prepare('SELECT 1 FROM tracks WHERE file_path = ?').get(p);
+  for (const t of db.prepare('SELECT deezer_id, artist, album, title, track_position FROM tracks WHERE file_path IS NULL').all()) {
     const dir = path.join(root, safeName(t.artist), safeName(t.album || 'Singles'));
     if (!fs.existsSync(dir)) continue;
     const want = safeName(t.title);
+    // Accept the plain name and the collision-disambiguated variants that
+    // linkInto may have produced ("NN - Title", "Title (deezerId)").
+    const names = new Set([want, `${t.deezer_id ? `${want} (${t.deezer_id})` : want}`]);
+    if (t.track_position) names.add(`${String(t.track_position).padStart(2, '0')} - ${want}`);
     const hit = fs.readdirSync(dir).find(f =>
-      AUDIO_EXT.has(path.extname(f).toLowerCase()) && path.basename(f, path.extname(f)) === want);
+      AUDIO_EXT.has(path.extname(f).toLowerCase()) && names.has(path.basename(f, path.extname(f)))
+        && !taken(path.join(dir, f)));
     if (hit) {
       db.prepare('UPDATE tracks SET file_path = ? WHERE deezer_id = ?').run(path.join(dir, hit), t.deezer_id);
       relinked++;

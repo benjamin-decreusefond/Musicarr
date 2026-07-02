@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, fmtTime, PlayerProvider, usePlayer, MeContext, EQ_LABELS, EQ_PRESETS } from './store.jsx';
+import { events } from './events.js';
 import { Icon, Cover, Avatar, TrackArtists, useUserMenu } from './ui.jsx';
 import { LangProvider, useT } from './i18n.jsx';
 import { ContextMenuProvider } from './menu.jsx';
@@ -70,11 +71,21 @@ function EqControls() {
 
 // Standalone page so the EQ is reachable from the sidebar at any time.
 function EqualizerPage() {
+  const p = usePlayer();
   return (
     <div className="page">
       <h1 className="page-h1">Equalizer</h1>
       <p className="settings-hint">Adjust the sound. Changes apply live and are saved across reboots.</p>
       <div className="eq-page-panel"><EqControls /></div>
+      <div className="eq-page-panel" style={{ marginTop: 16 }}>
+        <div className="eq-head"><span>Crossfade</span><span className="queue-count">{p.crossfade ? `${p.crossfade}s` : 'Off'}</span></div>
+        <p className="settings-hint" style={{ margin: '6px 0 10px' }}>
+          Blend the end of each song into the next. Off still preloads the next track, so
+          transitions stay gap-free.
+        </p>
+        <input type="range" min={0} max={12} step={1} value={p.crossfade}
+          onChange={e => p.setCrossfade(parseInt(e.target.value, 10))} style={{ width: '100%' }} />
+      </div>
     </div>
   );
 }
@@ -257,13 +268,12 @@ function ListenTogether() {
     api.post(`/api/listen/${session.id}/state`, { track_id: id, position: time, is_playing: playing }).catch(() => {});
   }, [liveRef.current.id, p.playing, session?.id, isHost]);
 
-  // GUEST: poll and follow the host.
+  // GUEST: follow the host. State arrives instantly over SSE; a poll loop
+  // stays on as presence heartbeat and as a fallback when SSE is down.
   useEffect(() => {
     if (!session || isHost) return;
     let alive = true;
-    const tick = async () => {
-      let st;
-      try { st = await api.get(`/api/listen/${session.id}`); } catch { gone(); return; }
+    const applyState = (st) => {
       if (!alive) return;
       setSession(st);
       const tr = st.track;
@@ -281,9 +291,19 @@ function ListenTogether() {
         if (!st.is_playing && cplaying) p.pause();
       }
     };
+    const tick = async () => {
+      let st;
+      try { st = await api.get(`/api/listen/${session.id}`); } catch { gone(); return; }
+      applyState(st);
+    };
+    const offState = events.on('listen', (st) => { if (st.id === session.id) applyState(st); });
+    const offEnded = events.on('listen-ended', (d) => { if (d.id === session.id) gone(); });
     tick();
-    const t = setInterval(tick, 2500);
-    return () => { alive = false; clearInterval(t); };
+    // With SSE live, only every 4th tick hits the server (presence heartbeat);
+    // without it, poll at the old cadence.
+    let n = 0;
+    const t = setInterval(() => { n++; if (events.connected && n % 4 !== 0) return; tick(); }, 2500);
+    return () => { alive = false; clearInterval(t); offState(); offEnded(); };
   }, [session?.id, isHost, gone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const start = async () => { setBusy(true); setErr(''); try { setSession(await api.post('/api/listen/start')); } catch (e) { setErr(e.message); } setBusy(false); };

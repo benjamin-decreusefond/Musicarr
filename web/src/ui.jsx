@@ -49,6 +49,7 @@ export const Icon = ({ name, size = 20, fill = 'none' }) => {
     addCircle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v8M8 12h8',
     camera: 'M3 8a2 2 0 0 1 2-2h2l1.5-2h7L19 6h0a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
     headphones: 'M4 14v-1a8 8 0 0 1 16 0v1M3 16a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h0a2 2 0 0 1-2-2zM21 16a2 2 0 0 0-2-2h0a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2z',
+    edit: 'M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5zM15 5l4 4',
   }[name];
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
@@ -434,7 +435,7 @@ function fmtDate(s) {
 }
 
 /** One row of the columnar TrackTable. */
-function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid }) {
+function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid, dragProps, dragOver }) {
   const player = usePlayer();
   const me = useMe();
   const trackMenu = useTrackMenu();
@@ -455,7 +456,8 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
   if (hidden) return null;
 
   return (
-    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''}`} style={grid} onClick={onPlay}
+    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''} ${dragOver ? 'drag-over' : ''}`}
+      style={grid} onClick={onPlay} {...(dragProps || {})}
       onContextMenu={(e) => trackMenu(e, track, { tracks, i, onDelete: () => setHidden(true) })}>
       <div className="tt-idx">
         {isCurrent && player.playing
@@ -502,8 +504,11 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
 
 /** Deezer-style columnar track table (Title · Artist · Album · Added · Duration)
  *  with per-row actions on hover. Columns Album/Added can be turned off for
- *  browse contexts. `onRemove` adds a remove-from-playlist button. */
-export function TrackTable({ tracks, nav, onRemove, showAlbum = true, showAdded = true }) {
+ *  browse contexts. `onRemove` adds a remove-from-playlist button; `onReorder`
+ *  (from, to) makes the rows drag-sortable (playlists). */
+export function TrackTable({ tracks, nav, onRemove, onReorder, showAlbum = true, showAdded = true }) {
+  const [dragFrom, setDragFrom] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
   if (!tracks.length) return <div className="state faint">Nothing here yet.</div>;
   // Build the grid so header and rows always line up regardless of which
   // optional columns are shown.
@@ -512,6 +517,17 @@ export function TrackTable({ tracks, nav, onRemove, showAlbum = true, showAdded 
   if (showAdded) cols.push('110px');
   cols.push('minmax(96px,132px)', '52px');                          // actions, time
   const grid = { gridTemplateColumns: cols.join(' ') };
+  const dragPropsFor = (i) => onReorder ? {
+    draggable: true,
+    onDragStart: () => setDragFrom(i),
+    onDragOver: (e) => { e.preventDefault(); if (dragOver !== i) setDragOver(i); },
+    onDrop: (e) => {
+      e.preventDefault();
+      if (dragFrom != null && dragFrom !== i) onReorder(dragFrom, i);
+      setDragFrom(null); setDragOver(null);
+    },
+    onDragEnd: () => { setDragFrom(null); setDragOver(null); },
+  } : null;
   return (
     <div className="tracktable">
       <div className="tt-head" style={grid}>
@@ -525,7 +541,8 @@ export function TrackTable({ tracks, nav, onRemove, showAlbum = true, showAdded 
       </div>
       {tracks.map((t, i) => (
         <TrackTableRow key={t.deezer_id || t.id} track={t} i={i} tracks={tracks} nav={nav}
-          onRemove={onRemove} showAlbum={showAlbum} showAdded={showAdded} grid={grid} />
+          onRemove={onRemove} showAlbum={showAlbum} showAdded={showAdded} grid={grid}
+          dragProps={dragPropsFor(i)} dragOver={onReorder && dragOver === i && dragFrom !== i} />
       ))}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from './store.jsx';
+import { events } from './events.js';
 import { Icon, Cover, Avatar, TrackTable, CardRow, TileCard, DownloadButton, RadioButton, confirmRadioDownloads, useUserMenu } from './ui.jsx';
 import { useT, useLang, LANGS } from './i18n.jsx';
 
@@ -643,7 +644,9 @@ export function Playlist({ id, nav }) {
   const { data, err, loading, setData } = useAsync(() => api.get(`/api/playlists/${id}`), [id]);
   const player = usePlayer();
   const [showShare, setShowShare] = useState(false);
-  useEffect(() => setShowShare(false), [id]);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  useEffect(() => { setShowShare(false); setEditingName(false); }, [id]);
   if (loading) return <Loading />;
   if (err) return <ErrState msg={err} />;
   const canEdit = !!data.can_edit;
@@ -653,6 +656,29 @@ export function Playlist({ id, nav }) {
     await api.del(`/api/playlists/${id}/tracks/${trackId}`);
     setData({ ...data, tracks: data.tracks.filter(t => t.deezer_id !== trackId) });
     window.dispatchEvent(new Event('musicarr:playlists-changed'));
+  };
+  const rename = async () => {
+    const name = nameDraft.trim();
+    setEditingName(false);
+    if (!name || name === data.name) return;
+    try {
+      await api.put(`/api/playlists/${id}`, { name });
+      setData({ ...data, name });
+      window.dispatchEvent(new Event('musicarr:playlists-changed'));
+    } catch (e) { alert(e.message); }
+  };
+  // Optimistic drag-reorder; on failure, reload the server's order.
+  const reorder = async (from, to) => {
+    const next = [...data.tracks];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setData({ ...data, tracks: next });
+    try {
+      await api.put(`/api/playlists/${id}/reorder`, { track_ids: next.map(t => t.deezer_id) });
+    } catch (e) {
+      alert(e.message);
+      try { setData(await api.get(`/api/playlists/${id}`)); } catch { /* keep optimistic order */ }
+    }
   };
   const meta = [
     !data.is_owner && data.owner_name ? `by ${data.owner_name}` : null,
@@ -665,7 +691,25 @@ export function Playlist({ id, nav }) {
         <Cover src={tracks[0]?.cover} size={200} alt={data.name} />
         <div className="hero-meta">
           <span className="hero-kind">{data.shared ? 'Shared playlist' : 'Playlist'}</span>
-          <h1 className="hero-title">{data.name}</h1>
+          {editingName ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input className="settings-input" autoFocus value={nameDraft} maxLength={120}
+                onChange={e => setNameDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') rename(); if (e.key === 'Escape') setEditingName(false); }} />
+              <button className="btn-primary" onClick={rename}>Save</button>
+              <button className="btn-ghost" onClick={() => setEditingName(false)}>Cancel</button>
+            </div>
+          ) : (
+            <h1 className="hero-title">
+              {data.name}
+              {data.is_owner && (
+                <button className="icon-btn" title="Rename playlist" style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                  onClick={() => { setNameDraft(data.name); setEditingName(true); }}>
+                  <Icon name="edit" size={16} />
+                </button>
+              )}
+            </h1>
+          )}
           <span className="hero-sub faint">{meta}</span>
           <div className="hero-actions">
             <button className="btn-primary" disabled={!playable.length}
@@ -687,7 +731,8 @@ export function Playlist({ id, nav }) {
       {showShare && data.is_owner && <SharePanel playlistId={id} initialShares={data.shares || []} />}
       <section className="page-block">
         {tracks.length
-          ? <TrackTable tracks={tracks} nav={nav} onRemove={canEdit ? remove : undefined} />
+          ? <TrackTable tracks={tracks} nav={nav} onRemove={canEdit ? remove : undefined}
+              onReorder={canEdit ? reorder : undefined} />
           : <div className="state faint">This playlist is empty.</div>}
       </section>
     </div>
@@ -944,7 +989,22 @@ export function Downloads({ nav }) {
   const player = usePlayer();
   const [items, setItems] = useState([]);
   const load = useCallback(async () => { try { setItems(await api.get('/api/downloads')); } catch {} }, []);
-  useEffect(() => { load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
+  // Live updates over SSE; the poll only fires while SSE is down (plus a slow
+  // safety refresh to heal any missed event).
+  useEffect(() => {
+    load();
+    const off = events.on('download', (d) => setItems(prev => {
+      if (d.removed) return prev.filter(x => x.id !== d.id);
+      const i = prev.findIndex(x => x.id === d.id);
+      if (i < 0) return [d, ...prev];
+      const next = [...prev];
+      next[i] = { ...next[i], ...d };
+      return next;
+    }));
+    let n = 0;
+    const t = setInterval(() => { n++; if (events.connected && n % 8 !== 0) return; load(); }, 4000);
+    return () => { off(); clearInterval(t); };
+  }, [load]);
   const remove = async (id) => { await api.del(`/api/downloads/${id}`); load(); };
   const retry = async (id) => { try { await api.post(`/api/downloads/${id}/retry`, {}); } catch (e) { alert(e.message); } load(); };
   const statusLabel = { searching: 'Searching', downloading: 'Downloading', importing: 'Importing', done: 'Done', not_found: 'Not found', error: 'Error' };
@@ -1434,9 +1494,22 @@ export function Settings() {
   const [tested, setTested] = useState({});
   const [cleaning, setCleaning] = useState(false);
   const [cleanMsg, setCleanMsg] = useState(null);
+  const [scan, setScan] = useState(null);
   useEffect(() => {
     api.get('/api/settings').then(setS).catch(e => setMsg({ err: true, text: e.message }));
+    api.get('/api/library/scan').then(setScan).catch(() => {});
   }, []);
+  // Live scan progress: SSE when available, polling while a scan runs.
+  useEffect(() => events.on('scan', setScan), []);
+  useEffect(() => {
+    if (!scan?.running) return;
+    const t = setInterval(() => api.get('/api/library/scan').then(setScan).catch(() => {}), 2000);
+    return () => clearInterval(t);
+  }, [scan?.running]);
+  const startScan = async () => {
+    try { setScan(await api.post('/api/library/scan')); }
+    catch (e) { alert(e.message); }
+  };
   const set = (k, v) => setS(prev => ({ ...prev, [k]: v }));
   const runCleanup = async () => {
     setCleaning(true); setCleanMsg(null);
@@ -1500,6 +1573,36 @@ export function Settings() {
         <Field label="Root folder"
           hint="The library: files are hardlinked here and streamed from here, e.g. /data/media/music."
           value={s.root_folder} onChange={v => set('root_folder', v)} />
+      </section>
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Import existing music</h2>
+        <p className="settings-hint">
+          Already have a music collection? Put it inside the root folder and run a scan:
+          each unknown audio file is identified from its tags (and its Artist/Album folder as a
+          fallback), matched against Deezer, and added to the library in place — nothing is moved,
+          copied or deleted. Files that can't be matched confidently are left untouched.
+        </p>
+        <div className="settings-actions">
+          <button className="btn-ghost" onClick={startScan} disabled={!!scan?.running}>
+            {scan?.running ? 'Scanning…' : 'Scan root folder now'}
+          </button>
+          {scan?.running && scan.total > 0 && (
+            <span className="settings-msg">{scan.processed}/{scan.total} files · {scan.imported} imported</span>
+          )}
+          {!scan?.running && scan?.finishedAt && (
+            <span className={`settings-msg ${scan.error ? 'err' : 'ok'}`}>
+              {scan.error
+                ? `Scan failed: ${scan.error}`
+                : `Last scan: ${scan.imported} imported, ${scan.skipped} skipped, ${scan.failed} failed (of ${scan.total}).`}
+            </span>
+          )}
+        </div>
+        {scan?.running && scan.total > 0 && (
+          <div className="dl-bar" style={{ marginTop: 8 }}>
+            <div className="dl-bar-fill" style={{ width: `${Math.round((scan.processed / scan.total) * 100)}%` }} />
+          </div>
+        )}
       </section>
 
       <section className="page-block settings-section">

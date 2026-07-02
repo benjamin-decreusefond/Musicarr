@@ -58,9 +58,17 @@ const loadPresets = () => {
 };
 
 export function PlayerProvider({ children }) {
+  // Two audio elements alternate: while one plays, the other preloads the next
+  // track, so transitions are gapless (and can crossfade). audioRef always
+  // points at the ACTIVE element, so every control keeps working unchanged.
   const audioRef = useRef(null);
+  const playersRef = useRef([]);
   const audioCtxRef = useRef(null);
   const filtersRef = useRef(null);
+  const preloadRef = useRef({ id: null });  // track preloaded into the idle element
+  const fadeTimerRef = useRef(null);
+  const fadingRef = useRef(null);           // { inEl, outEl } while crossfading
+  const fadeStartRef = useRef(false);        // playback effect should fade this swap
   // Separate audio element for 30s previews of not-yet-downloaded tracks, kept
   // independent of the main queue/player but surfaced in the player bar.
   const previewRef = useRef(null);
@@ -89,6 +97,12 @@ export function PlayerProvider({ children }) {
   const [eqEnabled, setEqEnabled] = useState(() => localStorage.getItem('musicarr:eq:on') === '1');
   const [eqGains, setEqGains] = useState(loadGains);
   const [eqPresets, setEqPresets] = useState(loadPresets);
+  // Crossfade between tracks, in seconds. 0 = off (tracks still preload, so
+  // transitions stay gap-free).
+  const [crossfade, setCrossfadeState] = useState(() => {
+    const c = parseInt(localStorage.getItem('musicarr:crossfade'), 10);
+    return Number.isFinite(c) ? Math.min(12, Math.max(0, c)) : 0;
+  });
 
   const current = index >= 0 ? queue[index] : null;
 
@@ -97,6 +111,14 @@ export function PlayerProvider({ children }) {
   // (e.g. "queue stops advancing after the first song").
   const stateRef = useRef({ queue, index, repeat });
   stateRef.current = { queue, index, repeat };
+  // Same trick for values the once-attached listeners and the lazily-built
+  // audio graph need live (the EQ used to be initialized from a stale closure).
+  const eqRef = useRef({ eqEnabled, eqGains });
+  eqRef.current = { eqEnabled, eqGains };
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
+  const crossfadeRef = useRef(crossfade);
+  crossfadeRef.current = crossfade;
   const skipFailsRef = useRef(0);  // consecutive stream failures, to stop skip loops
   const endedGuardRef = useRef(false); // de-dupe ended vs near-end fallback per track
 
@@ -104,6 +126,12 @@ export function PlayerProvider({ children }) {
   const setVolume = useCallback((v) => {
     setVolumeState(v);
     localStorage.setItem('musicarr:volume', String(v));
+  }, []);
+
+  const setCrossfade = useCallback((secs) => {
+    const c = Math.min(12, Math.max(0, Math.round(Number(secs) || 0)));
+    setCrossfadeState(c);
+    localStorage.setItem('musicarr:crossfade', String(c));
   }, []);
 
   const cycleRepeat = useCallback(() => {
@@ -115,29 +143,32 @@ export function PlayerProvider({ children }) {
   }, []);
 
   // Build the Web Audio graph lazily on first playback (needs a user gesture
-  // to start the AudioContext). source -> [filters] -> destination.
+  // to start the AudioContext). Both audio elements feed the same EQ chain:
+  // sources -> [filters] -> destination. Gains are read through eqRef so the
+  // graph is initialized with the CURRENT settings (a stale closure here used
+  // to leave the EQ silently flat after cross-device preference sync).
   const ensureGraph = useCallback(() => {
-    if (audioCtxRef.current || !audioRef.current) return;
+    if (audioCtxRef.current || !playersRef.current.length) return;
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     try {
       const ctx = new Ctx();
-      const src = ctx.createMediaElementSource(audioRef.current);
+      const { eqEnabled: on, eqGains: gains } = eqRef.current;
       const filters = EQ_BANDS.map((freq, i) => {
         const f = ctx.createBiquadFilter();
         f.type = i === 0 ? 'lowshelf' : i === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking';
         f.frequency.value = freq;
         f.Q.value = 1;
-        f.gain.value = eqEnabled ? eqGains[i] : 0;
+        f.gain.value = on ? gains[i] : 0;
         return f;
       });
-      let node = src;
-      for (const f of filters) { node.connect(f); node = f; }
-      node.connect(ctx.destination);
+      for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
+      filters[filters.length - 1].connect(ctx.destination);
+      for (const el of playersRef.current) ctx.createMediaElementSource(el).connect(filters[0]);
       audioCtxRef.current = ctx;
       filtersRef.current = filters;
     } catch { /* MediaElementSource already created or unsupported */ }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Push gains into the filters and persist whenever they change.
   useEffect(() => {
@@ -172,6 +203,7 @@ export function PlayerProvider({ children }) {
             setRepeat(p.repeat);
             localStorage.setItem('musicarr:repeat', p.repeat);
           }
+          if (Number.isFinite(p.crossfade)) setCrossfade(p.crossfade);
         }
         // Flip the guard only after the hydration setters have flushed and the
         // save effect has run (and bailed) for them — deferring past the render
@@ -187,7 +219,7 @@ export function PlayerProvider({ children }) {
     // Also attempt immediately in case we mounted already authenticated.
     hydrate();
     return () => window.removeEventListener('musicarr:authed', hydrate);
-  }, [setVolume]);
+  }, [setVolume, setCrossfade]);
 
   // Debounce-coalesce changes to volume / EQ / repeat into a single PUT. Errors
   // are swallowed: a sync failure must never affect playback (localStorage holds
@@ -196,10 +228,10 @@ export function PlayerProvider({ children }) {
     if (!hydratedRef.current) return; // skip the hydration write-back
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      api.put('/api/preferences', { volume, eqEnabled, eqGains, repeat, eqPresets }).catch(() => {});
+      api.put('/api/preferences', { volume, eqEnabled, eqGains, repeat, eqPresets, crossfade }).catch(() => {});
     }, 600);
     return () => clearTimeout(saveTimerRef.current);
-  }, [volume, eqEnabled, eqGains, repeat, eqPresets]);
+  }, [volume, eqEnabled, eqGains, repeat, eqPresets, crossfade]);
 
   /** Advance to the next track. Reads live state from stateRef so it is safe
    *  to call from the once-attached audio listeners.
@@ -226,19 +258,96 @@ export function PlayerProvider({ children }) {
     setIndex(ni);
   }, []);
 
-  useEffect(() => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-      audioRef.current.preload = 'auto';
+  /** The queue entry that will play after the current one (following repeat),
+   *  or null at the end of the queue / when it would replay the same track. */
+  const nextUp = useCallback(() => {
+    const { queue: q, index: i, repeat: r } = stateRef.current;
+    if (!q.length || i < 0) return null;
+    if (r === 'one') return null;         // same-element replay, nothing to preload
+    let ni = i + 1;
+    if (ni >= q.length) { if (r !== 'all') return null; ni = 0; }
+    if (ni === i) return null;            // single-track queue
+    return q[ni] || null;
+  }, []);
+
+  /** Stop any crossfade in progress, leaving `keepPlaying` untouched. */
+  const stopFade = useCallback(() => {
+    clearInterval(fadeTimerRef.current);
+    fadeTimerRef.current = null;
+    const f = fadingRef.current;
+    fadingRef.current = null;
+    if (f) {
+      f.outEl.pause();
+      f.outEl.volume = volumeRef.current;
+      f.inEl.volume = volumeRef.current;
     }
-    const a = audioRef.current;
-    const onTime = () => {
+  }, []);
+
+  /** Equal-power crossfade between the two elements over `secs`. */
+  const beginFade = useCallback((inEl, outEl, secs) => {
+    clearInterval(fadeTimerRef.current);
+    fadingRef.current = { inEl, outEl };
+    const t0 = performance.now();
+    fadeTimerRef.current = setInterval(() => {
+      const t = Math.min(1, (performance.now() - t0) / (secs * 1000));
+      const m = volumeRef.current;
+      inEl.volume = m * Math.sin(t * Math.PI / 2);
+      outEl.volume = m * Math.cos(t * Math.PI / 2);
+      if (t >= 1) stopFade();
+    }, 50);
+  }, [stopFade]);
+
+  useEffect(() => {
+    if (!playersRef.current.length) {
+      playersRef.current = [new Audio(), new Audio()];
+      for (const el of playersRef.current) el.preload = 'auto';
+      audioRef.current = playersRef.current[0];
+    }
+    const els = playersRef.current;
+    // All handlers are attached to BOTH elements and act only on events from
+    // the ACTIVE one (audioRef.current) — the idle element merely preloads.
+    const isActive = (ev) => ev.target === audioRef.current;
+
+    // Load the upcoming track into the idle element once the active one nears
+    // its end, so the hand-over is gapless (or can crossfade).
+    const maybePreload = (a) => {
+      const d = a.duration;
+      if (!Number.isFinite(d) || d <= 0) return;
+      if (d - a.currentTime > Math.max(15, crossfadeRef.current + 5)) return;
+      const nxt = nextUp();
+      const nid = nxt ? (nxt.deezer_id || nxt.id) : null;
+      if (!nid || preloadRef.current.id === nid) return;
+      const idle = els.find(el => el !== a);
+      if (!idle) return;
+      idle.src = `/api/stream/${nid}`;
+      try { idle.load(); } catch { /* not fatal; swap falls back to a fresh load */ }
+      preloadRef.current = { id: nid };
+    };
+
+    const onTime = (ev) => {
+      if (!isActive(ev)) return;
+      const a = ev.target;
       setTime(a.currentTime);
       const d = a.duration;
       // Keep the OS media UI's scrubber in sync (lock screen / media keys).
       if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && Number.isFinite(d) && d > 0) {
         try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(a.currentTime, d), playbackRate: a.playbackRate || 1 }); }
         catch { /* some browsers reject odd values mid-seek */ }
+      }
+      maybePreload(a);
+      // Crossfade: advance early (while this track still plays) when the next
+      // track is preloaded and we're inside the fade window.
+      const xf = crossfadeRef.current;
+      if (xf > 0 && Number.isFinite(d) && d > 0 && !endedGuardRef.current && !a.paused) {
+        const nxt = nextUp();
+        const nid = nxt ? (nxt.deezer_id || nxt.id) : null;
+        if (nid && preloadRef.current.id === nid && d - a.currentTime <= xf) {
+          endedGuardRef.current = true;
+          skipFailsRef.current = 0;
+          fadeStartRef.current = true;
+          advance(false);
+          return;
+        }
       }
       // Fallback for formats/streams where 'ended' doesn't fire reliably:
       // if we're at the very end and playback has stopped progressing, advance.
@@ -248,49 +357,54 @@ export function PlayerProvider({ children }) {
         advance(false);
       }
     };
-    const onDur = () => setDuration(a.duration || 0);
-    const onEnd = () => { skipFailsRef.current = 0; if (!endedGuardRef.current) { endedGuardRef.current = true; advance(false); } };
-    const onPlay = () => {
+    const onDur = (ev) => { if (isActive(ev)) setDuration(ev.target.duration || 0); };
+    const onEnd = (ev) => {
+      if (!isActive(ev)) return;
+      skipFailsRef.current = 0;
+      if (!endedGuardRef.current) { endedGuardRef.current = true; advance(false); }
+    };
+    const onPlay = (ev) => {
+      if (!isActive(ev)) return;
       skipFailsRef.current = 0; setPlaying(true);
       // Real playback wins over a preview — never play both at once.
       if (previewRef.current) { previewRef.current.pause(); previewRef.current.removeAttribute('src'); }
       setPreviewId(null); setPreviewLoading(false); setPreviewTrackObj(null); setPreviewPlaying(false);
     };
-    const onPause = () => setPlaying(false);
+    const onPause = (ev) => { if (isActive(ev)) setPlaying(false); };
     // A track whose file is missing/broken must not silently stop the queue:
     // log it and skip ahead, but give up after a full lap of failures.
-    const onError = () => {
+    const onError = (ev) => {
+      if (!isActive(ev)) {
+        // The PRELOAD failed (e.g. file vanished): forget it so the hand-over
+        // falls back to a fresh load on the active element.
+        preloadRef.current = { id: null };
+        return;
+      }
       const { queue: q, index: i } = stateRef.current;
-      console.warn(`[player] stream failed for "${q[i]?.title ?? '?'}" (${a.src}) — skipping`);
+      console.warn(`[player] stream failed for "${q[i]?.title ?? '?'}" (${ev.target.src}) — skipping`);
       skipFailsRef.current += 1;
       if (skipFailsRef.current >= Math.max(1, q.length)) { setPlaying(false); return; }
       advance(true);
     };
     // Seeking away from the end re-arms end detection (e.g. the prev-button
     // restart, or scrubbing backwards after the track already finished).
-    const onSeeking = () => {
+    const onSeeking = (ev) => {
+      if (!isActive(ev)) return;
+      const a = ev.target;
       const d = a.duration;
       if (Number.isFinite(d) && d > 0 && a.currentTime < d - 1) endedGuardRef.current = false;
     };
-    a.addEventListener('timeupdate', onTime);
-    a.addEventListener('durationchange', onDur);
-    a.addEventListener('ended', onEnd);
-    a.addEventListener('play', onPlay);
-    a.addEventListener('pause', onPause);
-    a.addEventListener('error', onError);
-    a.addEventListener('seeking', onSeeking);
-    return () => {
-      a.removeEventListener('timeupdate', onTime);
-      a.removeEventListener('durationchange', onDur);
-      a.removeEventListener('ended', onEnd);
-      a.removeEventListener('play', onPlay);
-      a.removeEventListener('pause', onPause);
-      a.removeEventListener('error', onError);
-      a.removeEventListener('seeking', onSeeking);
-    };
-  }, [advance]);
+    const pairs = [['timeupdate', onTime], ['durationchange', onDur], ['ended', onEnd],
+      ['play', onPlay], ['pause', onPause], ['error', onError], ['seeking', onSeeking]];
+    for (const el of els) for (const [ev, fn] of pairs) el.addEventListener(ev, fn);
+    return () => { for (const el of els) for (const [ev, fn] of pairs) el.removeEventListener(ev, fn); };
+  }, [advance, nextUp]);
 
-  useEffect(() => { if (audioRef.current) audioRef.current.volume = volume; }, [volume]);
+  useEffect(() => {
+    // Volume applies to both elements — except mid-crossfade, where the fade
+    // ramp owns element volume and reads the new master from volumeRef.
+    if (!fadingRef.current) for (const el of playersRef.current) el.volume = volume;
+  }, [volume]);
   useEffect(() => { if (previewRef.current) previewRef.current.volume = volume; }, [volume]);
 
   /* ------------------------------------------------------- 30s previews */
@@ -345,12 +459,45 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    if (!current) { a.pause(); a.removeAttribute('src'); return; } // queue emptied
+    if (!current) { // queue emptied
+      stopFade();
+      preloadRef.current = { id: null };
+      for (const el of playersRef.current) { el.pause(); el.removeAttribute('src'); }
+      return;
+    }
     ensureGraph();
     audioCtxRef.current?.resume?.();
     endedGuardRef.current = false; // new track: re-arm end detection
-    a.src = `/api/stream/${currentId}`;
-    a.play().catch(e => console.warn('[player] play failed:', e));
+    const idle = playersRef.current.find(el => el !== a);
+    if (idle && preloadRef.current.id === currentId && idle.getAttribute('src')) {
+      // The next track is already buffered in the idle element: swap it in for
+      // a gapless (or crossfaded) transition instead of reloading from scratch.
+      preloadRef.current = { id: null };
+      audioRef.current = idle;
+      const fade = fadeStartRef.current && crossfadeRef.current > 0 && !a.paused;
+      fadeStartRef.current = false;
+      if (fade) {
+        idle.volume = 0;
+        idle.play().catch(e => console.warn('[player] play failed:', e));
+        beginFade(idle, a, crossfadeRef.current);
+      } else {
+        stopFade();
+        a.pause();
+        idle.volume = volumeRef.current;
+        idle.play().catch(e => console.warn('[player] play failed:', e));
+      }
+      setTime(idle.currentTime || 0);
+      setDuration(idle.duration || 0);
+    } else {
+      // Fresh start on the active element.
+      stopFade();
+      fadeStartRef.current = false;
+      preloadRef.current = { id: null };
+      if (idle) { idle.pause(); idle.removeAttribute('src'); }
+      a.volume = volumeRef.current;
+      a.src = `/api/stream/${currentId}`;
+      a.play().catch(e => console.warn('[player] play failed:', e));
+    }
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: current.title, artist: current.artist, album: current.album || '',
@@ -584,6 +731,7 @@ export function PlayerProvider({ children }) {
     previewId, previewLoading, previewTrackObj, previewTime, previewDuration, previewPlaying,
     startRadio, stopRadio, radioActive,
     repeat, cycleRepeat,
+    crossfade, setCrossfade,
     hasNext: index < queue.length - 1 || (repeat !== 'off' && queue.length > 0),
     hasPrev: index > 0,
     eqEnabled, setEqEnabled, eqGains, setEqBand, applyPreset, resetEq,

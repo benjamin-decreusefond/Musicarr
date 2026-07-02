@@ -1,6 +1,15 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { db } from './db.js';
+import { publish } from './events.js';
+
+/** Push a session's state to its members (except the host, who drives it) so
+ *  guests follow along instantly instead of waiting for the next poll. */
+function publishListenState(session) {
+  const members = db.prepare('SELECT user_id FROM listen_members WHERE session_id = ?').all(session.id)
+    .map(r => r.user_id).filter(id => id !== session.host_id);
+  if (members.length) publish('listen', sessionState(session, 0), { userIds: members });
+}
 
 // Listen Together: synchronized group playback. One user hosts a session and
 // drives the current track / position / play-state; guests poll the session and
@@ -138,6 +147,7 @@ listenRouter.post('/:id/state', (req, res) => {
     UPDATE listen_sessions SET track_id = ?, position = ?, is_playing = ?, updated_at = datetime('now') WHERE id = ?
   `).run(Number.isFinite(trackId) ? trackId : null, position, isPlaying, session.id);
   touchMember(session.id, req.user.id);
+  publishListenState(getSessionById(session.id));
   res.json({ ok: true });
 });
 
@@ -145,7 +155,15 @@ listenRouter.post('/:id/state', (req, res) => {
 listenRouter.post('/:id/leave', (req, res) => {
   const session = getSessionById(parseInt(req.params.id, 10));
   if (!session) return res.json({ ok: true });
-  if (session.host_id === req.user.id) db.prepare('DELETE FROM listen_sessions WHERE id = ?').run(session.id);
-  else db.prepare('DELETE FROM listen_members WHERE session_id = ? AND user_id = ?').run(session.id, req.user.id);
+  if (session.host_id === req.user.id) {
+    // Tell guests the session is over before it disappears.
+    const members = db.prepare('SELECT user_id FROM listen_members WHERE session_id = ?').all(session.id)
+      .map(r => r.user_id).filter(id => id !== session.host_id);
+    db.prepare('DELETE FROM listen_sessions WHERE id = ?').run(session.id);
+    if (members.length) publish('listen-ended', { id: session.id }, { userIds: members });
+  } else {
+    db.prepare('DELETE FROM listen_members WHERE session_id = ? AND user_id = ?').run(session.id, req.user.id);
+    publishListenState(session);
+  }
   res.json({ ok: true });
 });
