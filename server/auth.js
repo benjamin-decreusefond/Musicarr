@@ -63,10 +63,19 @@ function cleanupSessions() {
 
 /* ------------------------------------------------------------ Rate limiting */
 // In-memory sliding window per client IP, to blunt password brute-forcing.
+// Only FAILED attempts count: several people signing in from one household IP
+// must never lock each other out, and success proves the caller knows a
+// password (nothing left to brute-force).
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
-const loginAttempts = new Map(); // ip -> number[] (timestamps)
+const loginAttempts = new Map(); // ip -> number[] (failure timestamps)
 function loginRateLimited(ip) {
+  const now = Date.now();
+  const hits = (loginAttempts.get(ip) || []).filter(t => now - t < LOGIN_WINDOW_MS);
+  loginAttempts.set(ip, hits);
+  return hits.length >= LOGIN_MAX_ATTEMPTS;
+}
+function recordLoginFailure(ip) {
   const now = Date.now();
   const hits = (loginAttempts.get(ip) || []).filter(t => now - t < LOGIN_WINDOW_MS);
   hits.push(now);
@@ -74,7 +83,6 @@ function loginRateLimited(ip) {
   if (loginAttempts.size > 5000) { // bound memory
     for (const [k, v] of loginAttempts) if (!v.some(t => now - t < LOGIN_WINDOW_MS)) loginAttempts.delete(k);
   }
-  return hits.length > LOGIN_MAX_ATTEMPTS;
 }
 
 function parseCookies(req) {
@@ -155,6 +163,7 @@ authRouter.post('/login', (req, res) => {
   // response time doesn't reveal whether the username exists.
   const ok = bcrypt.compareSync(password || '', user ? user.password_hash : DUMMY_HASH);
   if (!user || !ok) {
+    recordLoginFailure(req.ip);
     return res.status(401).json({ error: 'Wrong username or password' });
   }
   const token = crypto.randomBytes(32).toString('hex');

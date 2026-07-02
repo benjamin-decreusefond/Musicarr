@@ -71,20 +71,43 @@ export function queueDownload(userId, kind, deezerId, label, cover, { toLibrary 
   return id;
 }
 
-/** Cancel any in-flight slskd transfers for a download (best-effort) and drop
- *  its in-memory import/progress state, so slskd stops pulling files the user
- *  no longer wants. Called when a download is dismissed or cancelled. */
+/** Cancel any in-flight slskd transfers for a download (best-effort), drop its
+ *  in-memory import/progress state, and remove files it already pulled into
+ *  the slskd downloads dir — the user no longer wants them. Called when a
+ *  download is dismissed or cancelled. Files of a 'done' download are imported
+ *  (hardlinked), so those — and anything a track references as its source —
+ *  are never touched. */
 export async function cancelDownloadTransfers(dl) {
   pendingImports.delete(dl.id);
   progressTrack.delete(dl.id);
-  if (!dl.slskd_user) return;
-  try {
-    const transfers = await slskdTransfers(dl.slskd_user);
-    const mine = new Set(slskdFilesOf(dl));
-    for (const t of transfers) {
-      if (mine.has(t.filename)) await slskdCancel(dl.slskd_user, t.id);
+  if (dl.slskd_user) {
+    try {
+      const transfers = await slskdTransfers(dl.slskd_user);
+      const mine = new Set(slskdFilesOf(dl));
+      for (const t of transfers) {
+        if (mine.has(t.filename)) await slskdCancel(dl.slskd_user, t.id);
+      }
+    } catch { /* best-effort */ }
+  }
+  if (dl.status === 'done') return;
+  const remote = slskdFilesOf(dl);
+  const wantBases = new Set(remote.map(f => f.split(/[\\/]/).pop()));
+  if (!wantBases.size) return;
+  // Only look inside the download's own remote folder(s) — no full-tree walk.
+  const remoteDirs = [...new Set(remote.map(f => f.split(/[\\/]/).slice(-2, -1)[0]).filter(Boolean))];
+  const isSource = db.prepare('SELECT 1 FROM tracks WHERE source_path = ?');
+  for (const d of remoteDirs) {
+    const dir = path.join(config.slskdDownloadDir, safeName(d));
+    if (!fs.existsSync(dir)) continue;
+    for (const f of walkAudio(dir)) {
+      if (!wantBases.has(path.basename(f)) || isSource.get(f)) continue;
+      try {
+        fs.unlinkSync(f);
+        pruneEmptyDirs(f);
+        log.info(`#${dl.id} removed leftover download file: ${path.basename(f)}`);
+      } catch { /* best-effort */ }
     }
-  } catch { /* best-effort */ }
+  }
 }
 
 /** Manually re-queue a failed download for another search, clearing prior retry
@@ -160,6 +183,37 @@ async function enqueueWithRetry(dlId, username, files) {
   }
 }
 
+/* --------------------------------------------------------- Peer blocklist */
+// Peers that keep failing (stalls, rejects, wrong files) stop being picked as
+// candidates for a while. Strikes are shared across downloads; a successful
+// import from a peer clears its slate, and strikes age out after the window.
+const PEER_BLOCK_STRIKES = 5;
+const PEER_BLOCK_WINDOW = '-7 days';
+
+export function recordPeerStrike(username) {
+  if (!username) return;
+  db.prepare(`
+    INSERT INTO peer_strikes (username, strikes, last_strike) VALUES (?, 1, datetime('now'))
+    ON CONFLICT(username) DO UPDATE SET
+      strikes = CASE WHEN last_strike < datetime('now', ?) THEN 1 ELSE strikes + 1 END,
+      last_strike = datetime('now')
+  `).run(username, PEER_BLOCK_WINDOW);
+}
+
+export function clearPeerStrikes(username) {
+  if (username) db.prepare('DELETE FROM peer_strikes WHERE username = ?').run(username);
+}
+
+/** Peers currently over the strike threshold (also shown on the health page). */
+export function blockedPeers() {
+  return db.prepare(`
+    SELECT username, strikes, last_strike FROM peer_strikes
+    WHERE strikes >= ? AND last_strike > datetime('now', ?)
+    ORDER BY strikes DESC, username
+  `).all(PEER_BLOCK_STRIKES, PEER_BLOCK_WINDOW);
+}
+const blockedPeerSet = () => new Set(blockedPeers().map(p => p.username));
+
 /* --------------------------------------------------------------- Retries */
 // A candidate (peer + file/folder) gets PER_CANDIDATE_MAX transfer attempts
 // before being excluded; the download gives up entirely after MAX_ATTEMPTS.
@@ -195,6 +249,7 @@ async function handleTransferFailure(dl, reason) {
   const fails = failedCandidatesOf(dl);
   const key = candidateKey(dl.slskd_user, slskdFilesOf(dl)[0]);
   fails[key] = (fails[key] || 0) + 1;
+  recordPeerStrike(dl.slskd_user);
   const attempts = (dl.attempts || 0) + 1;
 
   if (attempts >= MAX_ATTEMPTS) {
@@ -240,8 +295,9 @@ async function trackViaSlskd(dl) {
     let files = [];
     try { files = await slskdSearch(q); }
     catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); if (isTransientSlskdError(e)) slskdDown = true; continue; }
+    const blocked = blockedPeerSet();
     const ranked = scoreSlskdFiles(files, row.artist, row.title, tr.duration || null)
-      .filter(f => !isExcluded(dl, f.username, f.filename));
+      .filter(f => !isExcluded(dl, f.username, f.filename) && !blocked.has(f.username));
     log.info(`#${dl.id} "${q}": ${files.length} audio file(s), ${ranked.length} viable`);
 
     if (ranked.length && !await ensureSlskdReady(dl.id)) slskdDown = true;
@@ -312,8 +368,9 @@ async function albumViaSlskd(dl) {
     catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); if (isTransientSlskdError(e)) slskdDown = true; continue; }
 
     // Rank per-peer folders by how much of the *missing* tracklist they cover.
+    const blocked = blockedPeerSet();
     const folders = scoreSlskdFolders(files, missing.map(w => w.title))
-      .filter(f => !isExcluded(dl, f.username, f.files[0]?.filename));
+      .filter(f => !isExcluded(dl, f.username, f.files[0]?.filename) && !blocked.has(f.username));
     log.info(`#${dl.id} "${q}": ${files.length} file(s) in ${folders.length} viable folder(s)`);
 
     if (folders.length && !await ensureSlskdReady(dl.id)) slskdDown = true;
@@ -381,8 +438,11 @@ export function cleanupStaleTracks() {
   `).all(`-${days} days`);
   if (!stale.length) return Promise.resolve(0);
   log.info(`auto-cleanup: removing ${stale.length} track(s) not played in ${days} day(s)`);
+  // Batch delete: one shared walk of the slskd tree for the whole run.
+  let treeCache = null;
+  const downloadTree = () => (treeCache ??= walkAudio(config.slskdDownloadDir));
   for (const t of stale) {
-    try { deleteTrackFile(t.deezer_id); } catch (e) { log.warn(`auto-cleanup: ${t.artist} - ${t.title}: ${e.message}`); }
+    try { deleteOneTrackFile(t.deezer_id, downloadTree); } catch (e) { log.warn(`auto-cleanup: ${t.artist} - ${t.title}: ${e.message}`); }
   }
   return Promise.resolve(stale.length);
 }
@@ -430,6 +490,7 @@ async function tick() {
     setStatus(dl.id, 'importing', 'Importing files', { progress: 1 });
     try {
       const n = await importDownload(dl);
+      clearPeerStrikes(dl.slskd_user); // the peer delivered: forgive past strikes
       setStatus(dl.id, 'done', n > 1 ? `Imported ${n} tracks to your library` : 'Added to your library', { progress: 1 });
     } catch (e) {
       // A failed verification (wrong file) should try the next peer, not just error out.
@@ -443,8 +504,11 @@ async function tick() {
 
 /* ------------------------------------------------------------ Sweep */
 // Retry downloads whose files finished but never made it into the library
-// (crash mid-import, slskd volume briefly unmounted, ...).
-const sweepAttempts = new Map(); // dl.id -> last attempt ms
+// (crash mid-import, slskd volume briefly unmounted, ...). Each download gets
+// at most one retry per hour and MAX_SWEEP_RETRIES in total per process —
+// a permanently-failed import must not walk the download tree hourly forever.
+const sweepAttempts = new Map(); // dl.id -> { at: ms, n: attempts }
+const MAX_SWEEP_RETRIES = 5;
 export async function sweepUnimported() {
   const candidates = db.prepare(`
     SELECT * FROM downloads
@@ -452,9 +516,9 @@ export async function sweepUnimported() {
       AND updated_at > datetime('now', '-7 days')
   `).all();
   for (const dl of candidates) {
-    const last = sweepAttempts.get(dl.id) || 0;
-    if (Date.now() - last < 60 * 60 * 1000) continue; // at most hourly per download
-    sweepAttempts.set(dl.id, Date.now());
+    const rec = sweepAttempts.get(dl.id) || { at: 0, n: 0 };
+    if (Date.now() - rec.at < 60 * 60 * 1000 || rec.n >= MAX_SWEEP_RETRIES) continue;
+    sweepAttempts.set(dl.id, { at: Date.now(), n: rec.n + 1 });
     try {
       if (!pendingImports.has(dl.id)) await rebuildPlan(dl);
       const plan = pendingImports.get(dl.id);
@@ -485,9 +549,9 @@ export async function sweepUnimported() {
         AND updated_at > datetime('now','-1 days')
     `).all();
     for (const dl of retry) {
-      const last = sweepAttempts.get(dl.id) || 0;
-      if (Date.now() - last < 30 * 60 * 1000) continue;
-      sweepAttempts.set(dl.id, Date.now());
+      const rec = sweepAttempts.get(dl.id) || { at: 0, n: 0 };
+      if (Date.now() - rec.at < 30 * 60 * 1000 || rec.n >= MAX_SWEEP_RETRIES) continue;
+      sweepAttempts.set(dl.id, { at: Date.now(), n: rec.n + 1 });
       log.info(`sweep: re-searching #${dl.id} (${dl.label}) after a transient slskd outage`);
       setStatus(dl.id, 'searching', 'Retrying after slskd recovered');
       runSearch(dl.id);
@@ -878,6 +942,21 @@ function pruneEmptyDirs(filePath) {
 }
 
 export function deleteTrackFile(deezerId) {
+  return deleteTrackFiles([deezerId])[0];
+}
+
+/** Batch variant: deletes several tracks while walking the slskd download tree
+ *  AT MOST ONCE for the whole batch (the walk is the expensive part — the old
+ *  per-track walk made a big auto-cleanup O(tracks × files)). */
+export function deleteTrackFiles(deezerIds) {
+  // Lazily-built, shared snapshot of the download tree. Files deleted earlier
+  // in the batch are guarded by the existsSync check in tryUnlink.
+  let treeCache = null;
+  const downloadTree = () => (treeCache ??= walkAudio(config.slskdDownloadDir));
+  return deezerIds.map(id => deleteOneTrackFile(id, downloadTree));
+}
+
+function deleteOneTrackFile(deezerId, downloadTree) {
   const row = db.prepare('SELECT file_path, source_path FROM tracks WHERE deezer_id = ?').get(deezerId);
   if (!row) return { removed: [], notFound: true };
   const removed = [];
@@ -900,16 +979,19 @@ export function deleteTrackFile(deezerId) {
   // 3) If the original download wasn't reclaimed above — no source_path was
   // recorded, or it has since been moved/renamed — locate the leftover(s) under
   // the slskd download dir by inode (hardlink) or basename, so a deleted track
-  // never lingers in slskd's folder.
+  // never lingers in slskd's folder. Skipped entirely when there is nothing to
+  // look for, so a metadata-only row never triggers a tree walk.
   if (!sourceRemoved) {
     const wantBases = new Set();
     if (row.source_path) wantBases.add(path.basename(row.source_path));
     if (row.file_path) wantBases.add(path.basename(row.file_path));
     const dls = db.prepare(`SELECT slskd_file FROM downloads WHERE deezer_id = ? AND slskd_file IS NOT NULL`).all(deezerId);
     for (const d of dls) for (const f of slskdFilesOf({ slskd_file: d.slskd_file })) wantBases.add(f.split(/[\\/]/).pop());
-    for (const f of walkAudio(config.slskdDownloadDir)) {
-      if (removed.includes(f)) continue;
-      if (wantBases.has(path.basename(f)) || (srcInode && inodeKey(f) === srcInode)) tryUnlink(f);
+    if (wantBases.size || srcInode) {
+      for (const f of downloadTree()) {
+        if (removed.includes(f)) continue;
+        if (wantBases.has(path.basename(f)) || (srcInode && inodeKey(f) === srcInode)) tryUnlink(f);
+      }
     }
   }
 

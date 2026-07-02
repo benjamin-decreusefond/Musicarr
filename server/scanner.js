@@ -78,7 +78,16 @@ function pickBest(hits, info) {
 export const scanState = {
   running: false, startedAt: null, finishedAt: null,
   total: 0, processed: 0, imported: 0, skipped: 0, failed: 0, error: null,
+  unmatched: [], // [{ file, reason }] from the last scan (capped), for the health page
 };
+
+const UNMATCHED_CAP = 200;
+function noteUnmatched(root, file, reason) {
+  scanState.skipped++;
+  if (scanState.unmatched.length < UNMATCHED_CAP) {
+    scanState.unmatched.push({ file: path.relative(root, file), reason });
+  }
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -88,6 +97,7 @@ export function startImportScan() {
   Object.assign(scanState, {
     running: true, startedAt: new Date().toISOString(), finishedAt: null,
     total: 0, processed: 0, imported: 0, skipped: 0, failed: 0, error: null,
+    unmatched: [],
   });
   runScan()
     .catch(e => { scanState.error = String(e.message || e); log.error('import scan failed', e); })
@@ -113,7 +123,7 @@ async function runScan() {
     scanState.processed++;
     try {
       const info = await identify(file, root);
-      if (!info.title) { scanState.skipped++; continue; }
+      if (!info.title) { noteUnmatched(root, file, 'No usable title in tags or filename'); continue; }
 
       // Advanced search first (exact-ish), then a plain query as fallback.
       let hits = [];
@@ -126,11 +136,14 @@ async function runScan() {
         hits = (await deezerGet(`search/track?q=${encodeURIComponent(q)}&limit=10`)).data || [];
       }
       const best = pickBest(hits, info);
-      if (!best) { scanState.skipped++; log.debug(`no confident match for ${file}`); continue; }
+      if (!best) { noteUnmatched(root, file, 'No confident Deezer match'); log.debug(`no confident match for ${file}`); continue; }
 
       // Another file already owns this Deezer track -> this one is a duplicate.
       const existing = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(best.id);
-      if (existing?.file_path && fs.existsSync(existing.file_path)) { scanState.skipped++; continue; }
+      if (existing?.file_path && fs.existsSync(existing.file_path)) {
+        noteUnmatched(root, file, `Duplicate of "${best.artist?.name} - ${best.title}"`);
+        continue;
+      }
 
       upsertTrack(trackRowFromDeezer(best));
       db.prepare('UPDATE tracks SET file_path = ?, in_library = 1 WHERE deezer_id = ?').run(file, best.id);

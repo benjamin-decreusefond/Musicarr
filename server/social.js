@@ -38,12 +38,15 @@ socialRouter.post('/heartbeat', (req, res) => {
   res.json({ ok: true });
 });
 
+// Escape LIKE wildcards in user input so "%"/"_" match literally.
+const likeEscape = (s) => s.replace(/[\\%_]/g, '\\$&');
+
 // Search / list other users (most-followed first when no query).
 socialRouter.get('/users', (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const rows = q
-    ? db.prepare(`SELECT id, username, is_admin FROM users WHERE id != ? AND username LIKE ? ORDER BY username LIMIT 50`)
-        .all(req.user.id, `%${q}%`)
+    ? db.prepare(`SELECT id, username, is_admin FROM users WHERE id != ? AND username LIKE ? ESCAPE '\\' ORDER BY username LIMIT 50`)
+        .all(req.user.id, `%${likeEscape(q)}%`)
     : db.prepare(`
         SELECT u.id, u.username, u.is_admin FROM users u WHERE u.id != ?
         ORDER BY (SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id) DESC, u.username LIMIT 50`)

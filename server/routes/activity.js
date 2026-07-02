@@ -50,6 +50,20 @@ function sanitizePrefs(input) {
     const c = Number(input.crossfade);
     if (Number.isFinite(c)) out.crossfade = Math.min(12, Math.max(0, Math.round(c)));
   }
+  // Play queue persistence: track ids + current index + position, so a reload
+  // (or another device) can pick up where the user left off.
+  if ('queue' in input && Array.isArray(input.queue)) {
+    out.queue = input.queue.map(n => Math.round(Number(n)))
+      .filter(n => Number.isFinite(n) && n > 0).slice(0, 500);
+  }
+  if ('queueIndex' in input) {
+    const i = Number(input.queueIndex);
+    if (Number.isFinite(i)) out.queueIndex = Math.max(-1, Math.round(i));
+  }
+  if ('queueTime' in input) {
+    const t = Number(input.queueTime);
+    if (Number.isFinite(t)) out.queueTime = Math.max(0, t);
+  }
   // Named equalizer presets the user saved: { name: number[] }. Bounded in count,
   // name length and band count; non-numeric or malformed entries are dropped.
   if ('eqPresets' in input && input.eqPresets && typeof input.eqPresets === 'object' && !Array.isArray(input.eqPresets)) {

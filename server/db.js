@@ -320,6 +320,17 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 );
 `);
 
+// Soulseek peers that keep failing us (stalls, rejects, wrong files). A strike
+// is recorded per transfer failure; peers with enough recent strikes are
+// skipped when ranking candidates, and a successful import clears the slate.
+db.exec(`
+CREATE TABLE IF NOT EXISTS peer_strikes (
+  username TEXT PRIMARY KEY,
+  strikes INTEGER NOT NULL DEFAULT 0,
+  last_strike TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
 // Cached artist metadata (id, name, picture). The library's artist view used to
 // fetch one Deezer request per artist on every load; this lets it read pictures
 // from SQLite instead. Populated opportunistically whenever we fetch a full

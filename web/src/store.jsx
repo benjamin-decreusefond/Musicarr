@@ -66,6 +66,7 @@ export function PlayerProvider({ children }) {
   const audioCtxRef = useRef(null);
   const filtersRef = useRef(null);
   const preloadRef = useRef({ id: null });  // track preloaded into the idle element
+  const restoringRef = useRef(null);         // { time } while restoring a persisted queue (no autoplay)
   const fadeTimerRef = useRef(null);
   const fadingRef = useRef(null);           // { inEl, outEl } while crossfading
   const fadeStartRef = useRef(false);        // playback effect should fade this swap
@@ -204,6 +205,21 @@ export function PlayerProvider({ children }) {
             localStorage.setItem('musicarr:repeat', p.repeat);
           }
           if (Number.isFinite(p.crossfade)) setCrossfade(p.crossfade);
+          // Restore the persisted play queue (paused): rehydrate track rows by
+          // id, keep the saved position, and never autoplay on load. Skipped if
+          // the user already started playing something.
+          if (Array.isArray(p.queue) && p.queue.length && stateRef.current.queue.length === 0) {
+            const ids = p.queue.slice(0, 500);
+            const wantId = ids[Math.min(Math.max(0, Math.round(p.queueIndex ?? 0)), ids.length - 1)];
+            api.get(`/api/tracks?ids=${ids.join(',')}`).then(tracks => {
+              if (stateRef.current.queue.length) return;
+              const avail = (tracks || []).filter(t => t.available);
+              if (!avail.length) return;
+              restoringRef.current = { time: Number(p.queueTime) || 0 };
+              setQueue(avail);
+              setIndex(Math.max(0, avail.findIndex(t => t.deezer_id === wantId)));
+            }).catch(() => {});
+          }
         }
         // Flip the guard only after the hydration setters have flushed and the
         // save effect has run (and bailed) for them — deferring past the render
@@ -232,6 +248,36 @@ export function PlayerProvider({ children }) {
     }, 600);
     return () => clearTimeout(saveTimerRef.current);
   }, [volume, eqEnabled, eqGains, repeat, eqPresets, crossfade]);
+
+  // Persist the play queue (ids + index) so a reload — or another device —
+  // resumes where the user left off. Debounced; a track change resets the
+  // saved position to the start of the new track.
+  const queueSaveRef = useRef(null);
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    clearTimeout(queueSaveRef.current);
+    queueSaveRef.current = setTimeout(() => {
+      api.put('/api/preferences', {
+        queue: queue.slice(0, 500).map(t => t.deezer_id || t.id),
+        queueIndex: index,
+        queueTime: 0,
+      }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(queueSaveRef.current);
+  }, [queue, index]);
+
+  // While playing, checkpoint the position every 15s (and once on pause) so a
+  // resume lands close to where the listener stopped.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const save = () => {
+      const a = audioRef.current;
+      if (a && a.currentTime > 0) api.put('/api/preferences', { queueTime: a.currentTime }).catch(() => {});
+    };
+    if (!playing) { save(); return; }
+    const t = setInterval(save, 15000);
+    return () => clearInterval(t);
+  }, [playing]);
 
   /** Advance to the next track. Reads live state from stateRef so it is safe
    *  to call from the once-attached audio listeners.
@@ -496,7 +542,18 @@ export function PlayerProvider({ children }) {
       if (idle) { idle.pause(); idle.removeAttribute('src'); }
       a.volume = volumeRef.current;
       a.src = `/api/stream/${currentId}`;
-      a.play().catch(e => console.warn('[player] play failed:', e));
+      const restoring = restoringRef.current;
+      restoringRef.current = null;
+      if (restoring) {
+        // Restoring a persisted queue: load and seek, but stay paused until
+        // the user hits play.
+        if (restoring.time > 0) {
+          a.addEventListener('loadedmetadata', () => { try { a.currentTime = restoring.time; } catch { /* ignore */ } }, { once: true });
+        }
+        a.load();
+      } else {
+        a.play().catch(e => console.warn('[player] play failed:', e));
+      }
     }
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new window.MediaMetadata({
