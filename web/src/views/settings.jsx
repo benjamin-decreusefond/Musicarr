@@ -1,8 +1,32 @@
 // Admin server settings: root folder, slskd connection, import scan, cleanup.
 import { useState, useEffect } from 'react';
-import { api } from '../store.jsx';
+import { api, useMe } from '../store.jsx';
 import { events } from '../events.js';
 import { Loading, ErrState } from './shared.jsx';
+
+// Read-only summary of how the server authenticates requests. The method itself
+// is a boot-time setting (AUTH_METHOD env var), not a runtime toggle, because it
+// changes the server's security posture.
+const AUTH_METHOD_INFO = {
+  login: ['Built-in login', 'Users sign in with a username and password managed by Musicarr.'],
+  none: ['Disabled', 'No authentication — every request acts as a single admin user. Only safe on a trusted, isolated network.'],
+  proxy: ['Trusted reverse proxy', 'An authenticating proxy (oauth2-proxy, Authelia, Authentik, …) signs users in and Musicarr trusts its identity header. API tokens still work for direct clients.'],
+};
+
+function AuthMethodCard() {
+  const me = useMe();
+  const [label, desc] = AUTH_METHOD_INFO[me?.auth_method] || AUTH_METHOD_INFO.login;
+  return (
+    <section className="page-block settings-section">
+      <h2 className="row-title">Authentication <span className="src-pill on">{label}</span></h2>
+      <p className="settings-hint">{desc}</p>
+      <p className="settings-fieldhint">
+        Set with the <code>AUTH_METHOD</code> environment variable (<code>login</code>, <code>none</code>, or <code>proxy</code>)
+        and restart. See the README for the matching <code>AUTH_PROXY_*</code> options.
+      </p>
+    </section>
+  );
+}
 
 const SETTING_FIELDS = ['root_folder', 'slskd_url', 'slskd_api_key', 'slskd_download_dir'];
 
@@ -157,6 +181,8 @@ export function Settings() {
           <TestResult section="slskd" />
         </div>
       </section>
+
+      <AuthMethodCard />
 
       <section className="page-block settings-section">
         <h2 className="row-title">Library maintenance</h2>

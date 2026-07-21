@@ -491,7 +491,11 @@ function Sidebar({ route, nav, me, onLogout }) {
           <Avatar src={me.avatar} size={26} />
           <span className="user-name">{me.username}</span>
         </button>
-        <button className="icon-btn" onClick={onLogout} title={t('auth.signOut')}><Icon name="logout" size={18} /></button>
+        {/* Sign-out only makes sense for a native session, or in proxy mode when
+            a proxy sign-out URL is configured. When auth is disabled there's
+            nothing to sign out of. */}
+        {(me.auth_via === 'session' || !!me.logout_url) &&
+          <button className="icon-btn" onClick={onLogout} title={t('auth.signOut')}><Icon name="logout" size={18} /></button>}
       </div>
     </aside>
   );
@@ -722,7 +726,12 @@ function App() {
   }, [nav]);
   const back = useCallback(() => { window.history.back(); }, []);
 
-  const logout = async () => { await api.post('/api/auth/logout'); setMe(null); };
+  const logout = async () => {
+    // In proxy mode, hand off to the proxy's own sign-out endpoint when one is
+    // configured; otherwise clear the native session.
+    if (me?.logout_url) { window.location.href = me.logout_url; return; }
+    await api.post('/api/auth/logout'); setMe(null);
+  };
 
   if (me === undefined) return <div className="login"><Icon name="spinner" size={32} /></div>;
   if (me === null) return <Login onLogin={setMe} />;

@@ -217,19 +217,23 @@ export function Profile({ me, nav }) {
       </section>
       <AvatarSection me={me} />
       <LanguagePicker />
-      <section className="page-block settings-section">
-        <h2 className="row-title">Change password</h2>
-        <form className="profile-form" onSubmit={submit}>
-          <input className="settings-input" type="password" placeholder="Current password"
-            autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} />
-          <input className="settings-input" type="password" placeholder="New password"
-            autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
-          <input className="settings-input" type="password" placeholder="Confirm new password"
-            autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
-          <button className="btn-primary" disabled={busy || !cur || !next}>{busy ? 'Saving…' : 'Update password'}</button>
-        </form>
-        {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
-      </section>
+      {/* Only a native login has a password to change; a proxy/IdP-managed or
+          auth-disabled account has none. */}
+      {me.can_change_password && (
+        <section className="page-block settings-section">
+          <h2 className="row-title">Change password</h2>
+          <form className="profile-form" onSubmit={submit}>
+            <input className="settings-input" type="password" placeholder="Current password"
+              autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} />
+            <input className="settings-input" type="password" placeholder="New password"
+              autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
+            <input className="settings-input" type="password" placeholder="Confirm new password"
+              autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+            <button className="btn-primary" disabled={busy || !cur || !next}>{busy ? 'Saving…' : 'Update password'}</button>
+          </form>
+          {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+        </section>
+      )}
       <ApiTokens />
       <section className="page-block settings-section">
         <h2 className="row-title">Friends</h2>
