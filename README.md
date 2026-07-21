@@ -169,13 +169,18 @@ clients keep working:
 
 - **Native login and sessions still work** in `proxy` mode — a client that has a
   Musicarr password can `POST /api/auth/login` and use the session cookie.
+- **Set a client password even for SSO users.** Users provisioned by the proxy
+  have no native password, but they can set one for direct client login under
+  **Profile → Client login password** (no current password needed — the proxy
+  already authenticated them). The client then signs in with the username +
+  that password.
 - **[API access tokens](#api-access-tokens) work in every mode.** Sign in through
   the proxy in your browser, create a token under **Profile → API access tokens**,
   and use it from the client as an `Authorization: Bearer` (or `X-Api-Key`)
   header. A client's own credentials always take precedence over the proxy header.
 
-This is the recommended flow: **OAuth for the web UI, personal access tokens for
-your clients.**
+Recommended flow: **OAuth for the web UI; a client password or a personal access
+token for your desktop/mobile clients.**
 
 ## API access tokens
 

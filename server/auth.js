@@ -296,30 +296,42 @@ authRouter.get('/me', (req, res) => {
     // when auth is disabled, and so on).
     auth_method: config.authMethod,
     auth_via: via,
+    // A native session can change its password the usual way (prove the current
+    // one). A proxy/SSO session has no current password but can *set* one for
+    // direct client login (username + password from a desktop app), since the
+    // identity provider already vouches for the request.
     can_change_password: via === 'session' && config.authMethod !== 'none',
+    can_set_client_password: !!req.proxyAuth,
     logout_url: req.proxyAuth ? config.authProxyLogoutUrl : null,
   });
 });
 
 authRouter.post('/password', requireAuth, (req, res) => {
-  // No native password to change when the identity is owned by a proxy / IdP
-  // (or when auth is disabled entirely).
-  if (req.proxyAuth || config.authMethod === 'none') {
+  // When auth is fully disabled there's no account to secure.
+  if (config.authMethod === 'none') {
     return res.status(400).json({ error: 'Password is managed by your identity provider' });
   }
   const { current, next } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!bcrypt.compareSync(current || '', user.password_hash)) {
-    return res.status(400).json({ error: 'Current password is wrong' });
+  // A proxy/SSO-authenticated request is already trusted by the identity
+  // provider, and the account has no usable native password to prove — so it may
+  // set (or replace) a client-login password without presenting the current one.
+  // A native session must still prove its current password.
+  if (!req.proxyAuth) {
+    if (!bcrypt.compareSync(current || '', user.password_hash)) {
+      return res.status(400).json({ error: 'Current password is wrong' });
+    }
   }
   const bad = validatePassword(next);
   if (bad) return res.status(400).json({ error: bad });
-  if (next === (current || '')) return res.status(400).json({ error: 'New password must differ from the current one' });
-  // Changing the password also clears the forced-rotation flag and signs out
-  // every other session for this user.
+  if (!req.proxyAuth && next === (current || '')) {
+    return res.status(400).json({ error: 'New password must differ from the current one' });
+  }
+  // Setting/changing the password also clears the forced-rotation flag and signs
+  // out every other native session for this user.
   db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
     .run(bcrypt.hashSync(next, 10), req.user.id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, req.sessionToken);
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, req.sessionToken || '');
   res.json({ ok: true });
 });
 

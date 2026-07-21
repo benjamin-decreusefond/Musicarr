@@ -73,9 +73,23 @@ test('AUTH_METHOD=proxy provisions users from the identity header; first is admi
   assert.equal(bob.body.is_admin, false);
   // No header -> not authenticated.
   assert.equal((await req(srv.url, 'GET', '/api/auth/me')).status, 401);
-  // Password changes are rejected for a proxy-owned identity.
-  assert.equal((await req(srv.url, 'POST', '/api/auth/password',
-    { headers: { 'x-forwarded-user': 'alice' }, body: { current: 'a', next: 'bbbbbbbb' } })).status, 400);
+  assert.equal(alice.body.can_set_client_password, true);
+});
+
+test('proxy users can set a client-login password and then sign in directly', async () => {
+  process.env.AUTH_METHOD = 'proxy';
+  const hdr = { 'x-forwarded-user': 'nina' };
+  // Provision nina via the proxy header.
+  assert.equal((await req(srv.url, 'GET', '/api/auth/me', { headers: hdr })).status, 200);
+  // Setting a password needs no "current" one (the proxy vouches for identity),
+  // but still enforces the length policy.
+  assert.equal((await req(srv.url, 'POST', '/api/auth/password', { headers: hdr, body: { next: 'short' } })).status, 400);
+  assert.equal((await req(srv.url, 'POST', '/api/auth/password', { headers: hdr, body: { next: 'client-pass-1' } })).status, 200);
+  // Now a direct client (no proxy header) can log in with username + password.
+  const login = await req(srv.url, 'POST', '/api/auth/login',
+    { body: { username: 'nina', password: 'client-pass-1' }, headers: { 'x-forwarded-for': '10.4.5.6' } });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.username, 'nina');
 });
 
 test('AUTH_PROXY_ADMIN_USERS grants and syncs admin; a custom header is honoured', async () => {

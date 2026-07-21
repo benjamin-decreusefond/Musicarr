@@ -189,6 +189,9 @@ export function Profile({ me, nav }) {
   const [friends, setFriends] = useState(null);
   const loadFriends = useCallback(() => api.get('/api/social/following').then(setFriends).catch(() => setFriends([])), []);
   useEffect(() => { loadFriends(); const t = setInterval(loadFriends, 20000); return () => clearInterval(t); }, [loadFriends]);
+  // A proxy/SSO session sets a client password without a current one (the IdP
+  // already authenticated them); a native session must prove the current one.
+  const settingClientPw = !me.can_change_password && me.can_set_client_password;
   const submit = async (e) => {
     e.preventDefault();
     setMsg(null);
@@ -196,8 +199,8 @@ export function Profile({ me, nav }) {
     if (next !== confirm) return setMsg({ err: true, text: 'New passwords do not match' });
     setBusy(true);
     try {
-      await api.post('/api/auth/password', { current: cur, next });
-      setMsg({ err: false, text: 'Password changed.' });
+      await api.post('/api/auth/password', settingClientPw ? { next } : { current: cur, next });
+      setMsg({ err: false, text: settingClientPw ? 'Client password set. Use your username and this password to sign in from a client.' : 'Password changed.' });
       setCur(''); setNext(''); setConfirm('');
     } catch (e) { setMsg({ err: true, text: e.message }); }
     setBusy(false);
@@ -217,8 +220,9 @@ export function Profile({ me, nav }) {
       </section>
       <AvatarSection me={me} />
       <LanguagePicker />
-      {/* Only a native login has a password to change; a proxy/IdP-managed or
-          auth-disabled account has none. */}
+      {/* A native login changes its password here. A proxy/SSO account has no
+          password to change, but can *set* one for direct client login. An
+          auth-disabled account shows neither. */}
       {me.can_change_password && (
         <section className="page-block settings-section">
           <h2 className="row-title">Change password</h2>
@@ -230,6 +234,24 @@ export function Profile({ me, nav }) {
             <input className="settings-input" type="password" placeholder="Confirm new password"
               autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
             <button className="btn-primary" disabled={busy || !cur || !next}>{busy ? 'Saving…' : 'Update password'}</button>
+          </form>
+          {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
+        </section>
+      )}
+      {settingClientPw && (
+        <section className="page-block settings-section">
+          <h2 className="row-title">Client login password</h2>
+          <p className="settings-hint">
+            You sign in to the web app through your identity provider, so you don't have a Musicarr
+            password. Set one here to sign in from a desktop or mobile client that connects directly
+            with your username and a password. (An API access token below works too.)
+          </p>
+          <form className="profile-form" onSubmit={submit}>
+            <input className="settings-input" type="password" placeholder="New password"
+              autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
+            <input className="settings-input" type="password" placeholder="Confirm new password"
+              autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+            <button className="btn-primary" disabled={busy || !next}>{busy ? 'Saving…' : 'Set client password'}</button>
           </form>
           {msg && <p className={`settings-msg ${msg.err ? 'err' : 'ok'}`}>{msg.text}</p>}
         </section>
