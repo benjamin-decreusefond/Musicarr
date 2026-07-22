@@ -122,6 +122,65 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `RELEASE_TYPES` | `album,ep,single` | Which Deezer record types to auto-download (`compilation` excluded by default) |
 | `COOKIE_SECURE` | `true` | Mark the session cookie `Secure` and send HSTS. Set `false` for plain-HTTP/LAN |
 | `TRUST_PROXY` | `1` | Proxy hop count for real client IP (login rate limiting) |
+| `AUTH_METHOD` | `login` | How requests are authenticated: `login` (built-in username/password), `none` (no auth — every request is a single admin user), or `proxy` (trust an authenticating reverse proxy). See [Authentication method](#authentication-method) |
+| `AUTH_PROXY_HEADER` | `x-forwarded-user` | *(proxy)* Request header the proxy sets to the authenticated username |
+| `AUTH_PROXY_ADMIN_USERS` | — | *(proxy)* Comma-separated usernames that are always admins |
+| `AUTH_PROXY_TRUSTED_IPS` | — | *(proxy)* Comma-separated IPs; the identity header is only honoured when the connection comes from one of them. Empty trusts any source (the app must then be reachable only through the proxy) |
+| `AUTH_PROXY_LOGOUT_URL` | — | *(proxy)* URL the web UI's "sign out" button points at (your proxy's sign-out endpoint, e.g. `/oauth2/sign_out`) |
+
+## Authentication method
+
+Musicarr can authenticate requests in three ways, chosen at boot with the
+`AUTH_METHOD` environment variable:
+
+- **`login`** *(default)* — the built-in username/password sign-in. Sessions are
+  cookie-based; the first-boot admin is created as described above.
+- **`none`** — no authentication at all. Every request acts as a single shared
+  admin user, so there is no sign-in screen. Only use this on a **trusted,
+  isolated network** (e.g. behind your own VPN), never on the open internet.
+- **`proxy`** — trust an authenticating reverse proxy in front of Musicarr
+  ([oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/),
+  [Authelia](https://www.authelia.com/),
+  [Authentik](https://goauthentik.io/), Cloudflare Access, …). The proxy signs
+  the user in and forwards their identity in a header; Musicarr reads that header,
+  auto-provisions the user on first sight, and treats them as signed in. This is
+  how you put OAuth/OIDC/SAML/SSO in front of Musicarr.
+
+### Putting OAuth in front (proxy mode)
+
+Set `AUTH_METHOD=proxy` and point `AUTH_PROXY_HEADER` at whatever username header
+your proxy emits (oauth2-proxy uses `X-Forwarded-User`; Authelia/Authentik use
+`Remote-User`). The **first** user seen becomes an admin so the instance is
+manageable; grant admin to specific accounts with `AUTH_PROXY_ADMIN_USERS`.
+
+> **Security:** a trusted header is only as safe as your network. Anyone who can
+> reach Musicarr directly could otherwise send the header themselves. Either make
+> sure the container is reachable *only* through the proxy, or list the proxy's
+> address(es) in `AUTH_PROXY_TRUSTED_IPS` — the header is then honoured only when
+> the connection actually comes from the proxy (checked against the real socket
+> address, not the spoofable `X-Forwarded-For`). Also configure your proxy to
+> **strip** the identity header from inbound client requests.
+
+### Desktop / API clients in `none` and `proxy` modes
+
+Browsers go through the proxy, but a desktop or mobile client (or a script) often
+connects to Musicarr **directly**, without doing a browser OAuth dance. Those
+clients keep working:
+
+- **Native login and sessions still work** in `proxy` mode — a client that has a
+  Musicarr password can `POST /api/auth/login` and use the session cookie.
+- **Set a client password even for SSO users.** Users provisioned by the proxy
+  have no native password, but they can set one for direct client login under
+  **Profile → Client login password** (no current password needed — the proxy
+  already authenticated them). The client then signs in with the username +
+  that password.
+- **[API access tokens](#api-access-tokens) work in every mode.** Sign in through
+  the proxy in your browser, create a token under **Profile → API access tokens**,
+  and use it from the client as an `Authorization: Bearer` (or `X-Api-Key`)
+  header. A client's own credentials always take precedence over the proxy header.
+
+Recommended flow: **OAuth for the web UI; a client password or a personal access
+token for your desktop/mobile clients.**
 
 ## API access tokens
 

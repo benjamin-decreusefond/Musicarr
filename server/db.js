@@ -57,6 +57,37 @@ export const config = {
   // On-the-fly transcoding for low-bandwidth streaming (requires ffmpeg on the
   // server). Off by default; when on, /stream?fmt=opus|mp3 transcodes.
   get transcodeEnabled() { return getSetting('transcode_enabled') === '1'; },
+
+  // --- Authentication method (set at boot; see auth.js) ---
+  // 'login'  – built-in username/password sessions (the default).
+  // 'none'   – no authentication at all; every request acts as a single shared
+  //            admin user. Only safe on a fully trusted/isolated network.
+  // 'proxy'  – trust an authenticating reverse proxy (oauth2-proxy, Authelia,
+  //            Authentik, …) that sets an identity header. Native sessions and
+  //            API tokens keep working too, so desktop/API clients that connect
+  //            directly can still sign in or use a token.
+  get authMethod() {
+    const m = (process.env.AUTH_METHOD || 'login').toLowerCase();
+    return ['login', 'none', 'proxy'].includes(m) ? m : 'login';
+  },
+  // Request header the trusted proxy sets to the authenticated username.
+  get authProxyHeader() { return (process.env.AUTH_PROXY_HEADER || 'x-forwarded-user').toLowerCase(); },
+  // Usernames that are always admins when provisioned from the proxy.
+  get authProxyAdminUsers() {
+    return (process.env.AUTH_PROXY_ADMIN_USERS || '')
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  },
+  // Only honour the identity header when the TCP peer (the proxy itself) is in
+  // this list. Empty = trust from any source, which is only safe when the app
+  // is unreachable except through the proxy. Compared against the real socket
+  // address, never the spoofable X-Forwarded-For.
+  get authProxyTrustedIps() {
+    return (process.env.AUTH_PROXY_TRUSTED_IPS || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+  },
+  // Optional URL the web UI points its "sign out" button at in proxy mode
+  // (your proxy's sign-out endpoint, e.g. /oauth2/sign_out).
+  get authProxyLogoutUrl() { return process.env.AUTH_PROXY_LOGOUT_URL || null; },
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });

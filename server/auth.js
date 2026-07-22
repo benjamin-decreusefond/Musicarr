@@ -28,32 +28,106 @@ export function validatePassword(pw) {
 }
 
 export function bootstrapAdmin() {
-  const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-  if (count === 0) {
-    // If no ADMIN_PASSWORD was provided, don't fall back to the well-known
-    // "admin" default (a real window where anyone can log in). Generate a strong
-    // random one, print it once to the logs, and force a change on first sign-in.
-    const envHadPassword = !!process.env.ADMIN_PASSWORD;
-    let password = config.adminPassword;
-    let generated = null;
-    if (!envHadPassword) {
-      generated = crypto.randomBytes(12).toString('base64url'); // ~16 chars, 96 bits
-      password = generated;
-    }
-    const mustChange = generated != null || password === 'admin';
-    const hash = bcrypt.hashSync(password, 10);
-    db.prepare('INSERT INTO users (username, password_hash, is_admin, must_change_password) VALUES (?, ?, 1, ?)')
-      .run(config.adminUsername, hash, mustChange ? 1 : 0);
-    if (generated) {
-      console.log(`[auth] Created admin user "${config.adminUsername}" with a generated password:\n\n    ${generated}\n\n` +
-        `[auth] Sign in with it now — you'll be required to set your own password. (Set ADMIN_PASSWORD to choose your own seed.)`);
-    } else {
-      console.log(`[auth] Created admin user "${config.adminUsername}"${mustChange ? ' with DEFAULT password "admin" — you will be required to change it on first sign-in.' : ''}`);
+  const method = config.authMethod;
+  if (method === 'none') {
+    // No login: make sure the single shared user the middleware injects exists.
+    noAuthUser();
+    console.log('[auth] AUTH_METHOD=none — authentication is disabled; every request acts as a single admin user. Only run this on a trusted/isolated network.');
+  } else {
+    const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+    if (count === 0 && method === 'proxy' && !process.env.ADMIN_PASSWORD) {
+      // In proxy mode users are provisioned from the identity header on first
+      // request, so there's no need to seed (and log) a random native admin.
+      console.log(`[auth] AUTH_METHOD=proxy — users are provisioned from the "${config.authProxyHeader}" header on first request. ` +
+        'The first user seen becomes an admin (or list admins in AUTH_PROXY_ADMIN_USERS). Set ADMIN_PASSWORD to also seed a break-glass native admin.');
+    } else if (count === 0) {
+      // If no ADMIN_PASSWORD was provided, don't fall back to the well-known
+      // "admin" default (a real window where anyone can log in). Generate a strong
+      // random one, print it once to the logs, and force a change on first sign-in.
+      const envHadPassword = !!process.env.ADMIN_PASSWORD;
+      let password = config.adminPassword;
+      let generated = null;
+      if (!envHadPassword) {
+        generated = crypto.randomBytes(12).toString('base64url'); // ~16 chars, 96 bits
+        password = generated;
+      }
+      const mustChange = generated != null || password === 'admin';
+      const hash = bcrypt.hashSync(password, 10);
+      db.prepare('INSERT INTO users (username, password_hash, is_admin, must_change_password) VALUES (?, ?, 1, ?)')
+        .run(config.adminUsername, hash, mustChange ? 1 : 0);
+      if (generated) {
+        console.log(`[auth] Created admin user "${config.adminUsername}" with a generated password:\n\n    ${generated}\n\n` +
+          `[auth] Sign in with it now — you'll be required to set your own password. (Set ADMIN_PASSWORD to choose your own seed.)`);
+      } else {
+        console.log(`[auth] Created admin user "${config.adminUsername}"${mustChange ? ' with DEFAULT password "admin" — you will be required to change it on first sign-in.' : ''}`);
+      }
+      if (method === 'proxy') {
+        console.log('[auth] AUTH_METHOD=proxy — the seed admin above is a break-glass native login; proxy users are still provisioned from the identity header.');
+      }
     }
   }
   // Drop expired sessions on boot, then hourly.
   cleanupSessions();
   setInterval(cleanupSessions, 60 * 60 * 1000).unref?.();
+}
+
+// --- AUTH_METHOD=none ---------------------------------------------------------
+/** The single implicit user injected for every request when auth is disabled.
+ *  Reuses an existing admin when the database already has one (e.g. after
+ *  switching over from login mode); otherwise creates a passwordless admin.
+ *  The stored hash is random and unusable — there is no login in this mode. */
+function noAuthUser() {
+  let u = db.prepare('SELECT * FROM users WHERE username = ?').get(config.adminUsername)
+    || db.prepare('SELECT * FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1').get()
+    || db.prepare('SELECT * FROM users ORDER BY id LIMIT 1').get();
+  if (!u) {
+    const hash = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
+    const info = db.prepare(
+      'INSERT INTO users (username, password_hash, is_admin, must_change_password) VALUES (?, ?, 1, 0)'
+    ).run(config.adminUsername, hash);
+    u = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  }
+  return u;
+}
+
+// --- AUTH_METHOD=proxy --------------------------------------------------------
+// Strip an IPv4-mapped IPv6 prefix so a socket address compares cleanly against
+// a configured plain-IPv4 allowlist entry.
+const normalizeIp = (ip) => (ip && ip.startsWith('::ffff:') ? ip.slice(7) : ip || '');
+
+/** Whether the identity header may be trusted for this request: the raw TCP peer
+ *  (the proxy, not the spoofable X-Forwarded-For) must be in AUTH_PROXY_TRUSTED_IPS.
+ *  An empty allowlist trusts any source (the app must then be proxy-only). */
+function proxyPeerTrusted(req) {
+  const allow = config.authProxyTrustedIps;
+  if (allow.length === 0) return true;
+  return allow.includes(normalizeIp(req.socket?.remoteAddress || ''));
+}
+
+/** Resolve (and auto-provision) the user named by the trusted proxy header. */
+function resolveProxyUser(req) {
+  if (!proxyPeerTrusted(req)) return null;
+  const raw = req.headers[config.authProxyHeader];
+  const username = (Array.isArray(raw) ? raw[0] : raw || '').trim();
+  if (!username) return null;
+  const shouldBeAdmin = config.authProxyAdminUsers.includes(username.toLowerCase());
+  let u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (!u) {
+    // Auto-provision. The very first user provisioned becomes an admin so the
+    // instance is manageable; after that, admin is granted only to names listed
+    // in AUTH_PROXY_ADMIN_USERS.
+    const firstEver = db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
+    const hash = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
+    const info = db.prepare(
+      'INSERT INTO users (username, password_hash, is_admin, must_change_password) VALUES (?, ?, ?, 0)'
+    ).run(username, hash, (shouldBeAdmin || firstEver) ? 1 : 0);
+    u = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  } else if (shouldBeAdmin && !u.is_admin) {
+    // Keep an existing user's admin flag in sync with the config list.
+    db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(u.id);
+    u.is_admin = 1;
+  }
+  return u;
 }
 
 function cleanupSessions() {
@@ -95,6 +169,18 @@ function parseCookies(req) {
 }
 
 export function authMiddleware(req, res, next) {
+  const method = config.authMethod;
+
+  // AUTH_METHOD=none: no authentication — every request is the shared admin user.
+  if (method === 'none') {
+    const u = noAuthUser();
+    req.user = { id: u.id, username: u.username, is_admin: u.is_admin, must_change_password: 0 };
+    req.authVia = 'none';
+    return next();
+  }
+
+  // Native session cookie. Works in every mode (incl. proxy), so a user who
+  // signs in directly — e.g. a desktop client — is authenticated the same way.
   const token = parseCookies(req)[COOKIE];
   if (token) {
     const tokenHash = hashSession(token);
@@ -108,11 +194,22 @@ export function authMiddleware(req, res, next) {
     } else if (row) {
       req.user = { id: row.id, username: row.username, is_admin: row.is_admin, must_change_password: row.must_change_password };
       req.sessionToken = tokenHash;
+      req.authVia = 'session';
     }
   }
   // Fall back to a personal access token for programmatic clients. Accept it
   // either as `Authorization: Bearer <token>` or `X-Api-Key: <token>`.
   if (!req.user) authWithToken(req);
+  // Finally, trust the reverse proxy's identity header (proxy mode only). This
+  // is last so a client's own credentials always take precedence.
+  if (!req.user && method === 'proxy') {
+    const u = resolveProxyUser(req);
+    if (u) {
+      req.user = { id: u.id, username: u.username, is_admin: u.is_admin, must_change_password: u.must_change_password };
+      req.proxyAuth = true;
+      req.authVia = 'proxy';
+    }
+  }
   next();
 }
 
@@ -128,6 +225,7 @@ function authWithToken(req) {
   if (!row) return;
   req.user = { id: row.id, username: row.username, is_admin: row.is_admin, must_change_password: row.must_change_password };
   req.apiToken = true;
+  req.authVia = 'token';
   // Record usage, but throttle the write to at most once a minute per token so
   // a busy client doesn't generate a DB write on every single request.
   const minuteAgo = new Date(Date.now() - 60_000).toISOString().slice(0, 19).replace('T', ' ');
@@ -154,6 +252,9 @@ const sessionCookie = (token, maxAgeSec) =>
   (maxAgeSec != null ? `; Max-Age=${maxAgeSec}` : '');
 
 authRouter.post('/login', (req, res) => {
+  if (config.authMethod === 'none') {
+    return res.status(400).json({ error: 'Login is disabled (AUTH_METHOD=none)' });
+  }
   if (loginRateLimited(req.ip)) {
     return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
   }
@@ -184,23 +285,53 @@ authRouter.post('/logout', (req, res) => {
 
 authRouter.get('/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not signed in' });
-  res.json({ ...req.user, is_admin: !!req.user.is_admin, must_change_password: !!req.user.must_change_password, avatar: avatarUrl(req.user.id) });
+  const via = req.authVia || 'session';
+  res.json({
+    ...req.user,
+    is_admin: !!req.user.is_admin,
+    must_change_password: !!req.user.must_change_password,
+    avatar: avatarUrl(req.user.id),
+    // Tells the UI how the session is authenticated so it can hide controls that
+    // don't apply (there's no password to change behind a proxy, no sign-out
+    // when auth is disabled, and so on).
+    auth_method: config.authMethod,
+    auth_via: via,
+    // A native session can change its password the usual way (prove the current
+    // one). A proxy/SSO session has no current password but can *set* one for
+    // direct client login (username + password from a desktop app), since the
+    // identity provider already vouches for the request.
+    can_change_password: via === 'session' && config.authMethod !== 'none',
+    can_set_client_password: !!req.proxyAuth,
+    logout_url: req.proxyAuth ? config.authProxyLogoutUrl : null,
+  });
 });
 
 authRouter.post('/password', requireAuth, (req, res) => {
+  // When auth is fully disabled there's no account to secure.
+  if (config.authMethod === 'none') {
+    return res.status(400).json({ error: 'Password is managed by your identity provider' });
+  }
   const { current, next } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!bcrypt.compareSync(current || '', user.password_hash)) {
-    return res.status(400).json({ error: 'Current password is wrong' });
+  // A proxy/SSO-authenticated request is already trusted by the identity
+  // provider, and the account has no usable native password to prove — so it may
+  // set (or replace) a client-login password without presenting the current one.
+  // A native session must still prove its current password.
+  if (!req.proxyAuth) {
+    if (!bcrypt.compareSync(current || '', user.password_hash)) {
+      return res.status(400).json({ error: 'Current password is wrong' });
+    }
   }
   const bad = validatePassword(next);
   if (bad) return res.status(400).json({ error: bad });
-  if (next === (current || '')) return res.status(400).json({ error: 'New password must differ from the current one' });
-  // Changing the password also clears the forced-rotation flag and signs out
-  // every other session for this user.
+  if (!req.proxyAuth && next === (current || '')) {
+    return res.status(400).json({ error: 'New password must differ from the current one' });
+  }
+  // Setting/changing the password also clears the forced-rotation flag and signs
+  // out every other native session for this user.
   db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
     .run(bcrypt.hashSync(next, 10), req.user.id);
-  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, req.sessionToken);
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, req.sessionToken || '');
   res.json({ ok: true });
 });
 
