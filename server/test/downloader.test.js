@@ -301,6 +301,34 @@ test('cleanupStaleTracks keeps tracks pinned for offline playback', async () => 
   assert.ok(!fs.existsSync(pinned));
 });
 
+test('cleanupStaleTracks keeps tracks belonging to a pinned album', async () => {
+  setSetting('cleanup_enabled', '1');
+  setSetting('cleanup_after_days', '30');
+
+  const inAlbum = path.join(musicDir(), 'album-track.wav'); writeWav(inAlbum, 1);
+  addTrack({ deezer_id: 64, album_id: 900, file_path: inAlbum });
+  const loose = path.join(musicDir(), 'loose.wav'); writeWav(loose, 1);
+  addTrack({ deezer_id: 65, album_id: 901, file_path: loose });
+  db.prepare(`UPDATE tracks SET added_at = datetime('now','-90 days') WHERE deezer_id IN (64, 65)`).run();
+  db.prepare(`INSERT INTO offline_collections (user_id, kind, collection_id) VALUES (?, 'album', 900)`).run(uid);
+
+  assert.equal(await cleanupStaleTracks(), 1);
+  assert.ok(fs.existsSync(inAlbum));   // spared by the album pin
+  assert.ok(!fs.existsSync(loose));
+
+  // A pinned *playlist* needs no separate clause — playlist_items already
+  // spares its tracks — so confirm that path still holds too.
+  const inList = path.join(musicDir(), 'list-track.wav'); writeWav(inList, 1);
+  addTrack({ deezer_id: 66, album_id: 902, file_path: inList });
+  db.prepare(`UPDATE tracks SET added_at = datetime('now','-90 days') WHERE deezer_id = 66`).run();
+  const pl = db.prepare('INSERT INTO playlists (user_id, name) VALUES (?, ?)').run(uid, 'L').lastInsertRowid;
+  db.prepare('INSERT INTO playlist_items (playlist_id, position, track_id) VALUES (?, 0, 66)').run(pl);
+  db.prepare(`INSERT INTO offline_collections (user_id, kind, collection_id) VALUES (?, 'playlist', ?)`).run(uid, pl);
+
+  assert.equal(await cleanupStaleTracks(), 0);
+  assert.ok(fs.existsSync(inList));
+});
+
 /* ----------------------------------------------------------------- sweepUnimported */
 test('sweepUnimported retries unimported downloads and re-searches after an outage', async () => {
   fm.on('deezer.test/track/70', () => ({ id: 70, title: 'S', artist: { name: 'A', id: 1 }, album: { id: 1 }, duration: 2 }));

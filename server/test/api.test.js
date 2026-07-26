@@ -360,6 +360,60 @@ test("offline pins are per user: one user's pins are invisible to another", asyn
   assert.ok(db.prepare('SELECT 1 FROM offline_keeps WHERE track_id = ?').get(t));
 });
 
+test('offline collections: pinning a playlist or album expands into the track set', async () => {
+  asUser();
+  // An album of two tracks, one of which is also in a playlist.
+  const albumId = uid();
+  const t1 = uid(), t2 = uid();
+  addTrack({ deezer_id: t1, album_id: albumId, file_path: '/music/1.flac' });
+  addTrack({ deezer_id: t2, album_id: albumId, file_path: '/music/2.flac' });
+  const other = uid();
+  addTrack({ deezer_id: other, album_id: uid(), file_path: '/music/3.flac' });
+
+  const pl = (await req(srv.url, 'POST', '/api/playlists', { body: { name: 'Runs' } })).body;
+  await req(srv.url, 'POST', `/api/playlists/${pl.id}/tracks`, { body: { track_id: other } });
+
+  // Pinning the album pulls in both of its tracks and nothing else.
+  await req(srv.url, 'PUT', `/api/offline/collections/album/${albumId}`);
+  let ids = (await req(srv.url, 'GET', '/api/offline')).body.map(t => t.deezer_id).sort();
+  assert.deepEqual(ids, [t1, t2].sort());
+
+  // Pinning the playlist adds its track to the same effective set.
+  await req(srv.url, 'PUT', `/api/offline/collections/playlist/${pl.id}`);
+  ids = (await req(srv.url, 'GET', '/api/offline')).body.map(t => t.deezer_id).sort();
+  assert.deepEqual(ids, [t1, t2, other].sort());
+
+  // A song added to a pinned playlist later is picked up with no client logic —
+  // this is why collections are stored rather than a snapshot of their tracks.
+  const added = uid();
+  addTrack({ deezer_id: added, file_path: '/music/4.flac' });
+  await req(srv.url, 'POST', `/api/playlists/${pl.id}/tracks`, { body: { track_id: added } });
+  ids = (await req(srv.url, 'GET', '/api/offline')).body.map(t => t.deezer_id).sort();
+  assert.deepEqual(ids, [t1, t2, other, added].sort());
+
+  // A track appearing via two sources is listed once.
+  await req(srv.url, 'PUT', `/api/offline/${t1}`);
+  const all = (await req(srv.url, 'GET', '/api/offline')).body;
+  assert.equal(all.filter(t => t.deezer_id === t1).length, 1);
+
+  assert.equal((await req(srv.url, 'GET', '/api/offline/collections')).body.length, 2);
+  await req(srv.url, 'DELETE', `/api/offline/collections/album/${albumId}`);
+  ids = (await req(srv.url, 'GET', '/api/offline')).body.map(t => t.deezer_id).sort();
+  // t1 survives on its own explicit pin; t2 leaves with the album.
+  assert.deepEqual(ids, [t1, other, added].sort());
+});
+
+test('offline collections validate kind and id', async () => {
+  asUser();
+  assert.equal((await req(srv.url, 'PUT', '/api/offline/collections/artist/1')).status, 400);
+  assert.equal((await req(srv.url, 'PUT', '/api/offline/collections/album/abc')).status, 400);
+  assert.equal((await req(srv.url, 'PUT', '/api/offline/collections/playlist/99999')).status, 404);
+  assert.equal((await req(srv.url, 'DELETE', '/api/offline/collections/artist/1')).status, 400);
+  assert.equal((await req(srv.url, 'DELETE', '/api/offline/collections/album/abc')).status, 400);
+  // Unpinning something that was never pinned is a no-op, not an error.
+  assert.equal((await req(srv.url, 'DELETE', '/api/offline/collections/album/12345')).body.ok, true);
+});
+
 /* ----------------------------------------------------------- Playlists */
 test('playlists: create, get, share, edit, import, delete', async () => {
   asUser();

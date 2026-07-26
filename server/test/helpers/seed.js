@@ -37,7 +37,7 @@ export function addTrack(t = {}) {
 
 // Reset all mutable tables so tests don't leak into one another.
 export function wipe() {
-  for (const t of ['plays', 'favorites', 'offline_keeps', 'playlist_items', 'playlist_shares', 'playlists',
+  for (const t of ['plays', 'favorites', 'offline_keeps', 'offline_collections', 'playlist_items', 'playlist_shares', 'playlists',
     'follows', 'followed_artists', 'now_playing', 'downloads', 'tracks', 'seen_artist_albums',
     'listen_members', 'listen_sessions', 'user_prefs', 'api_tokens', 'artists', 'mood_images',
     'peer_strikes', 'sessions', 'users']) {
