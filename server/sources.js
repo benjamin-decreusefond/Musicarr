@@ -22,10 +22,16 @@ const ALLOWED = [
 
 const deezerCache = createCache({ ttlMs: 5 * 60 * 1000, max: 1000 });
 
+// Deezer is a third party we can't hurry along. Without a deadline a hung
+// connection also pins the cache's in-flight entry for that key, so every later
+// caller queues up behind it — on a fan-out view like /home or /explore that
+// stalls the whole page rather than one tile.
+const DEEZER_TIMEOUT_MS = parseInt(process.env.DEEZER_TIMEOUT_MS || '15000', 10);
+
 export async function deezerGet(pathAndQuery) {
   const url = `${DEEZER}/${pathAndQuery}`;
   return deezerCache.wrap(url, async () => {
-    const r = await fetch(url);
+    const r = await fetch(url, { signal: AbortSignal.timeout(DEEZER_TIMEOUT_MS) });
     if (!r.ok) throw new Error(`Deezer ${r.status}`);
     const body = await r.json();
     // Deezer reports errors as 200s with an error payload; surface (and don't

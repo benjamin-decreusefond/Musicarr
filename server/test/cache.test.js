@@ -30,6 +30,24 @@ test('LRU eviction at the size cap and refresh on access', () => {
   assert.equal(c.get('c'), 3);
 });
 
+test('expired entries are reclaimed at the cap before a live one is evicted', () => {
+  let now = 1000;
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const c = createCache({ ttlMs: 100, max: 3 });
+    c.set('old1', 1);
+    c.set('old2', 2);
+    now += 200;              // old1/old2 are now stale, but nothing reads them
+    c.set('fresh', 3);
+    assert.equal(c.size, 3); // still at the cap, holding two dead entries
+    c.set('new', 4);         // reclaims the stale pair instead of dropping 'fresh'
+    assert.equal(c.get('fresh'), 3);
+    assert.equal(c.get('new'), 4);
+    assert.equal(c.size, 2);
+  } finally { Date.now = realNow; }
+});
+
 test('wrap caches, returns cached value, and de-dupes concurrent misses', async () => {
   const c = createCache({ ttlMs: 10_000 });
   let calls = 0;

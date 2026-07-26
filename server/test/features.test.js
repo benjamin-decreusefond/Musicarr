@@ -215,6 +215,36 @@ test('SSE hub targets events per user, admin and member set', () => {
   publish('download', { id: 8 }); // no clients left: must not throw
 });
 
+test('SSE hub caps concurrent streams per user and evicts the oldest', () => {
+  // A client that reconnects without closing (flapping proxy, buggy tab) leaks a
+  // response object per attempt; the cap bounds that, per user.
+  const mkClient = (u) => {
+    const res = { ended: false, chunks: [], writeHead() {}, write(s) { this.chunks.push(s); }, end() { this.ended = true; } };
+    const req2 = { user: u, on(ev, cb) { if (ev === 'close') this.closeCb = cb; } };
+    sseHandler(req2, res);
+    return { res, req: req2 };
+  };
+  const CAP = 8;
+  const mine = [];
+  for (let i = 0; i < CAP; i++) mine.push(mkClient({ id: 42, is_admin: 0 }));
+  // Another user's stream must never be collateral damage.
+  const other = mkClient({ id: 43, is_admin: 0 });
+  assert.ok(mine.every(c => !c.res.ended));
+
+  const extra = mkClient({ id: 42, is_admin: 0 });   // one over the cap
+  assert.equal(mine[0].res.ended, true);             // oldest closed...
+  assert.ok(mine.slice(1).every(c => !c.res.ended)); // ...and only that one
+  assert.equal(other.res.ended, false);
+
+  // The evicted stream no longer receives events; the newest one does.
+  publish('download', { id: 1 }, { userId: 42 });
+  const evictedBefore = mine[0].res.chunks.length;
+  assert.ok(extra.res.chunks.some(c => c.includes('event: download')));
+  assert.equal(mine[0].res.chunks.length, evictedBefore);
+
+  for (const c of [...mine.slice(1), extra, other]) c.req.closeCb();
+});
+
 test('GET /api/events streams events to the signed-in user', async () => {
   const ac = new AbortController();
   const { realFetch } = await import('./helpers/env.js');

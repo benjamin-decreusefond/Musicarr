@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { config, pingDb } from './db.js';
-import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth } from './auth.js';
+import { authMiddleware, authRouter, usersRouter, bootstrapAdmin, requireAuth, requirePasswordRotated } from './auth.js';
 import { rateLimit } from './ratelimit.js';
 import { deezerRouter } from './sources.js';
 import { socialRouter } from './social.js';
@@ -78,6 +78,11 @@ app.get('/health/ready', (_req, res) => {
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);
 app.use('/api/auth', authRouter);
+// Everything past /api/auth is off-limits until a user who was seeded with a
+// generated (or default) password has actually chosen their own. /api/auth
+// stays open so the rotation itself — and the /me call the UI needs to discover
+// it — can go through; token management enforces the same rule internally.
+app.use('/api', requirePasswordRotated);
 app.use('/api/users', usersRouter);
 // The Deezer proxy is metadata-only but must still require a signed-in user
 // (it was previously reachable unauthenticated) and, like /search, be rate

@@ -20,6 +20,20 @@ const MAX_TOKENS_PER_USER = 50;
 // sessions. Same reasoning as API tokens above.
 const hashSession = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
+/** Shared username policy for new accounts. Returns an error string or null.
+ *  Callers must pass an already-trimmed value: a name that is only whitespace
+ *  used to slip through the truthiness check and create an unusable account. */
+export function validateUsername(name) {
+  if (!name || typeof name !== 'string') return 'Username is required';
+  if (name.length > 40) return 'Username must be 40 characters or fewer';
+  // Keep names to what can be typed, displayed and compared unambiguously —
+  // no control characters, no leading/trailing space, no lookalike whitespace.
+  if (!/^[A-Za-z0-9._@+-]+$/.test(name)) {
+    return 'Username may only contain letters, digits and . _ @ + -';
+  }
+  return null;
+}
+
 /** Shared password policy for new/changed passwords. Returns an error string or null. */
 export function validatePassword(pw) {
   if (!pw || typeof pw !== 'string') return 'Password is required';
@@ -245,6 +259,22 @@ export function requireAdmin(req, res, next) {
   next();
 }
 
+/** Block every API route while the signed-in user still owes a password change.
+ *  The web UI already refuses to render anything but the rotation form, but that
+ *  is only a client-side guard: a desktop/mobile client, a script or a curl
+ *  against the API would otherwise keep using the seeded (possibly generated or
+ *  well-known "admin") password forever. Mounted after /api/auth so the handful
+ *  of endpoints needed to actually perform the rotation stay reachable. */
+export function requirePasswordRotated(req, res, next) {
+  if (req.user?.must_change_password) {
+    return res.status(403).json({
+      error: 'Set a new password before using Musicarr',
+      must_change_password: true,
+    });
+  }
+  next();
+}
+
 export const authRouter = Router();
 
 const sessionCookie = (token, maxAgeSec) =>
@@ -341,7 +371,10 @@ authRouter.post('/password', requireAuth, (req, res) => {
 function requireSession(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Not signed in' });
   if (req.apiToken) return res.status(403).json({ error: 'API tokens cannot manage other tokens — sign in to do that' });
-  next();
+  // Token management lives under /api/auth, which the rotation guard
+  // deliberately skips — so enforce it here too. Otherwise an account that still
+  // owes a password change could mint itself credentials on the way out.
+  return requirePasswordRotated(req, res, next);
 }
 
 authRouter.get('/tokens', requireSession, (req, res) => {
@@ -385,8 +418,11 @@ usersRouter.get('/', (req, res) => {
 });
 
 usersRouter.post('/', (req, res) => {
-  const { username, password, is_admin } = req.body || {};
+  const { password, is_admin } = req.body || {};
+  const username = (req.body?.username ?? '').toString().trim();
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const badName = validateUsername(username);
+  if (badName) return res.status(400).json({ error: badName });
   const bad = validatePassword(password);
   if (bad) return res.status(400).json({ error: bad });
   try {
