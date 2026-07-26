@@ -380,6 +380,22 @@ CREATE TABLE IF NOT EXISTS offline_keeps (
 CREATE INDEX IF NOT EXISTS idx_offline_keeps_track ON offline_keeps(track_id);
 `);
 
+// Whole albums/playlists pinned for offline playback. Kept as the collection
+// rather than a snapshot of its tracks on purpose: pinning "my running
+// playlist" should mean the device follows the playlist, so a song added to it
+// next week is downloaded too. /api/offline expands these into the effective
+// track set, so the client never has to know about the expansion.
+db.exec(`
+CREATE TABLE IF NOT EXISTS offline_collections (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,              -- 'album' | 'playlist'
+  collection_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, kind, collection_id)
+);
+CREATE INDEX IF NOT EXISTS idx_offline_collections_kind ON offline_collections(kind, collection_id);
+`);
+
 // Cached artist metadata (id, name, picture). The library's artist view used to
 // fetch one Deezer request per artist on every load; this lets it read pictures
 // from SQLite instead. Populated opportunistically whenever we fetch a full

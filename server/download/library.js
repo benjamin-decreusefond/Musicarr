@@ -21,6 +21,12 @@ export function cleanupStaleTracks() {
       AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.track_id = t.deezer_id)
       AND NOT EXISTS (SELECT 1 FROM playlist_items pi WHERE pi.track_id = t.deezer_id)
       AND NOT EXISTS (SELECT 1 FROM offline_keeps ok WHERE ok.track_id = t.deezer_id)
+      -- A pinned album protects its tracks too. (Pinned playlists need no clause
+      -- here: their tracks are already spared by the playlist_items check above.)
+      AND NOT EXISTS (
+        SELECT 1 FROM offline_collections oc
+        WHERE oc.kind = 'album' AND oc.collection_id = t.album_id
+      )
       AND COALESCE((SELECT MAX(p.played_at) FROM plays p WHERE p.track_id = t.deezer_id), t.added_at)
             < datetime('now', ?)
   `).all(`-${days} days`);
