@@ -278,6 +278,29 @@ test('cleanupStaleTracks removes unplayed, unloved tracks when enabled', async (
   assert.ok(fs.existsSync(f2));
 });
 
+test('cleanupStaleTracks keeps tracks pinned for offline playback', async () => {
+  // Without this, the server could delete an album while the phone holding it
+  // offline is away for a fortnight, and the two would silently disagree.
+  setSetting('cleanup_enabled', '1');
+  setSetting('cleanup_after_days', '30');
+
+  const stale = path.join(musicDir(), 'stale.wav'); writeWav(stale, 1);
+  addTrack({ deezer_id: 62, file_path: stale });
+  const pinned = path.join(musicDir(), 'pinned.wav'); writeWav(pinned, 1);
+  addTrack({ deezer_id: 63, file_path: pinned });
+  db.prepare(`UPDATE tracks SET added_at = datetime('now','-90 days') WHERE deezer_id IN (62, 63)`).run();
+  db.prepare('INSERT INTO offline_keeps (user_id, track_id) VALUES (?, ?)').run(uid, 63);
+
+  assert.equal(await cleanupStaleTracks(), 1);
+  assert.ok(!fs.existsSync(stale));
+  assert.ok(fs.existsSync(pinned));
+
+  // Unpinning hands it back to the normal ageing rules.
+  db.prepare('DELETE FROM offline_keeps WHERE track_id = ?').run(63);
+  assert.equal(await cleanupStaleTracks(), 1);
+  assert.ok(!fs.existsSync(pinned));
+});
+
 /* ----------------------------------------------------------------- sweepUnimported */
 test('sweepUnimported retries unimported downloads and re-searches after an outage', async () => {
   fm.on('deezer.test/track/70', () => ({ id: 70, title: 'S', artist: { name: 'A', id: 1 }, album: { id: 1 }, duration: 2 }));

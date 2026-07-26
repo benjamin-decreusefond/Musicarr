@@ -9,8 +9,9 @@ import { AUDIO_EXT, walkAudio, safeName, slskdFilesOf, pruneEmptyDirs } from './
 const log = logger('download');
 
 /** Remove downloaded tracks that haven't been played within the configured
- *  window. Favorited tracks and tracks in any playlist are always kept. Tracks
- *  never played are aged from when they were added. Returns the count removed. */
+ *  window. Favorited tracks, tracks in any playlist, and tracks a user pinned
+ *  for offline playback are always kept. Tracks never played are aged from when
+ *  they were added. Returns the count removed. */
 export function cleanupStaleTracks() {
   if (!config.autoCleanupEnabled || config.cleanupAfterDays <= 0) return Promise.resolve(0);
   const days = config.cleanupAfterDays;
@@ -19,6 +20,7 @@ export function cleanupStaleTracks() {
     WHERE t.file_path IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.track_id = t.deezer_id)
       AND NOT EXISTS (SELECT 1 FROM playlist_items pi WHERE pi.track_id = t.deezer_id)
+      AND NOT EXISTS (SELECT 1 FROM offline_keeps ok WHERE ok.track_id = t.deezer_id)
       AND COALESCE((SELECT MAX(p.played_at) FROM plays p WHERE p.track_id = t.deezer_id), t.added_at)
             < datetime('now', ?)
   `).all(`-${days} days`);

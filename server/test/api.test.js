@@ -313,6 +313,53 @@ test('favorites: ensureTrack upserts from body, toggle, and unknown rejection', 
   assert.equal((await req(srv.url, 'GET', '/api/favorites')).body.length, 1);
 });
 
+/* ------------------------------------------------------ Offline pins */
+test('offline pins: list, add (upserting from body), remove, and per-user scoping', async () => {
+  asUser();
+  const known = uid();
+  addTrack({ deezer_id: known, file_path: '/music/a.flac' });
+  await req(srv.url, 'PUT', `/api/offline/${known}`);
+  const list = await req(srv.url, 'GET', '/api/offline');
+  assert.equal(list.body.length, 1);
+  assert.equal(list.body[0].deezer_id, known);
+  // `available` tells a client "pinned and downloadable" from "pinned but the
+  // server no longer holds the audio", without a second round trip.
+  assert.equal(list.body[0].available, 1);
+
+  // Pinning is idempotent.
+  await req(srv.url, 'PUT', `/api/offline/${known}`);
+  assert.equal((await req(srv.url, 'GET', '/api/offline')).body.length, 1);
+
+  // A track the catalog doesn't know yet is upserted from the body, like favorites.
+  const fresh = uid();
+  await req(srv.url, 'PUT', `/api/offline/${fresh}`, { body: { title: 'New', artist: 'Ar' } });
+  assert.ok(db.prepare('SELECT 1 FROM tracks WHERE deezer_id = ?').get(fresh));
+  // ...and reports itself as not downloadable, since it has no file on disk.
+  const both = (await req(srv.url, 'GET', '/api/offline')).body;
+  assert.equal(both.find(t => t.deezer_id === fresh).available, 0);
+
+  assert.equal((await req(srv.url, 'PUT', '/api/offline/abc')).status, 400);        // NaN
+  assert.equal((await req(srv.url, 'PUT', `/api/offline/${uid()}`)).status, 400);   // unknown, no body
+  assert.equal((await req(srv.url, 'DELETE', '/api/offline/abc')).status, 400);
+
+  await req(srv.url, 'DELETE', `/api/offline/${known}`);
+  assert.equal((await req(srv.url, 'GET', '/api/offline')).body.length, 1);
+});
+
+test("offline pins are per user: one user's pins are invisible to another", async () => {
+  asUser();
+  const t = uid();
+  addTrack({ deezer_id: t, file_path: '/music/x.flac' });
+  await req(srv.url, 'PUT', `/api/offline/${t}`);
+  assert.equal((await req(srv.url, 'GET', '/api/offline')).body.length, 1);
+
+  const other = createUser({ username: `other${t}` });
+  setUser({ id: other.id, username: other.username, is_admin: 0 });
+  assert.equal((await req(srv.url, 'GET', '/api/offline')).body.length, 0);
+  // ...but the pin still protects the shared file from cleanup for everyone.
+  assert.ok(db.prepare('SELECT 1 FROM offline_keeps WHERE track_id = ?').get(t));
+});
+
 /* ----------------------------------------------------------- Playlists */
 test('playlists: create, get, share, edit, import, delete', async () => {
   asUser();
