@@ -362,6 +362,24 @@ CREATE TABLE IF NOT EXISTS peer_strikes (
 );
 `);
 
+// Tracks a user has pinned for offline playback on a device (the mobile app's
+// "keep on this device"). Auto-cleanup treats a pin as a reason to keep the
+// file, exactly like a favorite or a playlist entry — otherwise the server
+// could delete an album while the phone that pinned it is away for a fortnight,
+// and the two would silently disagree about what exists.
+//
+// Per user rather than per device, so a second device signing in can see — and
+// re-download — the same set.
+db.exec(`
+CREATE TABLE IF NOT EXISTS offline_keeps (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  track_id INTEGER NOT NULL REFERENCES tracks(deezer_id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, track_id)
+);
+CREATE INDEX IF NOT EXISTS idx_offline_keeps_track ON offline_keeps(track_id);
+`);
+
 // Cached artist metadata (id, name, picture). The library's artist view used to
 // fetch one Deezer request per artist on every load; this lets it read pictures
 // from SQLite instead. Populated opportunistically whenever we fetch a full
