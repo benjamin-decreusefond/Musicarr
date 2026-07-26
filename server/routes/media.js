@@ -172,7 +172,9 @@ function streamTranscoded(req, res, filePath, fmt) {
 }
 
 api.get('/stream/:trackId', (req, res) => {
-  const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(req.params.trackId);
+  const trackId = parseInt(req.params.trackId, 10);
+  if (!Number.isFinite(trackId)) return res.status(400).json({ error: 'Invalid track id' });
+  const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(trackId);
   if (!row?.file_path || !fs.existsSync(row.file_path)) return res.status(404).json({ error: 'Not in library' });
 
   // Opt-in transcoding for low-bandwidth clients (admin-enabled, needs ffmpeg).

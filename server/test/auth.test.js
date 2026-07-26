@@ -2,7 +2,7 @@ import './helpers/env.js';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeRealAuthApp, listen, req } from './helpers/app.js';
-import { validatePassword } from '../auth.js';
+import { validatePassword, validateUsername } from '../auth.js';
 import { createUser, wipe, db } from './helpers/seed.js';
 
 let srv, ipSeq = 0;
@@ -158,4 +158,83 @@ test('user management is admin-gated and validates input', async () => {
 
 test('requireAuth blocks unauthenticated access to protected routes', async () => {
   assert.equal((await req(srv.url, 'GET', '/api/users')).status, 401);
+});
+
+test('validateUsername enforces presence, length and character set', () => {
+  assert.match(validateUsername(''), /required/);
+  assert.match(validateUsername(42), /required/);
+  assert.match(validateUsername('x'.repeat(41)), /40 characters/);
+  assert.match(validateUsername('has space'), /may only contain/);
+  assert.match(validateUsername('sneaky\nname'), /may only contain/);
+  assert.equal(validateUsername('ben.dev_1@host+tag-x'), null);
+});
+
+test('creating a user rejects whitespace-only and malformed usernames', async () => {
+  createUser({ username: 'admin', password: 'password1', is_admin: 1 });
+  const adminC = (await loginAs('admin', 'password1')).cookie;
+  const post = (username) => req(srv.url, 'POST', '/api/users', {
+    headers: { cookie: adminC }, body: { username, password: 'password1' },
+  });
+  // "   " used to pass the truthiness check and create an unusable account.
+  assert.equal((await post('   ')).status, 400);
+  assert.equal((await post('white space')).status, 400);
+  assert.equal((await post('x'.repeat(41))).status, 400);
+  // A surrounding-whitespace name is accepted but stored trimmed.
+  const ok = await post('  trimmed  ');
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.username, 'trimmed');
+  assert.ok(db.prepare('SELECT 1 FROM users WHERE username = ?').get('trimmed'));
+});
+
+/* --------------------------------------- Forced password rotation (server-side) */
+// The web UI refuses to render anything but the rotation form, but that guard is
+// client-side only — these cover the API surface a desktop/mobile client or a
+// script would hit.
+const mustChange = (username) =>
+  db.prepare('UPDATE users SET must_change_password = 1 WHERE username = ?').run(username);
+
+test('a user owing a password change is blocked from the API but can still rotate', async () => {
+  createUser({ username: 'seed', password: 'password1' });
+  mustChange('seed');
+  const { res: login, cookie } = await loginAs('seed', 'password1');
+  // Login itself still succeeds — the client needs the session to rotate.
+  assert.equal(login.status, 200);
+  assert.equal(login.body.must_change_password, true);
+
+  // /api/auth stays reachable so the UI can discover the state...
+  const me = await req(srv.url, 'GET', '/api/auth/me', { headers: { cookie } });
+  assert.equal(me.status, 200);
+  assert.equal(me.body.must_change_password, true);
+
+  // ...but the rest of the API is closed.
+  const blocked = await req(srv.url, 'GET', '/api/probe', { headers: { cookie } });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.must_change_password, true);
+  assert.equal((await req(srv.url, 'GET', '/api/users', { headers: { cookie } })).status, 403);
+
+  // Rotating clears the flag and reopens the API.
+  const changed = await req(srv.url, 'POST', '/api/auth/password', {
+    headers: { cookie }, body: { current: 'password1', next: 'brandnewpw' },
+  });
+  assert.equal(changed.status, 200);
+  assert.equal((await req(srv.url, 'GET', '/api/probe', { headers: { cookie } })).status, 200);
+});
+
+test('a pending rotation cannot be side-stepped by minting an API token', async () => {
+  createUser({ username: 'seed2', password: 'password1' });
+  mustChange('seed2');
+  const { cookie } = await loginAs('seed2', 'password1');
+  const created = await req(srv.url, 'POST', '/api/auth/tokens', { headers: { cookie }, body: { name: 'escape' } });
+  assert.equal(created.status, 403);
+  assert.equal((await req(srv.url, 'GET', '/api/auth/tokens', { headers: { cookie } })).status, 403);
+});
+
+test('an existing API token is also blocked while its owner owes a rotation', async () => {
+  const u = createUser({ username: 'seed3', password: 'password1' });
+  const { cookie } = await loginAs('seed3', 'password1');
+  const raw = (await req(srv.url, 'POST', '/api/auth/tokens', { headers: { cookie }, body: { name: 'CLI' } })).body.token;
+  assert.equal((await req(srv.url, 'GET', '/api/probe', { headers: { authorization: `Bearer ${raw}` } })).status, 200);
+
+  db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run(u.id);
+  assert.equal((await req(srv.url, 'GET', '/api/probe', { headers: { authorization: `Bearer ${raw}` } })).status, 403);
 });

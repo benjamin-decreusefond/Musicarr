@@ -13,8 +13,18 @@ export function createCache({ ttlMs, max = 500 }) {
   }
 
   function set(key, val) {
-    if (map.size >= max) map.delete(map.keys().next().value); // evict oldest
-    map.set(key, { at: Date.now(), val });
+    const now = Date.now();
+    if (map.size >= max) {
+      // Reclaim entries whose TTL has already elapsed before falling back to
+      // evicting a live one — `get` only expires keys that are actually read,
+      // so a cache filled with stale-but-untouched entries would otherwise keep
+      // dropping fresh ones to stay under `max`.
+      for (const [k, v] of map) {
+        if (now - v.at >= ttlMs) map.delete(k);
+      }
+      if (map.size >= max) map.delete(map.keys().next().value); // evict oldest
+    }
+    map.set(key, { at: now, val });
   }
 
   // De-dupes concurrent misses for the same key so a burst of identical

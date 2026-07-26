@@ -8,7 +8,7 @@ import { api } from '../../api.js';
 import { deezerRouter } from '../../sources.js';
 import { socialRouter } from '../../social.js';
 import { listenRouter } from '../../listen.js';
-import { requireAuth, authMiddleware, authRouter, usersRouter } from '../../auth.js';
+import { requireAuth, authMiddleware, authRouter, usersRouter, requirePasswordRotated } from '../../auth.js';
 
 // The user injected into requests by the authenticated app. Set via setUser().
 let currentUser = null;
@@ -40,7 +40,13 @@ export function makeRealAuthApp() {
   app.use(express.json());
   app.use(authMiddleware);
   app.use('/api/auth', authRouter);
+  // Same order as index.js: the rotation guard sits between /api/auth and the
+  // rest of the API surface.
+  app.use('/api', requirePasswordRotated);
   app.use('/api/users', usersRouter);
+  // Stands in for the signed-in API surface (library, playlists, ...) so tests
+  // can assert what the guard does to it without wiring every real router.
+  app.get('/api/probe', requireAuth, (req, res) => res.json({ ok: true, user: req.user.username }));
   return app;
 }
 
