@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { config } from './db.js';
+import { config, DOWNLOAD_FORMATS } from './db.js';
 import { logger } from './log.js';
 import { createCache } from './cache.js';
 
@@ -86,6 +86,17 @@ const norm = s => (s || '')
 // share individual files, so we can grab exactly one song — or a whole album
 // folder from a single peer.
 const AUDIO_EXT_RE = /\.(flac|mp3|m4a|ogg|opus|wav|aac|wma)$/i;
+
+/** Extension gate for the "preferred format" setting: with 'mp3' or 'flac'
+ *  configured, candidates in any other format are dropped before ranking, so a
+ *  download only ever pulls files the user wants in their library. 'any' (the
+ *  default) keeps everything. */
+export function formatMatcher(format) {
+  const fmt = DOWNLOAD_FORMATS.includes(format) ? format : 'any';
+  if (fmt === 'any') return () => true;
+  const rx = new RegExp(`\\.${fmt}$`, 'i');
+  return f => rx.test(f?.filename || '');
+}
 
 async function slskdFetch(pathAndQuery, opts = {}) {
   if (!config.slskdUrl || !config.slskdApiKey) throw new Error('slskd URL / API key not configured');
@@ -246,11 +257,13 @@ export async function slskdCancel(username, id) {
 
 /** Rank candidate files for one wanted track. Returns them best-first, after
  *  dropping ones whose filename clearly doesn't match the title/artist. */
-export function scoreSlskdFiles(files, artist, title, durationSec) {
+export function scoreSlskdFiles(files, artist, title, durationSec, format = config.downloadFormat) {
   const must = norm(artist).split(' ').filter(t => t.length > 1);
   const want = norm(title).split(' ').filter(t => t.length > 1);
+  const wantedFormat = formatMatcher(format);
   const scored = [];
   for (const f of files) {
+    if (!wantedFormat(f)) continue;
     const base = (f.filename || '').split(/[\\/]/).pop();
     const baseNorm = norm(base);
     const baseHay = ' ' + baseNorm + ' ';
@@ -314,10 +327,15 @@ export function scoreSlskdFiles(files, artist, title, durationSec) {
  *  candidates: how many of the wanted track titles the folder covers, then
  *  quality/availability. Returns [{ username, directory, files, matched }]
  *  best-first; folders covering less than half the album are dropped. */
-export function scoreSlskdFolders(files, wantedTitles) {
+export function scoreSlskdFolders(files, wantedTitles, format = config.downloadFormat) {
   const wanted = wantedTitles.map(t => norm(t)).filter(Boolean);
+  const wantedFormat = formatMatcher(format);
   const folders = new Map(); // username|dir -> { username, directory, files }
   for (const f of files) {
+    // Out-of-format files never join a folder, so coverage is judged on what we
+    // would actually download — a folder that only has the album in the wrong
+    // format falls below the coverage bar and is skipped.
+    if (!wantedFormat(f)) continue;
     const dir = (f.filename || '').replace(/[\\/][^\\/]+$/, '');
     const key = `${f.username}|${dir}`;
     if (!folders.has(key)) folders.set(key, { username: f.username, directory: dir, files: [] });

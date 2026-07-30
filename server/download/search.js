@@ -15,6 +15,13 @@ import { pendingImports, progressTrack } from './import.js';
 
 const log = logger('download');
 
+/** Suffix for a "nothing found" message when the preferred-format setting
+ *  restricted the candidates — otherwise an empty result is puzzling. */
+function formatNote() {
+  const f = config.downloadFormat;
+  return f === 'any' ? '' : ` (only ${f.toUpperCase()} files are accepted — see Settings)`;
+}
+
 /** True when a single track is already present on disk (avoids re-downloading
  *  the same content). Albums are checked track-by-track in albumViaSlskd. */
 function trackOnDisk(deezerId) {
@@ -219,8 +226,8 @@ async function trackViaSlskd(dl) {
     return setStatus(dl.id, 'error', 'slskd was unreachable or offline during search — will retry automatically');
   }
   setStatus(dl.id, 'not_found', dl.attempts > 0
-    ? `No more Soulseek candidates after ${dl.attempts} failed attempt(s)`
-    : 'No matching file found on Soulseek');
+    ? `No more Soulseek candidates after ${dl.attempts} failed attempt(s)${formatNote()}`
+    : `No matching file found on Soulseek${formatNote()}`);
 }
 
 /* ------------------------------------------------------------ Album flow */
@@ -295,6 +302,6 @@ async function albumViaSlskd(dl) {
     return setStatus(dl.id, 'error', 'slskd was unreachable or offline during search — will retry automatically');
   }
   setStatus(dl.id, 'not_found', dl.attempts > 0
-    ? `No more Soulseek album folders after ${dl.attempts} failed attempt(s)`
-    : 'No album folder found on Soulseek');
+    ? `No more Soulseek album folders after ${dl.attempts} failed attempt(s)${formatNote()}`
+    : `No album folder found on Soulseek${formatNote()}`);
 }

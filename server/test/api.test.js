@@ -41,11 +41,13 @@ test('settings: read, admin gate, and validated updates', async () => {
   const root = path.join(config.dataDir, 'lib-root');
   const ok = await req(srv.url, 'PUT', '/api/settings', { body: {
     root_folder: root, slskd_url: 'https://new.slskd', slskd_api_key: 'newkey',
-    slskd_download_dir: path.join(config.dataDir, 'dl2'), cleanup_enabled: true, cleanup_after_days: 14,
+    slskd_download_dir: path.join(config.dataDir, 'dl2'), download_format: 'mp3',
+    cleanup_enabled: true, cleanup_after_days: 14,
     transcode_enabled: true,
   } });
   assert.equal(ok.status, 200);
   assert.equal(ok.body.cleanup_after_days, 14);
+  assert.equal(ok.body.download_format, 'mp3');
   assert.equal(ok.body.transcode_enabled, true);
 
   // Clearing the key, and validation failures.
@@ -55,6 +57,9 @@ test('settings: read, admin gate, and validated updates', async () => {
   assert.match((await req(srv.url, 'PUT', '/api/settings', { body: { slskd_url: 'ftp://x' } })).body.error, /http/);
   assert.match((await req(srv.url, 'PUT', '/api/settings', { body: { slskd_download_dir: 'rel' } })).body.error, /absolute/);
   assert.match((await req(srv.url, 'PUT', '/api/settings', { body: { cleanup_after_days: -1 } })).body.error, /0 or more/);
+  assert.match((await req(srv.url, 'PUT', '/api/settings', { body: { download_format: 'wav' } })).body.error, /Download format/);
+  // An empty value means "no restriction" rather than a validation error.
+  assert.equal((await req(srv.url, 'PUT', '/api/settings', { body: { download_format: '' } })).body.download_format, 'any');
 });
 
 test('settings: root folder / download dir that cannot be created are rejected', async () => {

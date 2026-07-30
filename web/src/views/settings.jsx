@@ -28,7 +28,13 @@ function AuthMethodCard() {
   );
 }
 
-const SETTING_FIELDS = ['root_folder', 'slskd_url', 'slskd_api_key', 'slskd_download_dir'];
+const SETTING_FIELDS = ['root_folder', 'slskd_url', 'slskd_api_key', 'slskd_download_dir', 'download_format'];
+
+const DOWNLOAD_FORMATS = [
+  ['any', 'Any format (best quality wins)'],
+  ['mp3', 'MP3 only'],
+  ['flac', 'FLAC only'],
+];
 
 function Field({ label, hint, type = 'text', value, onChange }) {
   return (
@@ -36,6 +42,18 @@ function Field({ label, hint, type = 'text', value, onChange }) {
       <span className="settings-label">{label}</span>
       <input className="settings-input" type={type} value={value ?? ''} spellCheck={false}
         autoComplete="off" onChange={e => onChange(e.target.value)} />
+      {hint && <span className="settings-fieldhint">{hint}</span>}
+    </label>
+  );
+}
+
+function Select({ label, hint, value, options, onChange }) {
+  return (
+    <label className="settings-field">
+      <span className="settings-label">{label}</span>
+      <select className="settings-input" value={value ?? ''} onChange={e => onChange(e.target.value)}>
+        {options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}
+      </select>
       {hint && <span className="settings-fieldhint">{hint}</span>}
     </label>
   );
@@ -174,6 +192,9 @@ export function Settings() {
           value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
         <Field label="Download directory" hint="Where slskd writes finished files, as Musicarr sees it (shared volume), e.g. /data/slskd/downloads"
           value={s.slskd_download_dir} onChange={v => set('slskd_download_dir', v)} />
+        <Select label="Preferred format" options={DOWNLOAD_FORMATS} value={s.download_format || 'any'}
+          hint="Restrict what Musicarr downloads from Soulseek. “Any” takes the best candidate and prefers lossless; MP3 only keeps the library small and plays everywhere; FLAC only keeps it lossless. A restriction can leave rarer tracks unavailable."
+          onChange={v => set('download_format', v)} />
         <div className="settings-actions">
           <button className="btn-ghost" onClick={() => test('slskd')} disabled={testing === 'slskd'}>
             {testing === 'slskd' ? 'Testing…' : 'Test connection'}

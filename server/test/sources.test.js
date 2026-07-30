@@ -58,6 +58,32 @@ test('scoreSlskdFiles handles empty wanted title/artist gracefully', () => {
   assert.ok(Array.isArray(scoreSlskdFiles(files, '', '', null)));
 });
 
+test('scoreSlskdFiles honours the preferred format setting', () => {
+  const files = [
+    { filename: 'Artist/Album/01 - My Song.flac', length: 180, hasFreeUploadSlot: true, queueLength: 0 },
+    { filename: 'Artist/Album/01 - My Song.mp3', length: 180, bitRate: 320, hasFreeUploadSlot: true, queueLength: 0 },
+  ];
+  const mp3 = scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'mp3');
+  assert.deepEqual(mp3.map(f => f.filename), ['Artist/Album/01 - My Song.mp3']);
+  const flac = scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'flac');
+  assert.deepEqual(flac.map(f => f.filename), ['Artist/Album/01 - My Song.flac']);
+  assert.equal(scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'any').length, 2);
+  // An unknown value must never silently filter everything out.
+  assert.equal(scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'wav?').length, 2);
+});
+
+test('scoreSlskdFiles reads the preferred format from settings when not given', () => {
+  const files = [
+    { filename: 'Artist/Album/01 - My Song.flac', length: 180, hasFreeUploadSlot: true, queueLength: 0 },
+    { filename: 'Artist/Album/01 - My Song.mp3', length: 180, bitRate: 320, hasFreeUploadSlot: true, queueLength: 0 },
+  ];
+  setSetting('download_format', 'mp3');
+  try {
+    assert.deepEqual(scoreSlskdFiles(files, 'Artist', 'My Song', 180).map(f => f.filename),
+      ['Artist/Album/01 - My Song.mp3']);
+  } finally { setSetting('download_format', 'any'); }
+});
+
 /* --------------------------------------------------------- scoreSlskdFolders */
 test('scoreSlskdFolders keeps folders covering enough of the tracklist', () => {
   const files = [
@@ -73,6 +99,21 @@ test('scoreSlskdFolders keeps folders covering enough of the tracklist', () => {
 test('scoreSlskdFolders drops folders that are too incomplete', () => {
   const files = [{ username: 'u', filename: 'u/Album/01 One.mp3' }];
   assert.equal(scoreSlskdFolders(files, ['One', 'Two', 'Three', 'Four']).length, 0);
+});
+
+test('scoreSlskdFolders only counts and keeps files in the preferred format', () => {
+  const files = [
+    { username: 'u1', filename: 'u1/Album/01 One.flac', hasFreeUploadSlot: true, queueLength: 0 },
+    { username: 'u1', filename: 'u1/Album/02 Two.flac', hasFreeUploadSlot: true, queueLength: 0 },
+    { username: 'u2', filename: 'u2/Album/01 One.mp3', hasFreeUploadSlot: true, queueLength: 0 },
+    { username: 'u2', filename: 'u2/Album/02 Two.mp3', hasFreeUploadSlot: true, queueLength: 0 },
+  ];
+  const folders = scoreSlskdFolders(files, ['One', 'Two'], 'mp3');
+  assert.equal(folders.length, 1);
+  assert.equal(folders[0].username, 'u2');
+  assert.ok(folders[0].files.every(f => f.filename.endsWith('.mp3')));
+  // A lossless-only folder no longer covers enough of the album, so it's dropped.
+  assert.equal(scoreSlskdFolders(files.slice(0, 2), ['One', 'Two'], 'mp3').length, 0);
 });
 
 /* ------------------------------------------------------ isTransientSlskdError */
