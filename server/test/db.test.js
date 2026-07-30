@@ -30,6 +30,12 @@ test('config getters reflect stored settings and defaults', () => {
   setSetting('slskd_download_dir', '');
   assert.equal(config.slskdDownloadDir, process.env.SLSKD_DOWNLOAD_DIR);
 
+  assert.equal(config.downloadFormat, 'any');        // default
+  setSetting('download_format', 'mp3');
+  assert.equal(config.downloadFormat, 'mp3');
+  setSetting('download_format', 'bogus');             // unknown -> 'any'
+  assert.equal(config.downloadFormat, 'any');
+
   setSetting('cleanup_enabled', '1');
   assert.equal(config.autoCleanupEnabled, true);
   setSetting('cleanup_after_days', '30');

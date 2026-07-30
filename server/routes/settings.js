@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, setSetting } from '../db.js';
+import { config, setSetting, DOWNLOAD_FORMATS } from '../db.js';
 import { requireAdmin } from '../auth.js';
 import { testSlskd } from '../sources.js';
 import { cleanupStaleTracks } from '../downloader.js';
@@ -24,6 +24,7 @@ function currentSettings() {
     slskd_api_key_hint: key ? `••••${key.slice(-4)}` : '',
     slskd_download_dir: config.slskdDownloadDir,
     slskd_enabled: config.slskdEnabled,
+    download_format: config.downloadFormat,
     cleanup_enabled: config.autoCleanupEnabled,
     cleanup_after_days: config.cleanupAfterDays,
     transcode_enabled: config.transcodeEnabled,
@@ -79,6 +80,13 @@ api.put('/settings', requireAdmin, (req, res) => {
         }
       }
       setSetting('slskd_download_dir', dir);
+    }
+
+    // --- Preferred download format (any / mp3 / flac) ---
+    if (has('download_format')) {
+      const fmt = str(b.download_format).toLowerCase() || 'any';
+      if (!DOWNLOAD_FORMATS.includes(fmt)) throw new Error(`Download format must be one of: ${DOWNLOAD_FORMATS.join(', ')}`);
+      setSetting('download_format', fmt);
     }
 
     // --- Auto-cleanup (library maintenance) ---

@@ -78,7 +78,13 @@ like Radarr/Sonarr — no restart required, and values persist in the database:
 
 - **Media management** — library root folder
 - **Soulseek (slskd)** — URL, API key, and download directory (with a *Test
-  connection* button and an enabled/off indicator)
+  connection* button and an enabled/off indicator), plus the **preferred
+  format**: *Any* (the default — best candidate wins, lossless preferred),
+  *MP3 only*, or *FLAC only*. A restriction applies to both single tracks and
+  album folders: candidates in other formats are dropped before ranking, so
+  nothing outside the chosen format is ever downloaded. It only affects new
+  downloads — files already in the library are left alone — and a rare track
+  may not be found at all if no peer shares it in that format.
 
 Anything set in the UI is stored in the database and **takes precedence over the
 corresponding environment variable**, which only seeds the first-run default. So

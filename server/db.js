@@ -15,6 +15,9 @@ const envDefaults = {
   slskdDownloadDir: process.env.SLSKD_DOWNLOAD_DIR || '/slskd-downloads',
 };
 
+// Accepted values of the `download_format` setting (see config.downloadFormat).
+export const DOWNLOAD_FORMATS = ['any', 'mp3', 'flac'];
+
 // A stored value of '' is meaningful (e.g. clearing a key), so only fall back
 // to the env default when nothing has been saved (null).
 const stored = (key, dflt) => { const v = getSetting(key); return v === null ? dflt : v; };
@@ -53,6 +56,15 @@ export const config = {
   // favorited and playlisted tracks are always kept.
   get autoCleanupEnabled() { return getSetting('cleanup_enabled') === '1'; },
   get cleanupAfterDays() { return Math.max(0, parseInt(getSetting('cleanup_after_days') || '0', 10) || 0); },
+
+  // Preferred download format. 'any' (the default) accepts every audio format
+  // Soulseek peers share; 'mp3' / 'flac' restrict candidates to that extension,
+  // for people who want a single-format library (phone/car compatibility, or
+  // lossless only). A restriction can mean nothing is found for rarer tracks.
+  get downloadFormat() {
+    const v = getSetting('download_format') || 'any';
+    return DOWNLOAD_FORMATS.includes(v) ? v : 'any';
+  },
 
   // On-the-fly transcoding for low-bandwidth streaming (requires ffmpeg on the
   // server). Off by default; when on, /stream?fmt=opus|mp3 transcodes.
