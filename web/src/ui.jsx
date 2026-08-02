@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api, fmtTime, usePlayer, useMe } from './store.jsx';
+import { INDEX_LETTERS, groupByLetter } from './util.js';
 import { useContextMenu } from './menu.jsx';
 import { useT } from './i18n.jsx';
 
@@ -554,6 +555,79 @@ export function CardRow({ title, children }) {
       <h2 className="row-title">{title}</h2>
       <div className="card-scroll">{children}</div>
     </section>
+  );
+}
+
+/** Alphabetically indexed card grid: splits the tiles into A–Z (+ '#') sections
+ *  under letter headings and pins a letter rail alongside them, so large
+ *  artist/album libraries can be jumped through instead of scrolled through.
+ *  Short lists (< `minItems`) render as a plain grid — the index only earns its
+ *  space once there's enough to browse. */
+export function AlphaCardGrid({ items, getName, renderItem, minItems = 24 }) {
+  const groups = useMemo(() => groupByLetter(items, getName), [items, getName]);
+  const indexed = (items?.length || 0) >= minItems;
+  const refs = useRef({});
+  const [active, setActive] = useState(groups[0]?.letter || null);
+
+  // Highlight the letter of the section currently at the top of the viewport.
+  useEffect(() => {
+    if (!indexed) return;
+    const scroller = document.querySelector('.main-scroll');
+    if (!scroller) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const top = scroller.getBoundingClientRect().top + 24;
+      let cur = groups[0]?.letter || null;
+      for (const g of groups) {
+        const el = refs.current[g.letter];
+        if (!el || el.getBoundingClientRect().top > top) break;
+        cur = g.letter;
+      }
+      setActive(cur);
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    update();
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => { scroller.removeEventListener('scroll', onScroll); if (frame) cancelAnimationFrame(frame); };
+  }, [groups, indexed]);
+
+  const jump = useCallback((letter) => {
+    const el = refs.current[letter];
+    if (!el) return;
+    const scroller = el.closest('.main-scroll');
+    if (scroller) {
+      const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8;
+      scroller.scrollTo({ top, behavior: 'smooth' });
+    } else {
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    setActive(letter);
+  }, []);
+
+  if (!indexed) return <div className="card-grid">{(items || []).map(it => renderItem(it))}</div>;
+
+  const present = new Set(groups.map(g => g.letter));
+  return (
+    <div className="alpha-wrap">
+      <div className="alpha-sections">
+        {groups.map(g => (
+          <section key={g.letter} className="alpha-section" ref={el => { refs.current[g.letter] = el; }}>
+            <h3 className="alpha-heading">{g.letter}</h3>
+            <div className="card-grid">{g.items.map(it => renderItem(it))}</div>
+          </section>
+        ))}
+      </div>
+      <nav className="alpha-rail" aria-label="Alphabetical index">
+        {INDEX_LETTERS.map(l => (
+          <button key={l} type="button" disabled={!present.has(l)}
+            className={`alpha-key ${active === l ? 'active' : ''}`}
+            aria-current={active === l ? 'true' : undefined}
+            aria-label={l === '#' ? 'Jump to numbers and symbols' : `Jump to ${l}`}
+            onClick={() => jump(l)}>{l}</button>
+        ))}
+      </nav>
+    </div>
   );
 }
 
