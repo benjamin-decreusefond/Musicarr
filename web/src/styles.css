@@ -164,6 +164,34 @@
 .create-art { width: 156px; height: 156px; border-radius: 8px; background: var(--bg-elev-2); display: grid; place-items: center; color: var(--text-dim); }
 .create-tile:hover .create-art { color: var(--text); }
 
+/* -------- Alphabetical index (large artist/album grids) -------- */
+.alpha-wrap { display: flex; align-items: flex-start; gap: 8px; }
+.alpha-sections { flex: 1; min-width: 0; }
+.alpha-section + .alpha-section { margin-top: 18px; }
+/* Not sticky on purpose: `.main` paints a gradient behind the scroller, so a
+   pinned heading would need an opaque strip that never quite matches it. The
+   rail's active key already tells you which letter you're in. */
+.alpha-heading {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  font-family: var(--font-display); font-size: 17px; font-weight: 700; color: var(--text-dim);
+}
+.alpha-heading::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.alpha-rail {
+  position: sticky; top: 8px; flex: none; display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 2px; border-radius: 999px; background: var(--bg-elev-2);
+}
+.alpha-key {
+  width: 20px; height: 17px; display: grid; place-items: center; border-radius: 4px;
+  font-size: 10.5px; font-weight: 700; color: var(--text-dim); line-height: 1;
+  transition: color .12s, background .12s;
+}
+.alpha-key:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.alpha-key.active { color: var(--accent-ink); background: var(--accent); }
+.alpha-key:disabled { color: var(--text-faint); opacity: .35; cursor: default; }
+/* Wider keys on touch/narrow screens — the rail stays the same height so all
+   27 buckets keep fitting on screen. */
+@media (max-width: 760px) { .alpha-key { width: 26px; touch-action: manipulation; } }
+
 /* ===================== Friend activity panel ===================== */
 .app.with-activity { grid-template-columns: var(--sidebar-w) 1fr 320px; grid-template-areas: "sidebar main activity" "player player player"; }
 .activity { grid-area: activity; background: var(--bg-elev); border-radius: var(--radius-lg); overflow-y: auto; padding: 6px; }

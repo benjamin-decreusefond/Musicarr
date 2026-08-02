@@ -1,8 +1,13 @@
 // The user's own collection: Library tabs, Liked songs, and followed artists.
 import { useState, useEffect, useCallback } from 'react';
 import { api, usePlayer } from '../store.jsx';
-import { Icon, TrackTable, CardRow, TileCard, RadioButton } from '../ui.jsx';
+import { Icon, TrackTable, CardRow, TileCard, RadioButton, AlphaCardGrid } from '../ui.jsx';
 import { useAsync, Loading, ErrState } from './shared.jsx';
+
+// Name accessors for the A–Z index (module-level so they stay referentially
+// stable across renders and don't churn AlphaCardGrid's memo).
+const artistName = (a) => a.name;
+const albumName = (a) => a.title;
 
 function PlaylistsGrid({ playlists, nav, onCreate }) {
   return (
@@ -132,17 +137,17 @@ export function Library({ nav }) {
       {tab === 'albums' && (
         albumsData === null ? <Loading />
         : albumsData.length
-          ? <div className="card-grid">{albumsData.map(a => (
+          ? <AlphaCardGrid items={albumsData} getName={albumName} renderItem={a => (
               <TileCard key={a.id} cover={a.cover} title={a.title} sub={`${a.artist} · ${a.count} song${a.count > 1 ? 's' : ''}`}
-                onClick={() => nav({ view: 'album', id: a.id })} />))}</div>
+                onClick={() => nav({ view: 'album', id: a.id })} />)} />
           : <div className="state faint">No full albums in your library yet.</div>)}
 
       {tab === 'artists' && (
         artistsData === null ? <Loading />
         : artistsData.length
-          ? <div className="card-grid">{artistsData.map(a => (
+          ? <AlphaCardGrid items={artistsData} getName={artistName} renderItem={a => (
               <TileCard key={a.id} cover={a.picture} round title={a.name} sub={`${a.count} song${a.count > 1 ? 's' : ''}`}
-                onClick={() => nav({ view: 'artist', id: a.id })} />))}</div>
+                onClick={() => nav({ view: 'artist', id: a.id })} />)} />
           : <div className="state faint">No artists yet.</div>)}
 
       {tab === 'history' && (history.length
@@ -214,11 +219,11 @@ export function Following({ nav }) {
       </header>
       <section className="page-block">
         {list.length
-          ? <div className="card-grid">{list.map(a => (
+          ? <AlphaCardGrid items={list} getName={artistName} renderItem={a => (
               <TileCard key={a.id} cover={a.picture} round title={a.name} sub="Following"
                 onClick={() => nav({ view: 'artist', id: a.id })}
                 actions={<button className="btn-ghost sm" onClick={(e) => { e.stopPropagation(); unfollow(a.id); }}>Unfollow</button>} />
-            ))}</div>
+            )} />
           : <div className="state faint">Open an artist and tap <strong>Follow</strong> to auto-download their new releases.</div>}
       </section>
     </div>

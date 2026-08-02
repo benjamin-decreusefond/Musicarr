@@ -8,3 +8,53 @@ export function fmtTime(sec) {
   const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+
+/* ------------------------------------------------- Alphabetical indexing */
+// Buckets used by the A–Z rail beside large artist/album grids. '#' collects
+// everything that doesn't start with a latin letter (digits, symbols, and
+// non-latin scripts such as Cyrillic or CJK).
+export const INDEX_LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '#'];
+
+const LEADING_ARTICLE = /^(?:the|a|an|le|la|les|el|los|las|der|die|das|il|lo|l)\s+/;
+
+/** Normalise a display name for alphabetical sorting: drops diacritics and
+ *  leading punctuation, ignores a leading article ("The Beatles" → "beatles"),
+ *  and lowercases. Falls back to the un-stripped name when stripping would
+ *  leave nothing (e.g. an artist actually called "The"). */
+export function sortName(name) {
+  const base = String(name ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .trim()
+    .toLowerCase();
+  return base.replace(LEADING_ARTICLE, '').trim() || base;
+}
+
+/** The index bucket a name falls into: 'A'–'Z', or '#' for anything else. */
+export function indexLetter(name) {
+  const c = sortName(name).charAt(0).toUpperCase();
+  return c >= 'A' && c <= 'Z' ? c : '#';
+}
+
+/** Group items into alphabetical sections, ordered A–Z then '#'. Items inside
+ *  a section are sorted by their normalised name. Empty letters are omitted —
+ *  the rail renders those as disabled keys from INDEX_LETTERS. */
+export function groupByLetter(items, getName = (x) => x?.name) {
+  const buckets = new Map();
+  for (const item of items || []) {
+    const letter = indexLetter(getName(item));
+    if (!buckets.has(letter)) buckets.set(letter, []);
+    buckets.get(letter).push(item);
+  }
+  const out = [];
+  for (const letter of INDEX_LETTERS) {
+    const group = buckets.get(letter);
+    if (!group) continue;
+    group.sort((a, b) => {
+      const an = sortName(getName(a)), bn = sortName(getName(b));
+      return an.localeCompare(bn) || String(getName(a) ?? '').localeCompare(String(getName(b) ?? ''));
+    });
+    out.push({ letter, items: group });
+  }
+  return out;
+}
