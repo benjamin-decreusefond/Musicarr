@@ -42,5 +42,9 @@ export function createCache({ ttlMs, max = 500 }) {
     return p;
   }
 
-  return { get, set, wrap, get size() { return map.size; } };
+  /** Drop everything. Used when a setting invalidates what was cached, and by
+   *  tests that need a cold cache between cases. */
+  function clear() { map.clear(); inflight.clear(); }
+
+  return { get, set, wrap, clear, get size() { return map.size; } };
 }

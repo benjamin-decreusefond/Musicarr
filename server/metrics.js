@@ -73,6 +73,8 @@ const COUNTER_HELP = {
   musicarr_external_requests_total: 'Outbound requests to an external service, by outcome.',
   musicarr_download_transitions_total: 'Download status transitions since boot.',
   musicarr_imports_total: 'Files imported into the library, by result.',
+  musicarr_http_requests_total: 'HTTP requests served, by method and status (probes and scrapes excluded).',
+  musicarr_upgrades_total: 'Quality upgrades queued, by the format being replaced.',
 };
 
 /** Render the current metrics in the Prometheus text exposition format. */

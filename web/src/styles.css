@@ -276,6 +276,16 @@
 .settings-msg.ok { color: var(--accent); }
 .settings-msg.err { color: var(--danger); }
 
+/* Ordered accepted-format list (quality profile). The rank number is the point:
+   the order is the preference, not just a set of allowed formats. */
+.fmt-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; padding: 0; list-style: none; }
+.fmt-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-elev); }
+.fmt-rank { width: 20px; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.fmt-name { flex: 1; font-weight: 600; font-size: 13.5px; letter-spacing: .02em; }
+.fmt-row .btn-ghost { padding: 2px 10px; font-size: 13px; }
+.fmt-row .btn-ghost:disabled { opacity: .35; cursor: default; }
+.fmt-add { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+
 /* ============================ Player bar ============================ */
 .player { background: var(--bg-elev); border-radius: var(--radius-lg); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 18px; gap: 16px; }
 .player.empty { display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 13px; }

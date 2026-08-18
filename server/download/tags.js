@@ -86,6 +86,13 @@ export function ffmpegArgs({ src, dest, coverPath, track }) {
   // tell an original from a remix that shares title and length.
   add('ISRC', track.isrc);
   if (ext === '.mp3') add('TSRC', track.isrc);
+  // Original release date, and the MusicBrainz identifiers Picard, Jellyfin,
+  // Plex and Beets key on — with these, another tool recognises the file
+  // outright instead of re-guessing what it is (see musicbrainz.js).
+  add('date', track.release_date);
+  add('MUSICBRAINZ_TRACKID', track.mb_recording_id);
+  add('MUSICBRAINZ_ALBUMID', track.mb_release_id);
+  add('MUSICBRAINZ_ARTISTID', track.mb_artist_id);
 
   return [
     '-nostdin', '-loglevel', 'error', '-y',

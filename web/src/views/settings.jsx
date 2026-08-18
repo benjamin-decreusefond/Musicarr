@@ -28,13 +28,7 @@ function AuthMethodCard() {
   );
 }
 
-const SETTING_FIELDS = ['root_folder', 'slskd_url', 'slskd_api_key', 'slskd_download_dir', 'download_format'];
-
-const DOWNLOAD_FORMATS = [
-  ['any', 'Any format (best quality wins)'],
-  ['mp3', 'MP3 only'],
-  ['flac', 'FLAC only'],
-];
+const SETTING_FIELDS = ['root_folder', 'slskd_url', 'slskd_api_key', 'slskd_download_dir'];
 
 function Field({ label, hint, type = 'text', value, onChange }) {
   return (
@@ -44,6 +38,50 @@ function Field({ label, hint, type = 'text', value, onChange }) {
         autoComplete="off" onChange={e => onChange(e.target.value)} />
       {hint && <span className="settings-fieldhint">{hint}</span>}
     </label>
+  );
+}
+
+// The accepted-formats list is ordered: the first entry is what ranking
+// prefers, not merely what is allowed. A checkbox alone can't express that, so
+// accepted formats are shown in their own order with move controls, and the
+// rest sit below as things to add.
+function FormatPriority({ all, value, onChange }) {
+  const accepted = (value || []).filter(f => all.includes(f));
+  const rest = all.filter(f => !accepted.includes(f));
+  const move = (i, by) => {
+    const next = [...accepted];
+    const j = i + by;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="settings-field">
+      <span className="settings-label">Accepted formats, best first</span>
+      <ul className="fmt-list">
+        {accepted.map((f, i) => (
+          <li key={f} className="fmt-row">
+            <span className="fmt-rank">{i + 1}</span>
+            <span className="fmt-name">{f.toUpperCase()}</span>
+            <button type="button" className="btn-ghost sm" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Move ${f} up`}>↑</button>
+            <button type="button" className="btn-ghost sm" disabled={i === accepted.length - 1} onClick={() => move(i, 1)} aria-label={`Move ${f} down`}>↓</button>
+            <button type="button" className="btn-ghost sm" disabled={accepted.length === 1}
+              onClick={() => onChange(accepted.filter(x => x !== f))} aria-label={`Remove ${f}`}>✕</button>
+          </li>
+        ))}
+      </ul>
+      {rest.length > 0 && (
+        <div className="fmt-add">
+          {rest.map(f => (
+            <button type="button" key={f} className="btn-ghost sm" onClick={() => onChange([...accepted, f])}>+ {f.toUpperCase()}</button>
+          ))}
+        </div>
+      )}
+      <span className="settings-fieldhint">
+        Only these are ever downloaded, and the order decides which one wins when a peer
+        shares several. Removing a format can leave rarer tracks unavailable.
+      </span>
+    </div>
   );
 }
 
@@ -67,6 +105,8 @@ export function Settings() {
   const [tested, setTested] = useState({});
   const [cleaning, setCleaning] = useState(false);
   const [cleanMsg, setCleanMsg] = useState(null);
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeMsg, setUpgradeMsg] = useState(null);
   const [scan, setScan] = useState(null);
   useEffect(() => {
     api.get('/api/settings').then(setS).catch(e => setMsg({ err: true, text: e.message }));
@@ -93,6 +133,15 @@ export function Settings() {
     setCleaning(false);
   };
 
+  const runUpgrade = async () => {
+    setUpgrading(true); setUpgradeMsg(null);
+    try {
+      const r = await api.post('/api/settings/upgrade-now');
+      setUpgradeMsg({ err: false, text: r.queued ? `Queued ${r.queued} upgrade(s).` : 'Nothing to upgrade — the library already meets the target.' });
+    } catch (e) { setUpgradeMsg({ err: true, text: e.message }); }
+    setUpgrading(false);
+  };
+
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
@@ -105,6 +154,11 @@ export function Settings() {
       payload.cleanup_after_days = parseInt(s.cleanup_after_days, 10) || 0;
       payload.tag_write_enabled = !!s.tag_write_enabled;
       payload.tag_art_enabled = !!s.tag_art_enabled;
+      payload.musicbrainz_enabled = !!s.musicbrainz_enabled;
+      payload.quality_accepted = s.quality_accepted || [];
+      payload.quality_min_bitrate = parseInt(s.quality_min_bitrate, 10) || 0;
+      payload.quality_target = s.quality_target || '';
+      payload.quality_upgrade_enabled = !!s.quality_upgrade_enabled;
       const next = await api.put('/api/settings', payload);
       setS(next);
       setMsg({ err: false, text: 'Settings saved. Changes apply immediately — no restart needed.' });
@@ -194,9 +248,10 @@ export function Settings() {
           value={s.slskd_api_key} onChange={v => set('slskd_api_key', v)} />
         <Field label="Download directory" hint="Where slskd writes finished files, as Musicarr sees it (shared volume), e.g. /data/slskd/downloads"
           value={s.slskd_download_dir} onChange={v => set('slskd_download_dir', v)} />
-        <Select label="Preferred format" options={DOWNLOAD_FORMATS} value={s.download_format || 'any'}
-          hint="Restrict what Musicarr downloads from Soulseek. “Any” takes the best candidate and prefers lossless; MP3 only keeps the library small and plays everywhere; FLAC only keeps it lossless. A restriction can leave rarer tracks unavailable."
-          onChange={v => set('download_format', v)} />
+        <p className="settings-fieldhint">
+          Which formats are downloaded, and at what minimum quality, is set under
+          <strong> Quality profile</strong> below.
+        </p>
         <div className="settings-actions">
           <button className="btn-ghost" onClick={() => test('slskd')} disabled={testing === 'slskd'}>
             {testing === 'slskd' ? 'Testing…' : 'Test connection'}
@@ -206,6 +261,40 @@ export function Settings() {
       </section>
 
       <AuthMethodCard />
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">Quality profile</h2>
+        <p className="settings-hint">
+          Two separate questions: what Musicarr will accept from a peer, and what it should
+          eventually end up with. Soulseek hands you whatever the first willing peer had, so
+          without a target a library slowly fills with whatever happened to be shared first.
+        </p>
+        <FormatPriority all={s.audio_formats || []} value={s.quality_accepted}
+          onChange={v => set('quality_accepted', v)} />
+        <Field label="Minimum bitrate (kbps)" type="number"
+          hint="Lossy files below this are refused outright. 0 accepts anything. Lossless is never measured against it, and a candidate whose bitrate Soulseek doesn't report is kept."
+          value={s.quality_min_bitrate ?? 0} onChange={v => set('quality_min_bitrate', v)} />
+        <Select label="Upgrade target" value={s.quality_target || ''}
+          options={[['', 'No upgrading'], ...(s.audio_formats || []).map(f => [f, f.toUpperCase()])]}
+          hint="The quality worth replacing an existing file for. Lossless is treated as the ceiling: with FLAC as the target, a lossless file is done, and a lossless file is never downgraded to reach a lossy target."
+          onChange={v => set('quality_target', v)} />
+        <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input type="checkbox" checked={!!s.quality_upgrade_enabled} disabled={!s.quality_target}
+            onChange={e => set('quality_upgrade_enabled', e.target.checked)} />
+          <span className="settings-label" style={{ margin: 0 }}>Automatically look for better copies</span>
+        </label>
+        <p className="settings-fieldhint">
+          Runs every few hours on a small batch, searching only for the target format — so anything
+          it finds is an improvement, and the old file is replaced and deleted. A track nobody shares
+          in that format is left alone for a month before being tried again.
+        </p>
+        <div className="settings-actions">
+          <button className="btn-ghost" disabled={upgrading || !s.quality_target} onClick={runUpgrade}>
+            {upgrading ? 'Searching…' : 'Look for upgrades now'}
+          </button>
+          {upgradeMsg && <span className={`settings-msg ${upgradeMsg.err ? 'err' : 'ok'}`}>{upgradeMsg.text}</span>}
+        </div>
+      </section>
 
       <section className="page-block settings-section">
         <h2 className="row-title">File metadata</h2>
@@ -225,7 +314,15 @@ export function Settings() {
             onChange={e => set('tag_art_enabled', e.target.checked)} />
           <span className="settings-label" style={{ margin: 0 }}>Embed album art (one image download per album)</span>
         </label>
+        <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input type="checkbox" checked={!!s.musicbrainz_enabled}
+            onChange={e => set('musicbrainz_enabled', e.target.checked)} />
+          <span className="settings-label" style={{ margin: 0 }}>Look imports up in MusicBrainz</span>
+        </label>
         <p className="settings-fieldhint">
+          Adds the MusicBrainz identifiers and the original release date, matched exactly by ISRC
+          where Deezer provides one. Those IDs are what Picard, Jellyfin and Beets recognise a file
+          by. MusicBrainz allows one request per second, so album imports take a little longer.
           Only affects new imports — files already in the library are left alone.
         </p>
       </section>

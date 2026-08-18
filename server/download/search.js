@@ -10,6 +10,7 @@ import { logger } from '../log.js';
 import { walkAudio, safeName, normTitle, searchVariants, slskdFilesOf, pruneEmptyDirs } from './util.js';
 import { setStatus, publishDownload } from './status.js';
 import { blockedPeerSet } from './peers.js';
+import { upgradeProfile } from '../quality.js';
 import { isExcluded } from './retry.js';
 import { pendingImports, progressTrack } from './import.js';
 
@@ -33,21 +34,22 @@ function trackOnDisk(deezerId) {
  * Queue a download. `kind` is 'album' or 'track'. Returns the download row id.
  * The actual work happens asynchronously in startSearch().
  */
-export function queueDownload(userId, kind, deezerId, label, cover, { toLibrary = true } = {}) {
+export function queueDownload(userId, kind, deezerId, label, cover, { toLibrary = true, upgrade = false } = {}) {
   const toLib = toLibrary ? 1 : 0;
   // Dedupe: if a single track is already on disk, record it as done instead of
-  // searching Soulseek for a copy we already have.
-  if (kind === 'track' && trackOnDisk(deezerId)) {
+  // searching Soulseek for a copy we already have. An upgrade is the one case
+  // where having the file is exactly the point — it is looking for a better one.
+  if (kind === 'track' && !upgrade && trackOnDisk(deezerId)) {
     const done = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, status, detail, progress, to_library) VALUES (?, ?, ?, ?, ?, 'soulseek', 'done', 'Already in library', 1, ?)`)
       .run(userId, kind, deezerId, label, cover || null, toLib);
     log.info(`#${done.lastInsertRowid} ${kind} ${deezerId} already on disk — skipped download`);
     publishDownload(done.lastInsertRowid);
     return done.lastInsertRowid;
   }
-  const existing = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, to_library) VALUES (?, ?, ?, ?, ?, 'soulseek', ?)`)
-    .run(userId, kind, deezerId, label, cover || null, toLib);
+  const existing = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, cover, engine, to_library, is_upgrade) VALUES (?, ?, ?, ?, ?, 'soulseek', ?, ?)`)
+    .run(userId, kind, deezerId, label, cover || null, toLib, upgrade ? 1 : 0);
   const id = existing.lastInsertRowid;
-  log.info(`#${id} queued ${kind} ${deezerId} by user ${userId}: ${label}`);
+  log.info(`#${id} queued ${kind} ${deezerId}${upgrade ? ' (upgrade)' : ''} by user ${userId}: ${label}`);
   publishDownload(id);
   runSearch(id);
   return id;
@@ -196,7 +198,11 @@ async function trackViaSlskd(dl) {
     try { files = await slskdSearch(q); }
     catch (e) { log.warn(`#${dl.id} slskd search failed: ${e.message}`); if (isTransientSlskdError(e)) slskdDown = true; continue; }
     const blocked = blockedPeerSet();
-    const ranked = scoreSlskdFiles(files, row.artist, row.title, tr.duration || null)
+    // An upgrade only ever wants the target format, so anything that comes
+    // back is by definition better than what is on disk and the import can
+    // replace it without a second opinion.
+    const ranked = scoreSlskdFiles(files, row.artist, row.title, tr.duration || null,
+      dl.is_upgrade ? upgradeProfile() : config.qualityProfile)
       .filter(f => !isExcluded(dl, f.username, f.filename) && !blocked.has(f.username));
     log.info(`#${dl.id} "${q}": ${files.length} audio file(s), ${ranked.length} viable`);
 

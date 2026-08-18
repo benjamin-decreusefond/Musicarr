@@ -58,18 +58,41 @@ test('scoreSlskdFiles handles empty wanted title/artist gracefully', () => {
   assert.ok(Array.isArray(scoreSlskdFiles(files, '', '', null)));
 });
 
-test('scoreSlskdFiles honours the preferred format setting', () => {
+test('scoreSlskdFiles keeps only what the quality profile accepts', () => {
   const files = [
     { filename: 'Artist/Album/01 - My Song.flac', length: 180, hasFreeUploadSlot: true, queueLength: 0 },
     { filename: 'Artist/Album/01 - My Song.mp3', length: 180, bitRate: 320, hasFreeUploadSlot: true, queueLength: 0 },
   ];
-  const mp3 = scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'mp3');
-  assert.deepEqual(mp3.map(f => f.filename), ['Artist/Album/01 - My Song.mp3']);
-  const flac = scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'flac');
-  assert.deepEqual(flac.map(f => f.filename), ['Artist/Album/01 - My Song.flac']);
-  assert.equal(scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'any').length, 2);
-  // An unknown value must never silently filter everything out.
-  assert.equal(scoreSlskdFiles(files, 'Artist', 'My Song', 180, 'wav?').length, 2);
+  const names = (profile) => scoreSlskdFiles(files, 'Artist', 'My Song', 180, profile).map(f => f.filename);
+  assert.deepEqual(names({ accepted: ['mp3'] }), ['Artist/Album/01 - My Song.mp3']);
+  assert.deepEqual(names({ accepted: ['flac'] }), ['Artist/Album/01 - My Song.flac']);
+  assert.equal(names({ accepted: ['flac', 'mp3'] }).length, 2);
+  // The profile's ordering decides which of two acceptable files ranks first.
+  assert.equal(names({ accepted: ['mp3', 'flac'] })[0], 'Artist/Album/01 - My Song.mp3');
+  assert.equal(names({ accepted: ['flac', 'mp3'] })[0], 'Artist/Album/01 - My Song.flac');
+});
+
+test('scoreSlskdFiles drops lossy candidates under the bitrate floor', () => {
+  const files = [
+    { filename: 'Artist/Album/My Song.mp3', length: 180, bitRate: 128, hasFreeUploadSlot: true },
+    { filename: 'Artist/Album/My Song (hq).mp3', length: 180, bitRate: 320, hasFreeUploadSlot: true },
+    // No bitrate reported and no size to estimate from: kept, because slskd
+    // often omits it and the title/duration gates are the real filter.
+    { filename: 'Artist/Album/My Song (unknown).mp3', length: 180, hasFreeUploadSlot: true },
+    // Lossless is never measured against a lossy floor.
+    { filename: 'Artist/Album/My Song.flac', length: 180, hasFreeUploadSlot: true },
+  ];
+  const kept = scoreSlskdFiles(files, 'Artist', 'My Song', 180, { accepted: ['flac', 'mp3'], minBitrate: 256 })
+    .map(f => f.filename);
+  assert.ok(!kept.includes('Artist/Album/My Song.mp3'));
+  assert.ok(kept.includes('Artist/Album/My Song (hq).mp3'));
+  assert.ok(kept.includes('Artist/Album/My Song (unknown).mp3'));
+  assert.ok(kept.includes('Artist/Album/My Song.flac'));
+
+  // With no reported bitrate, size and length give one: 1 MB over 180s is ~46kbps.
+  const estimated = [{ filename: 'Artist/Album/My Song.mp3', length: 180, size: 1024 * 1024, hasFreeUploadSlot: true }];
+  assert.equal(scoreSlskdFiles(estimated, 'Artist', 'My Song', 180, { accepted: ['mp3'], minBitrate: 192 }).length, 0);
+  assert.equal(scoreSlskdFiles(estimated, 'Artist', 'My Song', 180, { accepted: ['mp3'], minBitrate: 32 }).length, 1);
 });
 
 test('scoreSlskdFiles reads the preferred format from settings when not given', () => {
@@ -108,12 +131,15 @@ test('scoreSlskdFolders only counts and keeps files in the preferred format', ()
     { username: 'u2', filename: 'u2/Album/01 One.mp3', hasFreeUploadSlot: true, queueLength: 0 },
     { username: 'u2', filename: 'u2/Album/02 Two.mp3', hasFreeUploadSlot: true, queueLength: 0 },
   ];
-  const folders = scoreSlskdFolders(files, ['One', 'Two'], 'mp3');
+  const folders = scoreSlskdFolders(files, ['One', 'Two'], { accepted: ['mp3'] });
   assert.equal(folders.length, 1);
   assert.equal(folders[0].username, 'u2');
   assert.ok(folders[0].files.every(f => f.filename.endsWith('.mp3')));
   // A lossless-only folder no longer covers enough of the album, so it's dropped.
-  assert.equal(scoreSlskdFolders(files.slice(0, 2), ['One', 'Two'], 'mp3').length, 0);
+  assert.equal(scoreSlskdFolders(files.slice(0, 2), ['One', 'Two'], { accepted: ['mp3'] }).length, 0);
+  // With both accepted, the folder in the preferred format ranks first.
+  assert.equal(scoreSlskdFolders(files, ['One', 'Two'], { accepted: ['mp3', 'flac'] })[0].username, 'u2');
+  assert.equal(scoreSlskdFolders(files, ['One', 'Two'], { accepted: ['flac', 'mp3'] })[0].username, 'u1');
 });
 
 /* ------------------------------------------------------ isTransientSlskdError */

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api, fmtTime, usePlayer, useMe } from './store.jsx';
 import { INDEX_LETTERS, groupByLetter } from './util.js';
+import { useVirtualRows } from './virtual.js';
 import { useContextMenu } from './menu.jsx';
 import { useT } from './i18n.jsx';
 
@@ -436,7 +437,7 @@ function fmtDate(s) {
 }
 
 /** One row of the columnar TrackTable. */
-function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid, dragProps, dragOver }) {
+function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, grid, dragProps, dragOver, rowRef }) {
   const player = usePlayer();
   const me = useMe();
   const trackMenu = useTrackMenu();
@@ -457,7 +458,8 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
   if (hidden) return null;
 
   return (
-    <div className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''} ${dragOver ? 'drag-over' : ''}`}
+    <div ref={rowRef}
+      className={`tt-row ${isCurrent ? 'current' : ''} ${!available ? 'dim' : ''} ${dragOver ? 'drag-over' : ''}`}
       style={grid} onClick={onPlay} {...(dragProps || {})}
       onContextMenu={(e) => trackMenu(e, track, { tracks, i, onDelete: () => setHidden(true) })}>
       <div className="tt-idx">
@@ -510,6 +512,9 @@ function TrackTableRow({ track, i, tracks, nav, onRemove, showAlbum, showAdded, 
 export function TrackTable({ tracks, nav, onRemove, onReorder, showAlbum = true, showAdded = true }) {
   const [dragFrom, setDragFrom] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  // Only long lists are windowed, and never a reorderable one: dragging needs
+  // every row mounted to have somewhere to drop, and playlists are short.
+  const virt = useVirtualRows(tracks.length, { disabled: !!onReorder });
   if (!tracks.length) return <div className="state faint">Nothing here yet.</div>;
   // Build the grid so header and rows always line up regardless of which
   // optional columns are shown.
@@ -540,11 +545,21 @@ export function TrackTable({ tracks, nav, onRemove, onReorder, showAlbum = true,
         <div />
         <div className="tt-time"><Icon name="clock" size={15} /></div>
       </div>
-      {tracks.map((t, i) => (
-        <TrackTableRow key={t.deezer_id || t.id} track={t} i={i} tracks={tracks} nav={nav}
-          onRemove={onRemove} showAlbum={showAlbum} showAdded={showAdded} grid={grid}
-          dragProps={dragPropsFor(i)} dragOver={onReorder && dragOver === i && dragFrom !== i} />
-      ))}
+      <div ref={virt.listRef}>
+        {/* Spacers stand in for the rows that aren't mounted, so the scrollbar
+            still measures the whole list and positions stay correct. */}
+        {virt.padTop > 0 && <div style={{ height: virt.padTop }} aria-hidden="true" />}
+        {tracks.slice(virt.start, virt.end).map((t, k) => {
+          const i = virt.start + k;
+          return (
+            <TrackTableRow key={t.deezer_id || t.id} track={t} i={i} tracks={tracks} nav={nav}
+              onRemove={onRemove} showAlbum={showAlbum} showAdded={showAdded} grid={grid}
+              rowRef={k === 0 ? virt.rowRef : null}
+              dragProps={dragPropsFor(i)} dragOver={onReorder && dragOver === i && dragFrom !== i} />
+          );
+        })}
+        {virt.padBottom > 0 && <div style={{ height: virt.padBottom }} aria-hidden="true" />}
+      </div>
     </div>
   );
 }

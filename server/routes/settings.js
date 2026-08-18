@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, setSetting, DOWNLOAD_FORMATS } from '../db.js';
+import { config, setSetting, DOWNLOAD_FORMATS, AUDIO_FORMATS } from '../db.js';
 import { requireAdmin } from '../auth.js';
 import { testSlskd } from '../sources.js';
 import { cleanupStaleTracks } from '../downloader.js';
+import { runUpgradeSweep } from '../upgrade.js';
 export function registerSettings(api) {
 /* -------------------------------------------------------------- Settings */
 // Settings work like Radarr/Sonarr: edited from the UI, stored in the DB, and
@@ -30,6 +31,12 @@ function currentSettings() {
     transcode_enabled: config.transcodeEnabled,
     tag_write_enabled: config.tagWriteEnabled,
     tag_art_enabled: config.tagArtEnabled,
+    quality_accepted: config.qualityAccepted,
+    quality_min_bitrate: config.qualityMinBitrate,
+    quality_target: config.qualityTarget,
+    quality_upgrade_enabled: config.qualityUpgradeEnabled,
+    musicbrainz_enabled: config.musicbrainzEnabled,
+    audio_formats: AUDIO_FORMATS,
   };
 }
 
@@ -102,9 +109,32 @@ api.put('/settings', requireAdmin, (req, res) => {
     // --- Streaming: on-the-fly transcoding (needs ffmpeg on the server) ---
     if (has('transcode_enabled')) setSetting('transcode_enabled', b.transcode_enabled ? '1' : '0');
 
+    // --- Quality profile (what to accept, and what to upgrade towards) ---
+    if (has('quality_accepted')) {
+      const list = (Array.isArray(b.quality_accepted) ? b.quality_accepted : String(b.quality_accepted).split(','))
+        .map(x => String(x).trim().toLowerCase()).filter(Boolean);
+      const bad = list.filter(f => !AUDIO_FORMATS.includes(f));
+      if (bad.length) throw new Error(`Unknown format: ${bad.join(', ')}`);
+      if (!list.length) throw new Error('Accept at least one format, or downloads can never succeed');
+      // Order is meaningful (it is the preference), so store it as given.
+      setSetting('quality_accepted', [...new Set(list)].join(','));
+    }
+    if (has('quality_min_bitrate')) {
+      const n = parseInt(b.quality_min_bitrate, 10);
+      if (Number.isNaN(n) || n < 0 || n > 320) throw new Error('Minimum bitrate must be between 0 and 320 kbps');
+      setSetting('quality_min_bitrate', String(n));
+    }
+    if (has('quality_target')) {
+      const t = str(b.quality_target).toLowerCase();
+      if (t && !AUDIO_FORMATS.includes(t)) throw new Error(`Unknown target format: ${t}`);
+      setSetting('quality_target', t);
+    }
+    if (has('quality_upgrade_enabled')) setSetting('quality_upgrade_enabled', b.quality_upgrade_enabled ? '1' : '0');
+
     // --- Metadata: rewrite tags on imported files (needs ffmpeg on the server) ---
     if (has('tag_write_enabled')) setSetting('tag_write_enabled', b.tag_write_enabled ? '1' : '0');
     if (has('tag_art_enabled')) setSetting('tag_art_enabled', b.tag_art_enabled ? '1' : '0');
+    if (has('musicbrainz_enabled')) setSetting('musicbrainz_enabled', b.musicbrainz_enabled ? '1' : '0');
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }
@@ -116,6 +146,19 @@ api.post('/settings/cleanup-now', requireAdmin, async (req, res) => {
   try {
     const removed = await cleanupStaleTracks();
     res.json({ ok: true, removed });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// Run the quality-upgrade sweep immediately (admin), returning how many
+// upgrade downloads it queued. Same shape as cleanup-now: the periodic job is
+// the real mechanism, this is the "does it work" button next to the setting.
+api.post('/settings/upgrade-now', requireAdmin, async (req, res) => {
+  try {
+    if (!config.qualityTarget) return res.status(400).json({ error: 'Set a target format first' });
+    const queued = await runUpgradeSweep({ force: true });
+    res.json({ ok: true, queued });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
