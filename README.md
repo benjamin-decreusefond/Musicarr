@@ -24,6 +24,12 @@ No torrent client or indexers needed.
    `/music/Artist/Album/`.
 6. The track is now streamable by **every** user — a file is only ever stored
    once. Favorites and playlists referencing it are per-user.
+7. Optionally, the file's tags are rewritten from the Deezer metadata first, so
+   the library also reads correctly outside Musicarr — see [File tags](#file-tags).
+
+Library search runs against a SQLite **FTS5** index kept in sync by triggers, so
+searching stays fast as the catalog grows; a query the index can't answer (a
+mid-word fragment) falls back to a substring scan.
 
 ## Build the image
 
@@ -133,6 +139,9 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `AUTH_PROXY_ADMIN_USERS` | — | *(proxy)* Comma-separated usernames that are always admins |
 | `AUTH_PROXY_TRUSTED_IPS` | — | *(proxy)* Comma-separated IPs; the identity header is only honoured when the connection comes from one of them. Empty trusts any source (the app must then be reachable only through the proxy) |
 | `AUTH_PROXY_LOGOUT_URL` | — | *(proxy)* URL the web UI's "sign out" button points at (your proxy's sign-out endpoint, e.g. `/oauth2/sign_out`) |
+| `METRICS_ENABLED` | `true` | Serve the Prometheus scrape endpoint at `/metrics`. Set `false` to remove it |
+| `METRICS_TOKEN` | — | When set, `/metrics` requires this token as `Authorization: Bearer` or `X-Api-Key` |
+| `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary used for transcoding and tag writing |
 
 ## Authentication method
 
@@ -284,6 +293,71 @@ any not-downloaded track (or use the right-click menu). Previews are proxied
 through the server (`GET /api/preview/:trackId`) so they play same-origin under
 the CSP and Deezer's signed preview URLs never reach the browser; playing a real
 track or pressing play stops the preview.
+
+## File tags
+
+Musicarr reads every title, artist and album from its own database, so it plays
+a library correctly no matter what the files themselves say. **Other players
+don't.** Soulseek files arrive with whatever tags the sharing peer had — often a
+`Track 03` title, a transliterated artist, no album art, sometimes nothing at
+all — so the same library opened in Jellyfin, on a phone or in a car can be a
+mess.
+
+Turn on **Settings → File metadata → Write tags on imported files** and every
+imported file is stamped with the metadata Musicarr asked for: title, artist,
+album, album artist, track number (`3/12`), disc number, ISRC, and the album
+cover embedded at 1000px. The audio itself is never re-encoded — ffmpeg copies
+the bitstream and only rebuilds the metadata container — so a FLAC stays exactly
+the FLAC the peer shared.
+
+- **Requires ffmpeg** on the server. It ships in the Docker image; set
+  `FFMPEG_PATH` if yours lives somewhere unusual.
+- **Off by default**, because it rewrites files you received from other people.
+- **Only new imports.** Files already in the library are left alone; re-download
+  a track to retag it.
+- **Best-effort.** If ffmpeg fails, the import still completes with the original
+  file — you get an untagged track, never a lost one. If only the cover art is
+  the problem, it retries once without it and keeps the tags.
+- **Album art costs one image download per album** and can be turned off
+  separately.
+- Formats: MP3, FLAC, M4A/MP4, Ogg and Opus are tagged (Ogg/Opus without
+  embedded art). Anything else is imported untouched.
+
+Tagging happens **before** the file is hardlinked into the library, while it is
+still a single inode shared with slskd's download directory. That keeps the "a
+file is only ever stored once" property intact — tagging after the link would
+leave you with two full copies of every song.
+
+## Metrics
+
+Musicarr exposes Prometheus metrics at **`GET /metrics`**, so the things that
+fail silently — Deezer rate-limiting a page, slskd losing its Soulseek
+connection, a run of downloads quietly ending in `not_found` — show up on a
+dashboard instead of a week later when an album never arrived.
+
+```bash
+curl http://localhost:8686/metrics
+```
+
+| Metric | Type | What it tells you |
+|---|---|---|
+| `musicarr_tracks_total`, `musicarr_tracks_on_disk`, `musicarr_albums_on_disk` | gauge | Library size, and how much of the catalog is actually downloaded |
+| `musicarr_downloads{status}` | gauge | The queue right now. A rising `not_found`, or `searching` stuck high, is the alert worth having |
+| `musicarr_download_transitions_total{status}` | counter | Throughput and failure rate over time |
+| `musicarr_imports_total{result}` | counter | `imported` vs `unmatched` — match quality, before anyone complains |
+| `musicarr_external_requests_total{service,outcome}` | counter | Deezer and slskd call volume and errors |
+| `musicarr_slskd_configured` | gauge | Whether the download engine is set up at all |
+| `musicarr_users_total`, `musicarr_plays_total`, `musicarr_playlists_total`, `musicarr_followed_artists_total` | gauge | Usage |
+| `musicarr_uptime_seconds`, `musicarr_process_resident_memory_bytes`, `musicarr_nodejs_heap_used_bytes` | gauge | Process health |
+
+The endpoint reports **aggregates only** — no usernames, track titles or file
+paths — and is unauthenticated by default so a scraper needs no session, like
+the health probes. Set `METRICS_TOKEN` to require a bearer token if the port is
+reachable beyond your monitoring network, or `METRICS_ENABLED=false` to remove
+the endpoint entirely.
+
+With kube-prometheus-stack, a `ServiceMonitor` on the `http` port with
+`path: /metrics` is all it takes.
 
 ## Health checks
 

@@ -7,7 +7,7 @@ import { test, before, beforeEach, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, setSetting, db, upsertTrack, trackRowFromDeezer } from '../db.js';
+import { config, setSetting, db, upsertTrack, trackRowFromDeezer, ftsQuery, ftsEnabled } from '../db.js';
 import * as fm from './helpers/fetchmock.js';
 import { makeAuthedApp, listen, req, setUser } from './helpers/app.js';
 import { createUser, addTrack, wipe } from './helpers/seed.js';
@@ -304,6 +304,63 @@ test('library: server-side q filter (LIKE-escaped) and pagination', async () => 
   const al = albums.body.find(x => x.id === 7001);
   assert.equal(al.count, 2);
   assert.ok(albums.body.find(x => x.id === 7002));
+});
+
+/* ------------------------------------------------ full-text library search */
+test('ftsQuery turns free text into a safe prefix MATCH expression', () => {
+  assert.equal(ftsEnabled, true);
+  assert.equal(ftsQuery('dayl bre'), '"dayl"* "bre"*');
+  // FTS5 operators in the input are stripped, not interpreted.
+  assert.equal(ftsQuery('rock OR "roll" -NEAR^*'), '"rock"* "OR"* "roll"* "NEAR"*');
+  assert.equal(ftsQuery('café'), '"café"*');
+  // Nothing usable left => callers fall back to LIKE.
+  assert.equal(ftsQuery('%'), null);
+  assert.equal(ftsQuery('   '), null);
+  assert.equal(ftsQuery(null), null);
+  // A pathological query builds a bounded expression.
+  assert.equal(ftsQuery(Array.from({ length: 40 }, (_, i) => `w${i}`).join(' ')).split(' ').length, 12);
+});
+
+test('library search is served by the full-text index across title, artist and album', async () => {
+  const t1 = uid(), t2 = uid(), t3 = uid();
+  addTrack({ deezer_id: t1, title: 'Daylight Breaks', artist: 'The Sound', album: 'First Light', album_id: 7100, file_path: `/lib/${t1}.wav` });
+  addTrack({ deezer_id: t2, title: 'Night Falls', artist: 'Daylight Robbery', album: 'Second', album_id: 7101, file_path: `/lib/${t2}.wav` });
+  addTrack({ deezer_id: t3, title: 'Unrelated', artist: 'Nobody', album: 'Daylight Saving', album_id: 7102, file_path: `/lib/${t3}.wav` });
+
+  const ids = async (q) => (await req(srv.url, 'GET', `/api/library?q=${encodeURIComponent(q)}`)).body.map(t => t.deezer_id).sort();
+  // One token, matched in any of the three indexed columns.
+  assert.deepEqual(await ids('daylight'), [t1, t2, t3].sort());
+  // Prefixes match, so search-as-you-type works before the word is finished.
+  assert.deepEqual(await ids('dayl'), [t1, t2, t3].sort());
+  // Several tokens are ANDed, and may come from different columns.
+  assert.deepEqual(await ids('daylight breaks'), [t1]);
+  assert.deepEqual(await ids('sound first'), [t1]);
+  assert.deepEqual(await ids('daylight nothingatall'), []);
+});
+
+test('library search falls back to a substring scan the index cannot answer', async () => {
+  const t = uid();
+  addTrack({ deezer_id: t, title: 'Heartbeat', artist: 'A', album_id: 7200, file_path: `/lib/${t}.wav` });
+  const ids = async (q) => (await req(srv.url, 'GET', `/api/library?q=${encodeURIComponent(q)}`)).body.map(x => x.deezer_id);
+  // FTS5 only matches from the start of a word; a mid-word query still finds it.
+  assert.deepEqual(await ids('eartbea'), [t]);
+  assert.deepEqual(await ids('Heart'), [t]);
+  assert.deepEqual(await ids('nothing like this'), []);
+});
+
+test('the full-text index tracks catalog inserts, updates and deletes', async () => {
+  const t = uid();
+  addTrack({ deezer_id: t, title: 'Original Title', artist: 'A', album_id: 7300, file_path: `/lib/${t}.wav` });
+  const ids = async (q) => (await req(srv.url, 'GET', `/api/library?q=${encodeURIComponent(q)}`)).body.map(x => x.deezer_id);
+  assert.deepEqual(await ids('original'), [t]);
+
+  // An upsert that renames the track moves it in the index.
+  upsertTrack({ deezer_id: t, title: 'Renamed Song', artist: 'A', artist_id: 1, album: null, album_id: 7300, track_position: 1, duration: 10, cover: null });
+  assert.deepEqual(await ids('renamed'), [t]);
+  assert.deepEqual(await ids('original'), []);
+
+  db.prepare('DELETE FROM tracks WHERE deezer_id = ?').run(t);
+  assert.deepEqual(await ids('renamed'), []);
 });
 
 test('social user search treats LIKE wildcards literally', async () => {

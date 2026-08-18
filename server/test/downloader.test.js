@@ -6,6 +6,7 @@ import path from 'node:path';
 import { config, setSetting } from '../db.js';
 import * as fm from './helpers/fetchmock.js';
 import { stubTimers } from './helpers/timers.js';
+import * as ff from './helpers/fakeffmpeg.js';
 import { writeWav } from './helpers/wav.js';
 import {
   queueDownload, cleanupStaleTracks, scanLibrary, deleteTrackFile,
@@ -638,4 +639,122 @@ test('resumeOnBoot re-queues searching downloads', async () => {
   await settle(20);
   // The row stays queued (pump disabled) but resumeOnBoot ran without error.
   assert.ok(db.prepare('SELECT 1 FROM downloads WHERE deezer_id = 80').get());
+});
+
+/* ------------------------------------------------------------- tag writing */
+// Tagging is off by default, so these tests turn it on and stand in a fake
+// ffmpeg (see helpers/fakeffmpeg.js) — CI has no real one, and a real remux
+// would make the suite depend on codec support.
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32, 3)]);
+
+// completeAndTick resets the fetch mock, so imports needing a cover route wire
+// their own routes here instead.
+async function completeAndTickWithCover(remoteFiles, coverRoute = true) {
+  fm.reset(); fm.install();
+  fm.on(/transfers\/downloads\/peer$/, () => ({ directories: [{ files: remoteFiles.map((f, i) => ({ id: i, filename: f, state: 'Completed, Succeeded', percentComplete: 100, size: 100 })) }] }));
+  if (coverRoute) fm.on('covers.test', () => new Response(JPEG));
+  await runTick();
+}
+
+test('import: tags are written before linking, so library and source stay one inode', async () => {
+  setSetting('tag_write_enabled', '1');
+  ff.install('ok');
+  try {
+    const track = { id: 700, title: 'Tagged', artist: { name: 'A', id: 1 }, duration: 2,
+      album: { id: 70, title: 'Al', cover_medium: 'https://covers.test/250x250-x.jpg' }, isrc: 'FR1234567890' };
+    const remote = ['peer/Tagged.mp3'];
+    const id = await activeDownload('track', 700, track, remote);
+    writeWav(path.join(dlDir(), 'Tagged.mp3'), 2);
+    await completeAndTickWithCover(remote);
+
+    assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+    const row = db.prepare('SELECT file_path, source_path FROM tracks WHERE deezer_id = 700').get();
+
+    // ffmpeg was handed the Deezer metadata, and the cover as a second input.
+    const [argv] = ff.calls();
+    const meta = ff.metaOf(argv);
+    assert.equal(meta.title, 'Tagged');
+    assert.equal(meta.artist, 'A');
+    assert.equal(meta.album, 'Al');
+    assert.equal(meta.ISRC, 'FR1234567890');
+    assert.equal(argv.filter(a => a === '-i').length, 2);
+
+    // The point of tagging *before* the hardlink: one inode, not two copies.
+    assert.equal(fs.statSync(row.file_path).ino, fs.statSync(row.source_path).ino);
+  } finally { ff.uninstall(); setSetting('tag_write_enabled', '0'); }
+});
+
+test('import: album art is downloaded once for the whole album', async () => {
+  setSetting('tag_write_enabled', '1');
+  ff.install('ok');
+  try {
+    const cover = 'https://covers.test/250x250-al.jpg';
+    const album = { id: 710, title: 'Al', artist: { name: 'A', id: 1 }, cover_medium: cover, tracks: { data: [
+      { id: 7101, title: 'One', artist: { name: 'A', id: 1 }, track_position: 1, duration: 2 },
+      { id: 7102, title: 'Two', artist: { name: 'A', id: 1 }, track_position: 2, duration: 3 },
+    ] } };
+    const remote = ['A/Al/One.mp3', 'A/Al/Two.mp3'];
+    const id = await activeDownload('album', 710, album, remote);
+    const dir = path.join(dlDir(), 'Al'); fs.mkdirSync(dir, { recursive: true });
+    writeWav(path.join(dir, 'One.mp3'), 2);
+    writeWav(path.join(dir, 'Two.mp3'), 3);
+
+    let coverFetches = 0;
+    fm.reset(); fm.install();
+    fm.on(/transfers\/downloads\/peer$/, () => ({ directories: [{ files: remote.map((f, i) => ({ id: i, filename: f, state: 'Completed, Succeeded', percentComplete: 100, size: 100 })) }] }));
+    fm.on('covers.test', () => { coverFetches++; return new Response(JPEG); });
+    await runTick();
+
+    assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+    assert.equal(ff.calls().length, 2);   // both files tagged
+    assert.equal(coverFetches, 1);        // one image for the album, not one per track
+    // Album track numbers carry the total, which is what other players show.
+    assert.equal(ff.metaOf(ff.calls()[0]).track, '1/2');
+  } finally { ff.uninstall(); setSetting('tag_write_enabled', '0'); }
+});
+
+test('import: art can be turned off while still writing tags', async () => {
+  setSetting('tag_write_enabled', '1');
+  setSetting('tag_art_enabled', '0');
+  ff.install('ok');
+  try {
+    const track = { id: 720, title: 'NoArt', artist: { name: 'A', id: 1 }, duration: 2,
+      album: { id: 72, title: 'Al', cover_medium: 'https://covers.test/250x250-x.jpg' } };
+    const remote = ['peer/NoArt.mp3'];
+    await activeDownload('track', 720, track, remote);
+    writeWav(path.join(dlDir(), 'NoArt.mp3'), 2);
+    // No cover route registered: fetching one would throw in the mock.
+    await completeAndTickWithCover(remote, false);
+
+    const [argv] = ff.calls();
+    assert.equal(argv.filter(a => a === '-i').length, 1);
+    assert.equal(ff.metaOf(argv).title, 'NoArt');
+  } finally { ff.uninstall(); setSetting('tag_write_enabled', '0'); setSetting('tag_art_enabled', '1'); }
+});
+
+test('import: a tagging failure leaves the file untagged but still imports it', async () => {
+  setSetting('tag_write_enabled', '1');
+  ff.install('fail');
+  try {
+    const track = { id: 730, title: 'Stubborn', artist: { name: 'A', id: 1 }, duration: 2, album: { id: 73, title: 'Al' } };
+    const remote = ['peer/Stubborn.mp3'];
+    const id = await activeDownload('track', 730, track, remote);
+    writeWav(path.join(dlDir(), 'Stubborn.mp3'), 2);
+    await completeAndTickWithCover(remote, false);
+
+    assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+    assert.ok(fs.existsSync(db.prepare('SELECT file_path FROM tracks WHERE deezer_id = 730').get().file_path));
+  } finally { ff.uninstall(); setSetting('tag_write_enabled', '0'); }
+});
+
+test('import: tagging is skipped entirely while the setting is off', async () => {
+  ff.install('ok');
+  try {
+    const track = { id: 740, title: 'Plain', artist: { name: 'A', id: 1 }, duration: 2, album: { id: 74, title: 'Al' } };
+    const remote = ['peer/Plain.mp3'];
+    await activeDownload('track', 740, track, remote);
+    writeWav(path.join(dlDir(), 'Plain.mp3'), 2);
+    await completeAndTickWithCover(remote, false);
+    assert.deepEqual(ff.calls(), []);
+  } finally { ff.uninstall(); }
 });

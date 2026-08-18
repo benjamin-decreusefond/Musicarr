@@ -2,6 +2,7 @@
 import { db } from '../db.js';
 import { publish } from '../events.js';
 import { logger } from '../log.js';
+import { inc } from '../metrics.js';
 
 const log = logger('download');
 
@@ -19,6 +20,7 @@ export function setStatus(id, status, detail, extra = {}) {
   const sets = Object.keys(fields).map(k => `${k} = @${k}`).join(', ');
   db.prepare(`UPDATE downloads SET ${sets}, updated_at = datetime('now') WHERE id = @id`)
     .run({ id, ...fields });
+  inc('musicarr_download_transitions_total', { status });
   if (status === 'error' || status === 'not_found') log.warn(`#${id} -> ${status}`, detail || '');
   else log.info(`#${id} -> ${status}`, detail || '');
   publishDownload(id);

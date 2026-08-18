@@ -8,6 +8,8 @@ import { deezerGet } from '../sources.js';
 import { logger } from '../log.js';
 import { walkAudio, safeName, normTitle, titleMatches, slskdFilesOf, fileTrackNo, fileDiscNo } from './util.js';
 import { confidence, durVerdict, pickMatch } from './match.js';
+import { writeTags, fetchCover } from './tags.js';
+import { inc } from '../metrics.js';
 
 const log = logger('download');
 
@@ -76,8 +78,17 @@ export async function importDownload(dl) {
   // of promoting every song into the shared Library view.
   const promote = dl.to_library == null || !!dl.to_library;
 
+  // Cover art is per-album, so fetch each one once and share it across every
+  // track of the import instead of re-downloading it per file.
+  const covers = new Map();
+  const coverFor = async (want) => {
+    if (!config.tagArtEnabled || !want.cover) return null;
+    if (!covers.has(want.cover)) covers.set(want.cover, await fetchCover(want.cover));
+    return covers.get(want.cover);
+  };
+
   // Link one downloaded file into the library for a wanted track.
-  const linkInto = (want, fi) => {
+  const linkInto = async (want, fi) => {
     fi.used = true;
     const ext = path.extname(fi.path);
     const destDir = path.join(config.musicDir, safeName(want.artist), safeName(want.album || 'Singles'));
@@ -97,6 +108,15 @@ export async function importDownload(dl) {
       dest = path.join(destDir, `${num}${safeName(want.title)}${ext}`);
       if (ownedByOther(dest)) dest = path.join(destDir, `${safeName(want.title)} (${want.deezer_id})${ext}`);
     }
+    // Stamp the requested metadata onto the file *before* linking, while it is
+    // still a single inode — see tags.js. Best-effort: an untagged file is still
+    // a perfectly playable file, so a failure here never fails the import.
+    if (config.tagWriteEnabled) {
+      const tagged = await writeTags(fi.path, { ...want, track_total: wanted.length > 1 ? wanted.length : null },
+        { cover: await coverFor(want) });
+      if (tagged) log.debug(`#${dl.id} tagged ${path.basename(fi.path)} as "${want.artist} - ${want.title}"`);
+    }
+
     // Hardlink into the root folder (instant, no extra disk space). Falls back
     // to a copy when the slskd download dir and root folder are on different
     // filesystems.
@@ -138,7 +158,7 @@ export async function importDownload(dl) {
       match = fileInfos[0];
     }
     if (!match) { unmatched.push(want); continue; }
-    linkInto(want, match);
+    await linkInto(want, match);
   }
 
   // Positional fallback for albums: if some tracks still didn't match (messy
@@ -153,7 +173,7 @@ export async function importDownload(dl) {
       log.info(`#${dl.id} positional fallback: assigning ${Math.min(freeFiles.length, need.length)} leftover file(s) by track order`);
       for (let i = 0; i < need.length && i < freeFiles.length; i++) {
         if (confidence(need[i], freeFiles[i]) < 0) continue; // never mislabel (length/ISRC)
-        linkInto(need[i], freeFiles[i]);
+        await linkInto(need[i], freeFiles[i]);
       }
     }
   }
@@ -194,6 +214,10 @@ export async function importDownload(dl) {
         { failover: true });
     }
   }
+  // Match quality over time: a rising `unmatched` share means the ranking or the
+  // matcher is letting the wrong folders through, long before anyone complains.
+  inc('musicarr_imports_total', { result: 'imported' }, imported);
+  if (wanted.length > imported) inc('musicarr_imports_total', { result: 'unmatched' }, wanted.length - imported);
   log.info(`#${dl.id} import complete: ${imported}/${wanted.length} track(s)`);
   return imported;
 }

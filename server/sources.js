@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { config, DOWNLOAD_FORMATS } from './db.js';
 import { logger } from './log.js';
+import { inc } from './metrics.js';
 import { createCache } from './cache.js';
 
 const log = logger('sources');
@@ -31,7 +32,11 @@ const DEEZER_TIMEOUT_MS = parseInt(process.env.DEEZER_TIMEOUT_MS || '15000', 10)
 export async function deezerGet(pathAndQuery) {
   const url = `${DEEZER}/${pathAndQuery}`;
   return deezerCache.wrap(url, async () => {
-    const r = await fetch(url, { signal: AbortSignal.timeout(DEEZER_TIMEOUT_MS) });
+    // Counted inside the cache miss: this measures what actually leaves the
+    // process, which is what Deezer rate-limits on.
+    const r = await fetch(url, { signal: AbortSignal.timeout(DEEZER_TIMEOUT_MS) })
+      .catch(e => { inc('musicarr_external_requests_total', { service: 'deezer', outcome: 'error' }); throw e; });
+    inc('musicarr_external_requests_total', { service: 'deezer', outcome: r.ok ? 'ok' : 'error' });
     if (!r.ok) throw new Error(`Deezer ${r.status}`);
     const body = await r.json();
     // Deezer reports errors as 200s with an error payload; surface (and don't
@@ -104,7 +109,8 @@ async function slskdFetch(pathAndQuery, opts = {}) {
     ...opts,
     headers: { 'X-API-Key': config.slskdApiKey, 'Content-Type': 'application/json', ...(opts.headers || {}) },
     signal: AbortSignal.timeout(opts.timeoutMs || 20000),
-  });
+  }).catch(e => { inc('musicarr_external_requests_total', { service: 'slskd', outcome: 'error' }); throw e; });
+  inc('musicarr_external_requests_total', { service: 'slskd', outcome: r.ok ? 'ok' : 'error' });
   if (r.status === 401 || r.status === 403) throw new Error('slskd rejected the API key');
   if (!r.ok) {
     let body = ''; try { body = await r.text(); } catch { /* ignore */ }

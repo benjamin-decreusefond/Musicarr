@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { db, upsertArtist } from '../db.js';
+import { db, upsertArtist, ftsQuery } from '../db.js';
 import { requireAdmin } from '../auth.js';
 import { deezerGet } from '../sources.js';
 import { deleteTrackFile, scanLibrary, blockedPeers, clearPeerStrikes } from '../downloader.js';
@@ -30,9 +30,14 @@ api.get('/library', (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const limit = Math.min(1000, Math.max(0, parseInt(req.query.limit, 10) || 0));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const filter = q ? `AND (t.title LIKE @q ESCAPE '\\' OR t.artist LIKE @q ESCAPE '\\' OR t.album LIKE @q ESCAPE '\\')` : '';
   const page = limit ? 'LIMIT @limit OFFSET @offset' : '';
-  const rows = db.prepare(`
+
+  // Two search strategies for `q`. The FTS5 index (see db.js) is the fast path
+  // and the only one that scales, but it matches whole words by prefix, so a
+  // mid-word query ("eart" for "Heart") finds nothing there. When it comes back
+  // empty we retry with the old LIKE substring scan, which is slow but only
+  // pays that cost on a query the index couldn't answer.
+  const listRows = (mode) => db.prepare(`
     SELECT t.*,
       (t.file_path IS NOT NULL) AS available,
       EXISTS(SELECT 1 FROM favorites f WHERE f.user_id = @uid AND f.track_id = t.deezer_id) AS favorite,
@@ -41,15 +46,26 @@ api.get('/library', (req, res) => {
             OR (d.kind = 'album' AND d.deezer_id = t.album_id)
          ORDER BY d.created_at DESC LIMIT 1) AS download_status
     FROM tracks t
+    ${mode === 'fts' ? 'JOIN tracks_fts ON tracks_fts.rowid = t.deezer_id' : ''}
     WHERE (t.file_path IS NOT NULL
        OR EXISTS (SELECT 1 FROM downloads d
             WHERE d.status IN ('searching', 'downloading', 'importing')
               AND ((d.kind = 'track' AND d.deezer_id = t.deezer_id)
                 OR (d.kind = 'album' AND d.deezer_id = t.album_id))))
-      ${filter}
+      ${mode === 'fts' ? 'AND tracks_fts MATCH @m' : ''}
+      ${mode === 'like' ? `AND (t.title LIKE @q ESCAPE '\\' OR t.artist LIKE @q ESCAPE '\\' OR t.album LIKE @q ESCAPE '\\')` : ''}
     ORDER BY (t.file_path IS NOT NULL) DESC, t.added_at DESC
     ${page}
-  `).all({ uid: req.user.id, ...(q ? { q: `%${likeEscape(q)}%` } : {}), ...(limit ? { limit, offset } : {}) });
+  `).all({
+    uid: req.user.id,
+    ...(mode === 'like' ? { q: `%${likeEscape(q)}%` } : {}),
+    ...(mode === 'fts' ? { m: ftsQuery(q) } : {}),
+    ...(limit ? { limit, offset } : {}),
+  });
+
+  const match = q ? ftsQuery(q) : null;
+  let rows = listRows(match ? 'fts' : q ? 'like' : 'all');
+  if (match && !rows.length) rows = listRows('like');
   res.json(rows);
 });
 
