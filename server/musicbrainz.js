@@ -307,3 +307,51 @@ export async function musicbrainzAlbum(localId) {
     source: 'musicbrainz',
   };
 }
+
+/* ------------------------------------------------------------ housekeeping */
+// Searching allocates an id for every result it *displays* — a dozen releases
+// and twenty-five recordings per query — while at most one or two are ever acted
+// on. Those mappings are permanent, so a read-only action grows the table
+// forever. This prunes the ones nothing references.
+//
+// The grace period is the important part. An id handed to a browser lives in
+// that page until the user clicks; deleting the mapping underneath them turns
+// "download" into "Unknown MusicBrainz album". A day is far longer than any
+// search result stays actionable.
+//
+// Deleting is safe precisely because `mb_ids.local_id` is AUTOINCREMENT: a
+// pruned id is never handed out again, so nothing can later resolve to the
+// wrong recording. Searching for the same release tomorrow simply mints a new
+// one, and nothing referenced the old.
+const MB_ID_GRACE_DAYS = 1;
+
+// Every column that can hold a synthetic id. `favorites`, `playlist_items` and
+// `offline_keeps` are absent on purpose: they have a foreign key onto
+// tracks.deezer_id, so a row there implies the track row that already keeps its
+// mapping alive. The rest have no such constraint and must be listed.
+const MB_ID_REFERENCES = `
+  SELECT deezer_id     AS id FROM tracks
+  UNION ALL SELECT album_id     FROM tracks              WHERE album_id IS NOT NULL
+  UNION ALL SELECT deezer_id    FROM downloads
+  UNION ALL SELECT track_id     FROM plays
+  UNION ALL SELECT track_id     FROM now_playing         WHERE track_id IS NOT NULL
+  UNION ALL SELECT track_id     FROM listen_sessions     WHERE track_id IS NOT NULL
+  UNION ALL SELECT collection_id FROM offline_collections WHERE kind = 'album'
+  UNION ALL SELECT album_id     FROM seen_artist_albums
+`;
+
+/** Drop id mappings that nothing references and that are past the grace period.
+ *  Returns how many were removed. */
+export function pruneMbIds({ graceDays = MB_ID_GRACE_DAYS } = {}) {
+  // The outer IS NOT NULL is deliberate belt-and-braces: a single NULL anywhere
+  // inside a NOT IN subquery makes the whole predicate NULL, which would delete
+  // nothing at all — silently, and only once some column upstream became
+  // nullable. Filtering here means that can never happen.
+  const info = db.prepare(`
+    DELETE FROM mb_ids
+    WHERE created_at < datetime('now', ?)
+      AND (? + local_id) NOT IN (SELECT id FROM (${MB_ID_REFERENCES}) WHERE id IS NOT NULL)
+  `).run(`-${graceDays} days`, MB_ID_BASE);
+  if (info.changes) log.info(`pruned ${info.changes} unreferenced id mapping(s)`);
+  return info.changes;
+}

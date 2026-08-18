@@ -12,6 +12,7 @@ import { candidateKey, failedCandidatesOf, PER_CANDIDATE_MAX, MAX_ATTEMPTS } fro
 import { pendingImports, progressTrack, importDownload, rebuildPlan } from './import.js';
 import { runSearch } from './search.js';
 import { cleanupStaleTracks } from './library.js';
+import { pruneMbIds } from '../musicbrainz.js';
 
 const log = logger('download');
 
@@ -23,6 +24,10 @@ export function startPoller() {
   // Auto-cleanup of stale tracks: shortly after boot, then daily.
   setTimeout(() => cleanupStaleTracks().catch(e => log.error('cleanup failed', e)), 60000);
   setInterval(() => cleanupStaleTracks().catch(e => log.error('cleanup failed', e)), 24 * 60 * 60 * 1000);
+  // Same cadence for the MusicBrainz id mappings a search left behind.
+  const pruneIds = () => { try { pruneMbIds(); } catch (e) { log.error('id mapping prune failed', e); } };
+  setTimeout(pruneIds, 90000);
+  setInterval(pruneIds, 24 * 60 * 60 * 1000);
 }
 
 /** A transfer failed (terminal error or stalled): record the candidate,
