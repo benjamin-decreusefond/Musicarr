@@ -18,6 +18,21 @@ const envDefaults = {
 // Accepted values of the `download_format` setting (see config.downloadFormat).
 export const DOWNLOAD_FORMATS = ['any', 'mp3', 'flac'];
 
+// Catalog rows normally carry a Deezer id. Releases Deezer simply doesn't have
+// (independent labels, recent rap, regional pressings) can come from MusicBrainz
+// instead, and those need an integer key too — `deezer_id` is the primary key
+// three tables point at, and MBIDs are UUIDs.
+//
+// So MusicBrainz-sourced rows are given a synthetic id above this base, mapped
+// to their MBID in `mb_ids`. A base rather than a hash: hashing a UUID into an
+// integer has a real birthday-collision probability over a large library, and a
+// collision here would silently merge two different songs. Deezer ids are ten
+// digits today, so 10^12 leaves several orders of magnitude of headroom, and
+// staying positive keeps every existing `id <= 0` validation working.
+export const MB_ID_BASE = 1_000_000_000_000;
+/** Whether a catalog id refers to a MusicBrainz-sourced row rather than Deezer. */
+export const isMbId = (id) => Number(id) >= MB_ID_BASE;
+
 // Every container Musicarr will accept from a peer, most-preferred first. This
 // order is the default preference of a quality profile (see config.qualityProfile).
 export const AUDIO_FORMATS = ['flac', 'm4a', 'mp3', 'ogg', 'opus', 'aac', 'wav', 'wma'];
@@ -120,6 +135,12 @@ export const config = {
 
   /** The profile candidate ranking gates on. */
   get qualityProfile() { return { accepted: this.qualityAccepted, minBitrate: this.qualityMinBitrate }; },
+
+  // Let searches fall back to MusicBrainz when Deezer returns *nothing* for a
+  // query, so releases missing from Deezer's catalog can still be found and
+  // downloaded. Separate from the enrichment toggle below: enriching Deezer
+  // rows and adding non-Deezer rows are different commitments.
+  get musicbrainzFallbackEnabled() { return getSetting('musicbrainz_fallback_enabled') === '1'; },
 
   // Look each imported track up in MusicBrainz to record its MBIDs and original
   // release date. Off by default: it's an extra external service, and its terms
@@ -427,6 +448,25 @@ if (!trackQualityCols.includes('mb_recording_id')) {
   db.exec(`ALTER TABLE tracks ADD COLUMN release_date TEXT`);
 }
 
+// Which catalog a row came from. Everything that existed before this column did
+// came from Deezer, which is exactly what the default says.
+if (!trackQualityCols.includes('source')) {
+  db.exec(`ALTER TABLE tracks ADD COLUMN source TEXT NOT NULL DEFAULT 'deezer'`);
+}
+
+// MBID <-> synthetic integer id (see MB_ID_BASE). AUTOINCREMENT rather than
+// max(rowid)+1 so an id is never reused after a delete: a recycled id would
+// silently re-point old playlist and favorite rows at a different song.
+db.exec(`
+CREATE TABLE IF NOT EXISTS mb_ids (
+  local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mbid TEXT NOT NULL,
+  kind TEXT NOT NULL,           -- 'recording' | 'release'
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (mbid, kind)
+);
+`);
+
 // An upgrade download replaces a file that is already in the library, so the
 // import must not take its usual "we already have this one" shortcut.
 const dlUpgradeCols = db.prepare(`PRAGMA table_info(downloads)`).all().map(c => c.name);
@@ -662,15 +702,17 @@ fs.mkdirSync(config.musicDir, { recursive: true });
  *  later album-flavoured upsert must not wipe a value learned from the full
  *  track endpoint. Callers may omit `isrc` entirely (defaults to null). */
 export function upsertTrack(t) {
+  // `source` is derived from the id rather than passed in, so no call site can
+  // forget it and mislabel where a row came from.
   db.prepare(`
-    INSERT INTO tracks (deezer_id, title, artist, artist_id, album, album_id, track_position, duration, cover, isrc)
-    VALUES (@deezer_id, @title, @artist, @artist_id, @album, @album_id, @track_position, @duration, @cover, @isrc)
+    INSERT INTO tracks (deezer_id, title, artist, artist_id, album, album_id, track_position, duration, cover, isrc, source)
+    VALUES (@deezer_id, @title, @artist, @artist_id, @album, @album_id, @track_position, @duration, @cover, @isrc, @source)
     ON CONFLICT(deezer_id) DO UPDATE SET
       title=excluded.title, artist=excluded.artist, artist_id=excluded.artist_id,
       album=excluded.album, album_id=excluded.album_id,
       track_position=excluded.track_position, duration=excluded.duration, cover=excluded.cover,
       isrc=COALESCE(excluded.isrc, isrc)
-  `).run({ isrc: null, ...t });
+  `).run({ isrc: null, ...t, source: isMbId(t.deezer_id) ? 'musicbrainz' : 'deezer' });
 }
 
 export function trackRowFromDeezer(d, albumOverride) {

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { db } from '../db.js';
-import { deezerGet } from '../sources.js';
+import { catalogTrack, catalogAlbum } from '../catalog.js';
 import { queueDownload, cancelDownloadTransfers, retryDownload } from '../downloader.js';
 import { publish } from '../events.js';
 import { rateLimit } from '../ratelimit.js';
@@ -23,10 +23,10 @@ api.post('/download', downloadLimit, async (req, res) => {
     }
     let label, cover;
     if (kind === 'album') {
-      const a = await deezerGet(`album/${deezer_id}`);
+      const a = await catalogAlbum(deezer_id);
       label = `${a.artist?.name} – ${a.title}`; cover = a.cover_medium;
     } else {
-      const t = await deezerGet(`track/${deezer_id}`);
+      const t = await catalogTrack(deezer_id);
       label = `${t.artist?.name} – ${t.title}`; cover = t.album?.cover_medium;
     }
     const id = queueDownload(req.user.id, kind, deezer_id, label, cover);

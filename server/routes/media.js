@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
-import { db, config, avatarPath } from '../db.js';
+import { db, config, avatarPath, isMbId } from '../db.js';
 import { deezerGet } from '../sources.js';
 import { createCache } from '../cache.js';
 import { logger } from '../log.js';
@@ -62,6 +62,10 @@ api.delete('/avatar', (req, res) => {
 api.get('/preview/:trackId', async (req, res) => {
   const id = parseInt(req.params.trackId, 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid track id' });
+  // Previews are Deezer's 30s clips; MusicBrainz is a metadata database and has
+  // no audio at all. The UI hides the button for these, so this is the answer
+  // for an API client rather than something a user should ever see.
+  if (isMbId(id)) return res.status(404).json({ error: 'No preview: this track comes from MusicBrainz, which has no audio' });
   try {
     const t = await deezerGet(`track/${id}`);
     const url = t?.preview;

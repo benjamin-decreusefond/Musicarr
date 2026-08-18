@@ -58,3 +58,19 @@ export function groupByLetter(items, getName = (x) => x?.name) {
   }
   return out;
 }
+
+// Catalog ids at or above this base come from MusicBrainz rather than Deezer.
+// Mirrors MB_ID_BASE in server/db.js — the client only needs it to know which
+// Deezer-only affordances to hide.
+export const MB_ID_BASE = 1e12;
+
+/** Whether a 30-second preview can exist for this track.
+ *
+ *  Previews are Deezer's clips; MusicBrainz is a metadata database with no
+ *  audio, so a track sourced from it has nothing to preview. The id is checked
+ *  as well as `source` because not every shape the UI handles carries one. */
+export function hasPreview(track) {
+  if (!track) return false;
+  if (track.source === 'musicbrainz') return false;
+  return Number(track.deezer_id ?? track.id ?? 0) < MB_ID_BASE;
+}

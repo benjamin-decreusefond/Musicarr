@@ -155,6 +155,7 @@ export function Settings() {
       payload.tag_write_enabled = !!s.tag_write_enabled;
       payload.tag_art_enabled = !!s.tag_art_enabled;
       payload.musicbrainz_enabled = !!s.musicbrainz_enabled;
+      payload.musicbrainz_fallback_enabled = !!s.musicbrainz_fallback_enabled;
       payload.quality_accepted = s.quality_accepted || [];
       payload.quality_min_bitrate = parseInt(s.quality_min_bitrate, 10) || 0;
       payload.quality_target = s.quality_target || '';
@@ -324,6 +325,19 @@ export function Settings() {
           where Deezer provides one. Those IDs are what Picard, Jellyfin and Beets recognise a file
           by. MusicBrainz allows one request per second, so album imports take a little longer.
           Only affects new imports — files already in the library are left alone.
+        </p>
+        <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input type="checkbox" checked={!!s.musicbrainz_fallback_enabled}
+            onChange={e => set('musicbrainz_fallback_enabled', e.target.checked)} />
+          <span className="settings-label" style={{ margin: 0 }}>Search MusicBrainz when Deezer finds nothing</span>
+        </label>
+        <p className="settings-fieldhint">
+          Deezer's catalog has gaps — independent labels, recent releases, regional pressings. When a
+          search returns <em>no</em> Deezer result at all, Musicarr looks the same query up in
+          MusicBrainz and offers those releases for download instead; Soulseek doesn't care where the
+          artist and title came from. Only on a completely empty result, so everyday searches stay
+          pure Deezer. Covers come from the Cover Art Archive, and these tracks have no 30-second
+          preview — MusicBrainz stores no audio.
         </p>
       </section>
 
