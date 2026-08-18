@@ -70,6 +70,16 @@ export const config = {
   // server). Off by default; when on, /stream?fmt=opus|mp3 transcodes.
   get transcodeEnabled() { return getSetting('transcode_enabled') === '1'; },
 
+  // Rewrite each imported file's tags (and embed the cover) from the Deezer
+  // metadata, so the library reads correctly in other players. Requires ffmpeg.
+  // Off by default: it rewrites files Soulseek peers gave you, and a file that
+  // slskd is still sharing gets a new inode in the process.
+  get tagWriteEnabled() { return getSetting('tag_write_enabled') === '1'; },
+  // Also embed cover art, which costs one image download per album. Only has an
+  // effect while tag writing is on; on by default because a library without art
+  // is the main thing people notice in another player.
+  get tagArtEnabled() { return getSetting('tag_art_enabled') !== '0'; },
+
   // --- Authentication method (set at boot; see auth.js) ---
   // 'login'  – built-in username/password sessions (the default).
   // 'none'   – no authentication at all; every request acts as a single shared
@@ -236,6 +246,18 @@ CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id);
 CREATE INDEX IF NOT EXISTS idx_plays_user ON plays(user_id, played_at);
 CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+-- The library view resolves each row's latest download status with a correlated
+-- subquery on (kind, deezer_id); without this index that's a full scan of the
+-- downloads table per track. created_at rides along so the ORDER BY ... LIMIT 1
+-- is answered from the index.
+CREATE INDEX IF NOT EXISTS idx_downloads_target ON downloads(kind, deezer_id, created_at);
+-- "Top tracks"/"on repeat" group plays by track; the existing index is keyed on
+-- (user_id, played_at) and can't serve that.
+CREATE INDEX IF NOT EXISTS idx_plays_track ON plays(track_id);
+-- Artist pages and the library artist grid filter tracks by artist.
+CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist_id);
+-- "Which playlists contain this track" (delete/cleanup guards) scans by track.
+CREATE INDEX IF NOT EXISTS idx_playlist_items_track ON playlist_items(track_id);
 
 -- Artists a user follows so new releases are auto-downloaded (Lidarr-style).
 CREATE TABLE IF NOT EXISTS followed_artists (
@@ -459,6 +481,66 @@ export function setMoodImage(slug, image) {
     INSERT INTO mood_images (slug, image, updated_at) VALUES (?, ?, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET image = excluded.image, updated_at = excluded.updated_at
   `).run(slug, image);
+}
+
+/* ------------------------------------------------- Full-text track search */
+// The library search used to run `LIKE '%q%'` over title/artist/album, which no
+// index can serve: every keystroke scanned the whole catalog. FTS5 keeps an
+// inverted index instead, maintained by triggers, so search stays fast on a
+// library with tens of thousands of tracks.
+//
+// `content='tracks'` makes it an external-content index: the text isn't stored
+// twice, the FTS table only holds the postings and reads the columns back from
+// `tracks` (keyed by deezer_id, which is the table's rowid alias).
+//
+// FTS5 is compiled into better-sqlite3, but an exotic build could lack it — in
+// that case we fall back to the old LIKE path rather than failing to boot.
+export let ftsEnabled = false;
+try {
+  const fresh = !db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracks_fts'`).get();
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
+      title, artist, album, content='tracks', content_rowid='deezer_id', tokenize='unicode61'
+    );
+    CREATE TRIGGER IF NOT EXISTS tracks_fts_ai AFTER INSERT ON tracks BEGIN
+      INSERT INTO tracks_fts(rowid, title, artist, album)
+        VALUES (new.deezer_id, new.title, new.artist, new.album);
+    END;
+    CREATE TRIGGER IF NOT EXISTS tracks_fts_ad AFTER DELETE ON tracks BEGIN
+      INSERT INTO tracks_fts(tracks_fts, rowid, title, artist, album)
+        VALUES ('delete', old.deezer_id, old.title, old.artist, old.album);
+    END;
+    CREATE TRIGGER IF NOT EXISTS tracks_fts_au AFTER UPDATE OF title, artist, album ON tracks BEGIN
+      INSERT INTO tracks_fts(tracks_fts, rowid, title, artist, album)
+        VALUES ('delete', old.deezer_id, old.title, old.artist, old.album);
+      INSERT INTO tracks_fts(rowid, title, artist, album)
+        VALUES (new.deezer_id, new.title, new.artist, new.album);
+    END;
+  `);
+  // Backfill an existing library the first time the index appears.
+  if (fresh) db.exec(`INSERT INTO tracks_fts(tracks_fts) VALUES ('rebuild')`);
+  ftsEnabled = true;
+} catch (e) {
+  // eslint-disable-next-line no-console
+  console.warn(`[db] full-text search unavailable, falling back to LIKE: ${e.message}`);
+}
+
+/** Turn free user input into a safe FTS5 MATCH expression.
+ *
+ *  Everything that isn't a letter or digit is dropped — FTS5's query language
+ *  gives `"`, `*`, `^`, `-`, `NEAR`, `OR` … a syntactic meaning, and a raw user
+ *  string would either error out or silently mean something else. Each surviving
+ *  token is quoted (so a token like `and` stays a literal) and given a `*` so
+ *  search-as-you-type matches prefixes: "dayl bre" finds "Daylight Breaks".
+ *  Returns null when nothing usable is left, which tells callers to use LIKE. */
+export function ftsQuery(q) {
+  if (!ftsEnabled) return null;
+  const tokens = String(q || '')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .slice(0, 12);            // a pathological query shouldn't build a huge expression
+  if (!tokens.length) return null;
+  return tokens.map(t => `"${t}"*`).join(' ');
 }
 
 /** Cheap readiness check that the SQLite handle is open and responsive. Throws on failure. */

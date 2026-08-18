@@ -28,6 +28,8 @@ function currentSettings() {
     cleanup_enabled: config.autoCleanupEnabled,
     cleanup_after_days: config.cleanupAfterDays,
     transcode_enabled: config.transcodeEnabled,
+    tag_write_enabled: config.tagWriteEnabled,
+    tag_art_enabled: config.tagArtEnabled,
   };
 }
 
@@ -99,6 +101,10 @@ api.put('/settings', requireAdmin, (req, res) => {
 
     // --- Streaming: on-the-fly transcoding (needs ffmpeg on the server) ---
     if (has('transcode_enabled')) setSetting('transcode_enabled', b.transcode_enabled ? '1' : '0');
+
+    // --- Metadata: rewrite tags on imported files (needs ffmpeg on the server) ---
+    if (has('tag_write_enabled')) setSetting('tag_write_enabled', b.tag_write_enabled ? '1' : '0');
+    if (has('tag_art_enabled')) setSetting('tag_art_enabled', b.tag_art_enabled ? '1' : '0');
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }

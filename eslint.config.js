@@ -13,7 +13,7 @@ export default [
     languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: { ...globals.node } },
   },
   {
-    files: ['server/**/*.js'],
+    files: ['server/**/*.{js,mjs}'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -29,7 +29,7 @@ export default [
   },
   {
     // Tests use Web globals (Response/fetch) and a temp file or two.
-    files: ['server/test/**/*.js'],
+    files: ['server/test/**/*.{js,mjs}'],
     languageOptions: {
       globals: { ...globals.node, Response: 'readonly', fetch: 'readonly' },
     },

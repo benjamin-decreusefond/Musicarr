@@ -11,6 +11,7 @@ import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
 import { startReleaseWatcher } from './releases.js';
 import { startBackups } from './backup.js';
+import { registerMetrics } from './metrics.js';
 import { logger } from './log.js';
 
 const log = logger('http');
@@ -74,6 +75,10 @@ app.get('/health/ready', (_req, res) => {
     res.status(503).json({ ok: false, db: 'error', error: String(e.message || e) });
   }
 });
+
+// Prometheus scrape target. Like the probes it sits before auth (a scraper has
+// no session) and before the SPA fallback, and reports aggregates only.
+registerMetrics(app);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);

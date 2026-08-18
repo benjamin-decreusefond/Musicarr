@@ -1,4 +1,4 @@
-// Admin server settings: root folder, slskd connection, import scan, cleanup.
+// Admin server settings: root folder, slskd connection, import scan, file tags, cleanup.
 import { useState, useEffect } from 'react';
 import { api, useMe } from '../store.jsx';
 import { events } from '../events.js';
@@ -103,6 +103,8 @@ export function Settings() {
       if (!s.slskd_api_key) delete payload.slskd_api_key;
       payload.cleanup_enabled = !!s.cleanup_enabled;
       payload.cleanup_after_days = parseInt(s.cleanup_after_days, 10) || 0;
+      payload.tag_write_enabled = !!s.tag_write_enabled;
+      payload.tag_art_enabled = !!s.tag_art_enabled;
       const next = await api.put('/api/settings', payload);
       setS(next);
       setMsg({ err: false, text: 'Settings saved. Changes apply immediately — no restart needed.' });
@@ -204,6 +206,29 @@ export function Settings() {
       </section>
 
       <AuthMethodCard />
+
+      <section className="page-block settings-section">
+        <h2 className="row-title">File metadata</h2>
+        <p className="settings-hint">
+          Soulseek files arrive with whatever tags the peer had — often wrong, often none. Musicarr
+          reads titles from its own database, so it doesn't care, but every other player does. Turn
+          this on and each imported file is rewritten with the correct artist, album, title, track
+          number and ISRC, so the library also reads correctly in Jellyfin, on a phone or in a car.
+          The audio itself is copied untouched (no re-encoding), and it needs ffmpeg on the server.
+        </p>
+        <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input type="checkbox" checked={!!s.tag_write_enabled} onChange={e => set('tag_write_enabled', e.target.checked)} />
+          <span className="settings-label" style={{ margin: 0 }}>Write tags on imported files</span>
+        </label>
+        <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <input type="checkbox" checked={!!s.tag_art_enabled} disabled={!s.tag_write_enabled}
+            onChange={e => set('tag_art_enabled', e.target.checked)} />
+          <span className="settings-label" style={{ margin: 0 }}>Embed album art (one image download per album)</span>
+        </label>
+        <p className="settings-fieldhint">
+          Only affects new imports — files already in the library are left alone.
+        </p>
+      </section>
 
       <section className="page-block settings-section">
         <h2 className="row-title">Library maintenance</h2>
