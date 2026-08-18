@@ -8,7 +8,7 @@ import { createUser, addTrack, wipe } from './helpers/seed.js';
 import { makeAuthedApp, listen, req, setUser } from './helpers/app.js';
 import {
   mbLocalId, mbidFor, coverUrlForRelease, trackFromRecording,
-  searchMusicbrainz, musicbrainzTrack, musicbrainzAlbum, resetMusicbrainz,
+  musicbrainzTrack, musicbrainzAlbum, resetMusicbrainz,
 } from '../musicbrainz.js';
 import { catalogTrack, catalogAlbum, catalogSource } from '../catalog.js';
 

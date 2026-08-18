@@ -645,7 +645,6 @@ try {
   if (fresh) db.exec(`INSERT INTO tracks_fts(tracks_fts) VALUES ('rebuild')`);
   ftsEnabled = true;
 } catch (e) {
-  // eslint-disable-next-line no-console
   console.warn(`[db] full-text search unavailable, falling back to LIKE: ${e.message}`);
 }
 
