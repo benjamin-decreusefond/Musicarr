@@ -11,8 +11,9 @@ import { api } from './api.js';
 import { startPoller, resumeOnBoot, scanLibrary } from './downloader.js';
 import { startReleaseWatcher } from './releases.js';
 import { startBackups } from './backup.js';
-import { registerMetrics } from './metrics.js';
-import { logger } from './log.js';
+import { startUpgradeWatcher } from './upgrade.js';
+import { registerMetrics, inc } from './metrics.js';
+import { logger, requestContext } from './log.js';
 
 const log = logger('http');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -80,6 +81,14 @@ app.get('/health/ready', (_req, res) => {
 // no session) and before the SPA fallback, and reports aggregates only.
 registerMetrics(app);
 
+// Everything below is a real request rather than a probe: give it an id that
+// every log record it produces will carry, and count it. Mounted after the
+// probes and /metrics on purpose — a scrape every 15s and a liveness check every
+// 10s would otherwise be most of what the log contains.
+app.use(requestContext({
+  onFinish: ({ method, status }) => inc('musicarr_http_requests_total', { method, status }),
+}));
+
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);
 app.use('/api/auth', authRouter);
@@ -115,6 +124,7 @@ resumeOnBoot();
 startPoller();
 startReleaseWatcher();
 startBackups();
+startUpgradeWatcher();
 
 app.listen(config.port, () => {
   log.info(`listening on :${config.port}`);

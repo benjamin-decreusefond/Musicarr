@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
+import { formatOf, containerOf } from './quality.js';
 import { db, config, upsertTrack, trackRowFromDeezer } from './db.js';
 import { deezerGet } from './sources.js';
 import { publish } from './events.js';
@@ -40,19 +41,24 @@ const stripTrackNo = s => s.replace(/^\s*\d{1,2}([-_. ]\s*\d{1,3})?\s*[-_.]\s*/,
 async function identify(file, root) {
   let title = stripTrackNo(path.basename(file, path.extname(file)));
   let artist = null, album = null, duration = null;
+  // Quality is recorded alongside the identification so an imported collection
+  // is immediately comparable against the upgrade target (see quality.js).
+  let format = formatOf(file), bitrate = null;
   try {
     const mm = await parseFile(file, { duration: true });
     title = mm.common.title || title;
     artist = mm.common.artist || mm.common.albumartist || null;
     album = mm.common.album || null;
     duration = mm.format?.duration ?? null;
+    format = containerOf(mm.format, file);
+    bitrate = Number.isFinite(mm.format?.bitrate) ? Math.round(mm.format.bitrate / 1000) : null;
   } catch { /* untagged/corrupt tags: fall back to the path */ }
   if (!artist) {
     const rel = path.relative(root, file).split(path.sep);
     if (rel.length >= 3) { artist = rel[0]; album = album || rel[1]; }
     else if (rel.length === 2) artist = rel[0];
   }
-  return { title, artist, album, duration };
+  return { title, artist, album, duration, format, bitrate };
 }
 
 /** Pick the Deezer hit that actually IS this file: title and artist must agree
@@ -146,7 +152,8 @@ async function runScan() {
       }
 
       upsertTrack(trackRowFromDeezer(best));
-      db.prepare('UPDATE tracks SET file_path = ?, in_library = 1 WHERE deezer_id = ?').run(file, best.id);
+      db.prepare('UPDATE tracks SET file_path = ?, in_library = 1, audio_format = ?, bitrate = ? WHERE deezer_id = ?')
+        .run(file, info.format || null, info.bitrate ?? null, best.id);
       scanState.imported++;
       log.info(`imported "${best.artist?.name} - ${best.title}" <- ${path.relative(root, file)}`);
     } catch (e) {

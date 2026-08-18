@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { config, DOWNLOAD_FORMATS } from './db.js';
+import { config, LOSSLESS_FORMATS } from './db.js';
+import { qualityGate, formatPreference, formatOf } from './quality.js';
 import { logger } from './log.js';
 import { inc } from './metrics.js';
 import { createCache } from './cache.js';
@@ -91,17 +92,6 @@ const norm = s => (s || '')
 // share individual files, so we can grab exactly one song — or a whole album
 // folder from a single peer.
 const AUDIO_EXT_RE = /\.(flac|mp3|m4a|ogg|opus|wav|aac|wma)$/i;
-
-/** Extension gate for the "preferred format" setting: with 'mp3' or 'flac'
- *  configured, candidates in any other format are dropped before ranking, so a
- *  download only ever pulls files the user wants in their library. 'any' (the
- *  default) keeps everything. */
-export function formatMatcher(format) {
-  const fmt = DOWNLOAD_FORMATS.includes(format) ? format : 'any';
-  if (fmt === 'any') return () => true;
-  const rx = new RegExp(`\\.${fmt}$`, 'i');
-  return f => rx.test(f?.filename || '');
-}
 
 async function slskdFetch(pathAndQuery, opts = {}) {
   if (!config.slskdUrl || !config.slskdApiKey) throw new Error('slskd URL / API key not configured');
@@ -263,10 +253,10 @@ export async function slskdCancel(username, id) {
 
 /** Rank candidate files for one wanted track. Returns them best-first, after
  *  dropping ones whose filename clearly doesn't match the title/artist. */
-export function scoreSlskdFiles(files, artist, title, durationSec, format = config.downloadFormat) {
+export function scoreSlskdFiles(files, artist, title, durationSec, profile = config.qualityProfile) {
   const must = norm(artist).split(' ').filter(t => t.length > 1);
   const want = norm(title).split(' ').filter(t => t.length > 1);
-  const wantedFormat = formatMatcher(format);
+  const wantedFormat = qualityGate(profile);
   const scored = [];
   for (const f of files) {
     if (!wantedFormat(f)) continue;
@@ -311,9 +301,17 @@ export function scoreSlskdFiles(files, artist, title, durationSec, format = conf
     }
     let score = (titleHits / Math.max(1, want.length)) * 50;
     score += (artistHits / Math.max(1, must.length)) * 30;
-    if (/\.flac$/i.test(base)) score += 20;
-    else if (f.bitRate >= 320 || /320/.test(base)) score += 12;
-    else if (f.bitRate && f.bitRate < 192) score -= 10;
+    // Format preference comes from the profile's ordering rather than a
+    // hardcoded "FLAC wins", so someone who wants MP3s for a phone gets them
+    // ranked first instead of merely tolerated.
+    score += formatPreference(f.filename, profile);
+    // Bitrate separates two files of the same format; it must not let a lossy
+    // file leapfrog the format the profile actually asked for, so it stays
+    // small and never applies to lossless (where the number means nothing).
+    if (!LOSSLESS_FORMATS.has(formatOf(f.filename))) {
+      if (f.bitRate >= 320 || /320/.test(base)) score += 6;
+      else if (f.bitRate && f.bitRate < 192) score -= 10;
+    }
     if (f.hasFreeUploadSlot) score += 25;                             // available now
     score -= Math.min(20, (f.queueLength || 0));                      // long queue is bad
     score += Math.min(10, (f.uploadSpeed || 0) / 100000);
@@ -333,9 +331,9 @@ export function scoreSlskdFiles(files, artist, title, durationSec, format = conf
  *  candidates: how many of the wanted track titles the folder covers, then
  *  quality/availability. Returns [{ username, directory, files, matched }]
  *  best-first; folders covering less than half the album are dropped. */
-export function scoreSlskdFolders(files, wantedTitles, format = config.downloadFormat) {
+export function scoreSlskdFolders(files, wantedTitles, profile = config.qualityProfile) {
   const wanted = wantedTitles.map(t => norm(t)).filter(Boolean);
-  const wantedFormat = formatMatcher(format);
+  const wantedFormat = qualityGate(profile);
   const folders = new Map(); // username|dir -> { username, directory, files }
   for (const f of files) {
     // Out-of-format files never join a folder, so coverage is judged on what we
@@ -353,8 +351,9 @@ export function scoreSlskdFolders(files, wantedTitles, format = config.downloadF
     const matched = wanted.filter(w => bases.some(b => b.includes(w) || (w.length > 6 && w.includes(b)))).length;
     if (matched < Math.max(1, Math.ceil(wanted.length / 2))) continue;  // too incomplete
     let score = (matched / Math.max(1, wanted.length)) * 100;
-    const flacShare = folder.files.filter(f => /\.flac$/i.test(f.filename)).length / folder.files.length;
-    score += flacShare * 15;
+    // Average format preference across the folder: a release that is entirely
+    // in the preferred format beats one that is half of it.
+    score += folder.files.reduce((n, f) => n + formatPreference(f.filename, profile), 0) / folder.files.length * 0.75;
     if (folder.files[0]?.hasFreeUploadSlot) score += 20;
     score -= Math.min(20, folder.files[0]?.queueLength || 0);
     scored.push({ ...folder, matched, score });

@@ -62,6 +62,66 @@ test('settings: read, admin gate, and validated updates', async () => {
   assert.equal((await req(srv.url, 'PUT', '/api/settings', { body: { download_format: '' } })).body.download_format, 'any');
 });
 
+test('settings: the quality profile is stored, ordered and validated', async () => {
+  asAdmin();
+  const put = (body) => req(srv.url, 'PUT', '/api/settings', { body });
+
+  // Order is meaningful — it is the preference — so it round-trips as given.
+  const saved = await put({ quality_accepted: ['mp3', 'flac'], quality_min_bitrate: 256, quality_target: 'flac' });
+  assert.deepEqual(saved.body.quality_accepted, ['mp3', 'flac']);
+  assert.equal(saved.body.quality_min_bitrate, 256);
+  assert.equal(saved.body.quality_target, 'flac');
+  // The UI needs to know what it may offer.
+  assert.ok(saved.body.audio_formats.includes('flac'));
+
+  // A comma-separated string works too (scripts, the API), duplicates collapse.
+  const csv = await put({ quality_accepted: 'flac, mp3 ,flac' });
+  assert.deepEqual(csv.body.quality_accepted, ['flac', 'mp3']);
+
+  // Upgrading needs a target; asking for it without one leaves it off.
+  assert.equal((await put({ quality_upgrade_enabled: true })).body.quality_upgrade_enabled, true);
+  assert.equal((await put({ quality_target: '' })).body.quality_upgrade_enabled, false);
+
+  assert.match((await put({ quality_accepted: ['flac', 'aiff'] })).body.error, /Unknown format: aiff/);
+  assert.match((await put({ quality_accepted: [] })).body.error, /at least one format/);
+  assert.match((await put({ quality_min_bitrate: -1 })).body.error, /between 0 and 320/);
+  assert.match((await put({ quality_min_bitrate: 999 })).body.error, /between 0 and 320/);
+  assert.match((await put({ quality_target: 'aiff' })).body.error, /Unknown target format/);
+});
+
+test('settings: MusicBrainz enrichment toggles', async () => {
+  asAdmin();
+  assert.equal((await req(srv.url, 'GET', '/api/settings')).body.musicbrainz_enabled, false);
+  assert.equal((await req(srv.url, 'PUT', '/api/settings', { body: { musicbrainz_enabled: true } })).body.musicbrainz_enabled, true);
+  assert.equal((await req(srv.url, 'PUT', '/api/settings', { body: { musicbrainz_enabled: false } })).body.musicbrainz_enabled, false);
+});
+
+test('settings/upgrade-now needs a target and reports what it queued', async () => {
+  asAdmin();
+  await req(srv.url, 'PUT', '/api/settings', { body: { quality_target: '' } });
+  const none = await req(srv.url, 'POST', '/api/settings/upgrade-now');
+  assert.equal(none.status, 400);
+  assert.match(none.body.error, /target format/);
+
+  // A library track below the target is queued even though the periodic sweep
+  // is off — that is what the button is for.
+  const t = uid();
+  const f = path.join(config.musicDir, `up-${t}.mp3`);
+  fs.writeFileSync(f, Buffer.alloc(64, 1));
+  addTrack({ deezer_id: t, title: 'Song', artist: 'A', file_path: f });
+  db.prepare(`UPDATE tracks SET audio_format = 'mp3', bitrate = 128 WHERE deezer_id = ?`).run(t);
+  await req(srv.url, 'PUT', '/api/settings', { body: { quality_target: 'flac' } });
+
+  const run = await req(srv.url, 'POST', '/api/settings/upgrade-now');
+  assert.equal(run.status, 200);
+  assert.ok(run.body.queued >= 1);
+  assert.equal(db.prepare('SELECT is_upgrade FROM downloads WHERE deezer_id = ?').get(t).is_upgrade, 1);
+
+  // Nothing left to do the second time round.
+  assert.equal((await req(srv.url, 'POST', '/api/settings/upgrade-now')).body.queued, 0);
+  await req(srv.url, 'PUT', '/api/settings', { body: { quality_target: '' } });
+});
+
 test('settings: root folder / download dir that cannot be created are rejected', async () => {
   const aFile = path.join(config.dataDir, 'a-file');
   fs.writeFileSync(aFile, 'x');
@@ -605,7 +665,7 @@ test('streaming: optional on-the-fly transcoding', async () => {
   const t = uid();
   const f = path.join(config.musicDir, 'tc.flac');
   fs.writeFileSync(f, Buffer.alloc(2048, 9));
-  addTrack({ deezer_id: t, file_path: f });
+  addTrack({ deezer_id: t, file_path: f, duration: 2 });
 
   // When disabled, ?fmt is ignored and the file streams directly.
   setSetting('transcode_enabled', '0');
@@ -617,9 +677,11 @@ test('streaming: optional on-the-fly transcoding', async () => {
   fs.writeFileSync(fake, '#!/bin/sh\nprintf TRANSCODED\n', { mode: 0o755 });
   process.env.FFMPEG_PATH = fake;
   try {
+    // ?t= (the explicit-seek form) can't be given a length, so it stays unsized.
     const opus = await req(srv.url, 'GET', `/api/stream/${t}?fmt=opus&br=96&t=5`);
     assert.equal(opus.status, 200);
     assert.equal(opus.headers.get('content-type'), 'audio/ogg');
+    assert.equal(opus.headers.get('accept-ranges'), 'none');
     assert.equal(opus.raw, 'TRANSCODED');
     assert.equal((await req(srv.url, 'GET', `/api/stream/${t}?fmt=mp3`)).headers.get('content-type'), 'audio/mpeg');
     // An unknown format falls through to a direct stream.
@@ -629,6 +691,58 @@ test('streaming: optional on-the-fly transcoding', async () => {
     // ffmpeg missing -> 500.
     process.env.FFMPEG_PATH = path.join(config.dataDir, 'no-such-ffmpeg');
     assert.equal((await req(srv.url, 'GET', `/api/stream/${t}?fmt=opus`)).status, 500);
+  } finally {
+    delete process.env.FFMPEG_PATH;
+    setSetting('transcode_enabled', '0');
+  }
+});
+
+test('streaming: a transcoded stream is seekable by byte range', async () => {
+  const t = uid();
+  const f = path.join(config.musicDir, 'seek.flac');
+  fs.writeFileSync(f, Buffer.alloc(2048, 9));
+  addTrack({ deezer_id: t, file_path: f, duration: 2 });   // 2s @ 128kbps => 32000 bytes
+  const TOTAL = 32000;
+
+  setSetting('transcode_enabled', '1');
+  const fake = path.join(config.dataDir, 'fake-ffmpeg-seek');
+  // Records the argv it was given, so the -ss computed from the byte offset can
+  // be asserted, and emits far less than the predicted length.
+  const argLog = path.join(config.dataDir, 'seek-args.txt');
+  fs.writeFileSync(fake, `#!/bin/sh\necho "$@" > ${argLog}\nprintf AUDIO\n`, { mode: 0o755 });
+  process.env.FFMPEG_PATH = fake;
+  try {
+    // No range: the whole stream, with a predicted length and ranges advertised.
+    const whole = await req(srv.url, 'GET', `/api/stream/${t}?fmt=mp3`);
+    assert.equal(whole.status, 200);
+    assert.equal(whole.headers.get('accept-ranges'), 'bytes');
+    assert.equal(whole.headers.get('content-length'), String(TOTAL));
+    // Short output is padded out to the advertised length rather than truncated.
+    assert.equal(whole.raw.length, TOTAL);
+    assert.ok(whole.raw.startsWith('AUDIO'));
+
+    // A range resumes mid-track: 16000 bytes in is one second at 128kbps.
+    const part = await req(srv.url, 'GET', `/api/stream/${t}?fmt=mp3`, { headers: { range: 'bytes=16000-' } });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-range'), `bytes 16000-${TOTAL - 1}/${TOTAL}`);
+    assert.equal(part.headers.get('content-length'), String(TOTAL - 16000));
+    assert.equal(part.raw.length, TOTAL - 16000);
+    assert.match(fs.readFileSync(argLog, 'utf8'), /-ss 1 /);
+
+    // Seeking past the end is a probe, not playback.
+    const past = await req(srv.url, 'GET', `/api/stream/${t}?fmt=mp3`, { headers: { range: `bytes=${TOTAL}-` } });
+    assert.equal(past.status, 416);
+    assert.equal(past.headers.get('content-range'), `bytes */${TOTAL}`);
+
+    // A track of unknown length can't be predicted, so it stays unseekable.
+    const u = uid();
+    const f2 = path.join(config.musicDir, 'seek2.flac');
+    fs.copyFileSync(f, f2);
+    addTrack({ deezer_id: u, file_path: f2, duration: 0 });
+    const unsized = await req(srv.url, 'GET', `/api/stream/${u}?fmt=mp3`, { headers: { range: 'bytes=100-' } });
+    assert.equal(unsized.status, 200);
+    assert.equal(unsized.headers.get('accept-ranges'), 'none');
+    assert.equal(unsized.headers.get('content-length'), null);
   } finally {
     delete process.env.FFMPEG_PATH;
     setSetting('transcode_enabled', '0');

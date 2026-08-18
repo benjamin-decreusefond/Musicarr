@@ -758,3 +758,58 @@ test('import: tagging is skipped entirely while the setting is off', async () =>
     assert.deepEqual(ff.calls(), []);
   } finally { ff.uninstall(); }
 });
+
+/* --------------------------------------------------------- quality upgrade */
+test('import: an upgrade replaces the file already in the library', async () => {
+  // A 192kbps copy is on disk; the upgrade download brings a FLAC.
+  const old = path.join(musicDir(), 'A', 'Al', 'Song.mp3');
+  fs.mkdirSync(path.dirname(old), { recursive: true });
+  writeWav(old, 2);
+  const oldSource = path.join(dlDir(), 'old-source.mp3');
+  writeWav(oldSource, 2);
+  addTrack({ deezer_id: 900, title: 'Song', artist: 'A', album: 'Al', file_path: old, duration: 2 });
+  db.prepare(`UPDATE tracks SET source_path = ?, audio_format = 'mp3', bitrate = 192,
+              upgrade_checked_at = datetime('now') WHERE deezer_id = 900`).run(oldSource);
+
+  const track = { id: 900, title: 'Song', artist: { name: 'A', id: 1 }, duration: 2, album: { id: 90, title: 'Al' } };
+  const remote = ['peer/Song.flac'];
+  const info = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine, slskd_user, slskd_file, progress, is_upgrade)
+                           VALUES (?, 'track', 900, 'L', 'downloading', 'soulseek', 'peer', ?, 0, 1)`)
+    .run(uid, JSON.stringify(remote));
+  const id = Number(info.lastInsertRowid);
+  fm.on('deezer.test/track/900', () => track);
+  resumeOnBoot();
+  await settle();
+  writeWav(path.join(dlDir(), 'Song.flac'), 2);
+  await completeAndTick(remote);
+
+  assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+  const row = db.prepare('SELECT * FROM tracks WHERE deezer_id = 900').get();
+  // The library now points at the new file, with its quality recorded...
+  assert.ok(row.file_path.endsWith('.flac'));
+  assert.ok(fs.existsSync(row.file_path));
+  // The fixture is WAV bytes under a .flac name, which the FLAC parser refuses;
+  // the extension is the fallback, which is exactly what should happen.
+  assert.equal(row.audio_format, 'flac');
+  // ...the superseded copies are gone, not left behind taking up space...
+  assert.equal(fs.existsSync(old), false);
+  assert.equal(fs.existsSync(oldSource), false);
+  // ...and the "nothing better exists" stamp is cleared, since something did.
+  assert.equal(row.upgrade_checked_at, null);
+});
+
+test('import: a normal download still short-circuits on a file already on disk', async () => {
+  const have = path.join(musicDir(), 'have910.mp3');
+  writeWav(have, 2);
+  addTrack({ deezer_id: 910, title: 'Song', artist: 'A', file_path: have, duration: 2 });
+
+  const track = { id: 910, title: 'Song', artist: { name: 'A', id: 1 }, duration: 2, album: { id: 91 } };
+  const remote = ['peer/Song.flac'];
+  const id = await activeDownload('track', 910, track, remote);
+  writeWav(path.join(dlDir(), 'Song.flac'), 2);
+  await completeAndTick(remote);
+
+  assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+  // Untouched: the reuse path never replaces what is already there.
+  assert.equal(db.prepare('SELECT file_path FROM tracks WHERE deezer_id = 910').get().file_path, have);
+});

@@ -18,6 +18,13 @@ const envDefaults = {
 // Accepted values of the `download_format` setting (see config.downloadFormat).
 export const DOWNLOAD_FORMATS = ['any', 'mp3', 'flac'];
 
+// Every container Musicarr will accept from a peer, most-preferred first. This
+// order is the default preference of a quality profile (see config.qualityProfile).
+export const AUDIO_FORMATS = ['flac', 'm4a', 'mp3', 'ogg', 'opus', 'aac', 'wav', 'wma'];
+// Formats that are lossless: a bitrate floor is meaningless for them, and they
+// are always "at least as good" as any lossy file.
+export const LOSSLESS_FORMATS = new Set(['flac', 'wav']);
+
 // A stored value of '' is meaningful (e.g. clearing a key), so only fall back
 // to the env default when nothing has been saved (null).
 const stored = (key, dflt) => { const v = getSetting(key); return v === null ? dflt : v; };
@@ -69,6 +76,55 @@ export const config = {
   // On-the-fly transcoding for low-bandwidth streaming (requires ffmpeg on the
   // server). Off by default; when on, /stream?fmt=opus|mp3 transcodes.
   get transcodeEnabled() { return getSetting('transcode_enabled') === '1'; },
+
+  /* --- Quality profile -------------------------------------------------
+   * `download_format` (any/mp3/flac) was a single hard filter. A profile
+   * separates the two questions people actually have: what will I *accept*
+   * from a peer, and what do I eventually want to *end up with*.
+   *
+   *  - accepted: which containers may be downloaded at all, in preference
+   *    order (the first is what ranking favours on a tie).
+   *  - minBitrate: a floor for lossy candidates, in kbps. A 96kbps rip that
+   *    matches the title perfectly is worse than no file at all for most
+   *    people, and nothing in the old ranking could refuse it outright.
+   *  - target: the format worth replacing an existing file for. Empty means
+   *    "never upgrade" and is the default.
+   *
+   * With nothing configured the profile is derived from the legacy
+   * download_format setting, so an existing install keeps behaving exactly as
+   * it did until someone opens the new section.
+   */
+  get qualityAccepted() {
+    const raw = getSetting('quality_accepted');
+    if (raw === null) {
+      const legacy = this.downloadFormat;
+      return legacy === 'any' ? [...AUDIO_FORMATS] : [legacy];
+    }
+    const list = raw.split(',').map(x => x.trim().toLowerCase()).filter(x => AUDIO_FORMATS.includes(x));
+    // An empty list would accept nothing at all and quietly break every
+    // download, so it falls back to accepting everything.
+    return list.length ? list : [...AUDIO_FORMATS];
+  },
+  get qualityMinBitrate() { return Math.max(0, parseInt(getSetting('quality_min_bitrate') || '0', 10) || 0); },
+  get qualityTarget() {
+    const v = (getSetting('quality_target') || '').toLowerCase();
+    return AUDIO_FORMATS.includes(v) ? v : '';
+  },
+  // The sweep that looks for better copies of files already in the library.
+  // Needs a target to aim at, so it is off unless one is set.
+  get qualityUpgradeEnabled() { return getSetting('quality_upgrade_enabled') === '1' && !!this.qualityTarget; },
+  get upgradeIntervalMs() { return parseInt(process.env.UPGRADE_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10); },
+  // How many upgrades one sweep may queue, so turning it on for a 20k-track
+  // library doesn't put 20k searches on the Soulseek network at once.
+  get upgradeBatchSize() { return Math.max(1, parseInt(process.env.UPGRADE_BATCH_SIZE || '10', 10) || 10); },
+
+  /** The profile candidate ranking gates on. */
+  get qualityProfile() { return { accepted: this.qualityAccepted, minBitrate: this.qualityMinBitrate }; },
+
+  // Look each imported track up in MusicBrainz to record its MBIDs and original
+  // release date. Off by default: it's an extra external service, and its terms
+  // cap us at one request per second, so an album import gets slower.
+  get musicbrainzEnabled() { return getSetting('musicbrainz_enabled') === '1'; },
 
   // Rewrite each imported file's tags (and embed the cover) from the Deezer
   // metadata, so the library reads correctly in other players. Requires ffmpeg.
@@ -348,6 +404,34 @@ if (!dlCols.includes('engine')) {
 if (!dlCols.includes('attempts')) {
   db.exec(`ALTER TABLE downloads ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`);
   db.exec(`ALTER TABLE downloads ADD COLUMN failed_candidates TEXT`);
+}
+
+// Quality bookkeeping: what format/bitrate each library file actually is, so
+// the upgrade sweep can tell which tracks are below the target without opening
+// every file on every pass. `upgrade_checked_at` records the last time we went
+// looking for a better copy and found none, so a track nobody shares in the
+// target format isn't re-searched every six hours forever.
+const trackQualityCols = db.prepare(`PRAGMA table_info(tracks)`).all().map(c => c.name);
+if (!trackQualityCols.includes('audio_format')) {
+  db.exec(`ALTER TABLE tracks ADD COLUMN audio_format TEXT`);
+  db.exec(`ALTER TABLE tracks ADD COLUMN bitrate INTEGER`);
+  db.exec(`ALTER TABLE tracks ADD COLUMN upgrade_checked_at TEXT`);
+}
+// MusicBrainz identity, when enrichment is on (see musicbrainz.js). MBIDs are
+// what Picard/Jellyfin/Beets key on, and release_date is the original release
+// rather than the pressing Deezer happens to serve.
+if (!trackQualityCols.includes('mb_recording_id')) {
+  db.exec(`ALTER TABLE tracks ADD COLUMN mb_recording_id TEXT`);
+  db.exec(`ALTER TABLE tracks ADD COLUMN mb_release_id TEXT`);
+  db.exec(`ALTER TABLE tracks ADD COLUMN mb_artist_id TEXT`);
+  db.exec(`ALTER TABLE tracks ADD COLUMN release_date TEXT`);
+}
+
+// An upgrade download replaces a file that is already in the library, so the
+// import must not take its usual "we already have this one" shortcut.
+const dlUpgradeCols = db.prepare(`PRAGMA table_info(downloads)`).all().map(c => c.name);
+if (!dlUpgradeCols.includes('is_upgrade')) {
+  db.exec(`ALTER TABLE downloads ADD COLUMN is_upgrade INTEGER NOT NULL DEFAULT 0`);
 }
 
 // Listen Together: synchronized group playback. A host drives a session and

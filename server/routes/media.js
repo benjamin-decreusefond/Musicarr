@@ -9,9 +9,14 @@ const log = logger('stream');
 
 // Optional on-the-fly transcode targets (?fmt=). Lower bitrate = less bandwidth
 // for remote/mobile listening, at the cost of CPU. Requires ffmpeg on the server.
+// `extra` pins each codec to constant bitrate. That costs a little quality
+// versus VBR, and buys the thing VBR cannot give: a byte offset in the output
+// corresponds to a known instant in the audio, which is what makes the stream
+// seekable (see streamTranscoded). libopus defaults to VBR, so it has to be
+// told; libmp3lame with -b:a is already CBR.
 const TRANSCODE = {
-  opus: { codec: 'libopus', container: 'ogg', type: 'audio/ogg' },
-  mp3: { codec: 'libmp3lame', container: 'mp3', type: 'audio/mpeg' },
+  opus: { codec: 'libopus', container: 'ogg', type: 'audio/ogg', extra: ['-vbr', 'off'] },
+  mp3: { codec: 'libmp3lame', container: 'mp3', type: 'audio/mpeg', extra: [] },
 };
 
 export function registerMedia(api) {
@@ -143,26 +148,94 @@ api.get('/lyrics/:trackId', async (req, res) => {
 });
 
 /* ------------------------------------------------------------- Streaming */
-// Transcode a file to the requested codec and pipe it to the response. Byte
-// ranges don't apply (output length is unknown), so this returns a plain 200;
-// the client buffers, and seeking re-requests with ?t=<seconds>.
-function streamTranscoded(req, res, filePath, fmt) {
+// Transcoding produces a stream whose length nobody knows in advance, and a
+// media element that is given no Content-Length cannot seek: the scrubber only
+// moves within what has already been buffered. On a phone on mobile data —
+// exactly the case transcoding exists for — that made the feature half-useless.
+//
+// The fix is the one every streaming server uses: because the output is CBR, a
+// byte offset maps to an instant (offset / bytesPerSecond), so we can *predict*
+// the total size from the track's known duration, advertise it, and answer a
+// Range request by starting ffmpeg at the matching timestamp. The element then
+// treats the stream as an ordinary seekable file.
+//
+// The prediction is an estimate — container overhead and the encoder's final
+// frame move it by a few kilobytes — so the response is truncated to exactly the
+// length advertised. Being a few frames short at the very end of a track is
+// invisible; sending more bytes than promised is a protocol violation.
+// How much predicted-but-unproduced output is worth padding over. A CBR encoder
+// lands within a few kilobytes; anything past this is a failed encode, not
+// rounding, and is better surfaced than hidden behind half a megabyte of zeros.
+const MAX_PAD_BYTES = 512 * 1024;
+
+function streamTranscoded(req, res, row, fmt) {
   const t = TRANSCODE[fmt];
   const bitrate = Math.min(320, Math.max(32, parseInt(req.query.br, 10) || 128));
-  const seek = Math.max(0, Number(req.query.t) || 0);
+  const bytesPerSecond = (bitrate * 1000) / 8;
+  const duration = Number(row.duration) > 0 ? Number(row.duration) : null;
+  const total = duration ? Math.ceil(duration * bytesPerSecond) : null;
+
+  // ?t= is the older, explicit seek (the client re-requests from a timestamp).
+  // It makes the body shorter than the predicted total, so a request using it
+  // falls back to the unsized, unseekable response rather than lying about its
+  // length.
+  const seekQuery = Math.max(0, Number(req.query.t) || 0);
+  const rangeHeader = String(req.headers.range || '').trim();
+  const sized = total !== null && !seekQuery;
+  const m = sized && rangeHeader ? /^bytes=(\d+)-/.exec(rangeHeader) : null;
+  const start = m ? parseInt(m[1], 10) : 0;
+
+  // Past the end of a track the element is probing, not playing.
+  if (sized && m && start >= total) {
+    return res.writeHead(416, { 'Content-Range': `bytes */${total}`, 'Accept-Ranges': 'bytes' }).end();
+  }
+
+  const seek = m ? start / bytesPerSecond : seekQuery;
+  const limit = sized ? total - start : null;
   const args = [
     ...(seek ? ['-ss', String(seek)] : []),
-    '-i', filePath, '-vn',
-    '-c:a', t.codec, '-b:a', `${bitrate}k`,
+    '-i', row.file_path, '-vn',
+    '-c:a', t.codec, '-b:a', `${bitrate}k`, ...t.extra,
     '-f', t.container, 'pipe:1',
   ];
   const ff = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
   let started = false;
   ff.on('spawn', () => {
     started = true;
-    res.writeHead(200, { 'Content-Type': t.type, 'Cache-Control': 'no-store', 'Accept-Ranges': 'none' });
+    const headers = sized
+      ? (m
+        ? { 'Content-Type': t.type, 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes',
+          'Content-Range': `bytes ${start}-${total - 1}/${total}`, 'Content-Length': limit }
+        : { 'Content-Type': t.type, 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes', 'Content-Length': total })
+      : { 'Content-Type': t.type, 'Cache-Control': 'no-store', 'Accept-Ranges': 'none' };
+    res.writeHead(sized && m ? 206 : 200, headers);
     if (req.method === 'HEAD') { ff.kill('SIGKILL'); return res.end(); }
-    ff.stdout.pipe(res);
+
+    // A manual pipe rather than stdout.pipe(res): the output has to be cut at
+    // exactly `limit` bytes, and backpressure still has to be honoured or a slow
+    // client makes the encoder buffer the whole track in memory.
+    let sent = 0;
+    ff.stdout.on('data', (chunk) => {
+      if (limit !== null) {
+        if (sent >= limit) return;
+        if (sent + chunk.length > limit) chunk = chunk.subarray(0, limit - sent);
+      }
+      sent += chunk.length;
+      if (!res.write(chunk)) ff.stdout.pause();
+      if (limit !== null && sent >= limit) { ff.kill('SIGKILL'); res.end(); }
+    });
+    res.on('drain', () => ff.stdout.resume());
+    ff.stdout.on('end', () => {
+      // The mirror image of truncating: when the encoder stops a few kilobytes
+      // short of the prediction, close the gap with zero bytes. Trailing zeros
+      // are not decodable frames, so every player ignores them — whereas a body
+      // shorter than its Content-Length is a truncated response, which browsers
+      // surface as a network error mid-track. Padding beyond a few seconds'
+      // worth would be papering over a real encode failure, so it is capped.
+      const missing = limit === null ? 0 : limit - sent;
+      if (missing > 0 && missing <= MAX_PAD_BYTES) res.write(Buffer.alloc(missing));
+      res.end();
+    });
   });
   ff.on('error', (e) => {
     log.warn(`transcode failed to start (is ffmpeg installed?): ${e.message}`);
@@ -174,12 +247,12 @@ function streamTranscoded(req, res, filePath, fmt) {
 api.get('/stream/:trackId', (req, res) => {
   const trackId = parseInt(req.params.trackId, 10);
   if (!Number.isFinite(trackId)) return res.status(400).json({ error: 'Invalid track id' });
-  const row = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(trackId);
+  const row = db.prepare('SELECT file_path, duration FROM tracks WHERE deezer_id = ?').get(trackId);
   if (!row?.file_path || !fs.existsSync(row.file_path)) return res.status(404).json({ error: 'Not in library' });
 
   // Opt-in transcoding for low-bandwidth clients (admin-enabled, needs ffmpeg).
   const fmt = String(req.query.fmt || '').toLowerCase();
-  if (config.transcodeEnabled && TRANSCODE[fmt]) return streamTranscoded(req, res, row.file_path, fmt);
+  if (config.transcodeEnabled && TRANSCODE[fmt]) return streamTranscoded(req, res, row, fmt);
 
   const stat = fs.statSync(row.file_path);
   const size = stat.size;

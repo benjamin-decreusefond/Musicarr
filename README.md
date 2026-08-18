@@ -29,7 +29,16 @@ No torrent client or indexers needed.
 
 Library search runs against a SQLite **FTS5** index kept in sync by triggers, so
 searching stays fast as the catalog grows; a query the index can't answer (a
-mid-word fragment) falls back to a substring scan.
+mid-word fragment) falls back to a substring scan. Long track lists are
+**windowed** in the browser — only the rows on screen are mounted — so a library
+of tens of thousands of tracks opens and scrolls like a small one.
+
+Streaming serves byte ranges so seeking is instant. Optional **transcoding**
+(`?fmt=opus|mp3`, admin-enabled, needs ffmpeg) is seekable too: the output is
+constant-bitrate, so its total size is predicted from the track's duration,
+advertised as a `Content-Length`, and a `Range` request restarts ffmpeg at the
+matching timestamp — which is what lets the scrubber move on a phone instead of
+only within what has buffered.
 
 ## Build the image
 
@@ -83,14 +92,14 @@ Most settings can be changed from the UI (admin only, under **Settings**),
 like Radarr/Sonarr — no restart required, and values persist in the database:
 
 - **Media management** — library root folder
-- **Soulseek (slskd)** — URL, API key, and download directory (with a *Test
-  connection* button and an enabled/off indicator), plus the **preferred
-  format**: *Any* (the default — best candidate wins, lossless preferred),
-  *MP3 only*, or *FLAC only*. A restriction applies to both single tracks and
-  album folders: candidates in other formats are dropped before ranking, so
-  nothing outside the chosen format is ever downloaded. It only affects new
-  downloads — files already in the library are left alone — and a rare track
-  may not be found at all if no peer shares it in that format.
+- **Soulseek (slskd)** — URL, API key, and download directory, with a *Test
+  connection* button and an enabled/off indicator
+- **Quality profile** — which formats to accept and in what order, a minimum
+  bitrate, and the format worth upgrading towards. See
+  [Quality profile & upgrades](#quality-profile--upgrades)
+- **File metadata** — rewrite tags on import and look tracks up in MusicBrainz.
+  See [File tags](#file-tags)
+- **Library maintenance** — automatic removal of unplayed tracks
 
 Anything set in the UI is stored in the database and **takes precedence over the
 corresponding environment variable**, which only seeds the first-run default. So
@@ -142,6 +151,11 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `METRICS_ENABLED` | `true` | Serve the Prometheus scrape endpoint at `/metrics`. Set `false` to remove it |
 | `METRICS_TOKEN` | — | When set, `/metrics` requires this token as `Authorization: Bearer` or `X-Api-Key` |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary used for transcoding and tag writing |
+| `LOG_FORMAT` | `text` | `json` emits one JSON object per line for a log pipeline |
+| `UPGRADE_INTERVAL_MS` | `21600000` | How often the quality-upgrade sweep runs (default 6h) |
+| `UPGRADE_BATCH_SIZE` | `10` | How many upgrades one sweep may queue |
+| `MUSICBRAINZ_URL` | `https://musicbrainz.org` | MusicBrainz web service (point at a mirror if you run one) |
+| `MUSICBRAINZ_INTERVAL_MS` | `1000` | Minimum gap between MusicBrainz requests. Their terms say one per second |
 
 ## Authentication method
 
@@ -294,6 +308,47 @@ through the server (`GET /api/preview/:trackId`) so they play same-origin under
 the CSP and Deezer's signed preview URLs never reach the browser; playing a real
 track or pressing play stops the preview.
 
+## Quality profile & upgrades
+
+Soulseek hands you whatever the first willing peer happened to have. Without a
+policy, a library slowly fills with 192kbps rips of albums that are widely shared
+in FLAC, and the only fix was deleting tracks and re-requesting them by hand.
+
+**Settings → Quality profile** separates the two questions that actually matter:
+
+- **Accepted formats, best first.** Only these are ever downloaded, and the
+  *order is the preference* — put MP3 first and a phone-friendly library is what
+  you get, rather than FLACs you then have to convert. Ranking follows the
+  ordering; bitrate only separates two files of the same format.
+- **Minimum bitrate.** Lossy candidates below it are refused outright — a 96kbps
+  rip that matches the title perfectly is worse than no file at all. Lossless is
+  never measured against it, and a candidate whose bitrate Soulseek doesn't
+  report is kept (it often omits it, and the title/duration gates are the real
+  filter).
+- **Upgrade target.** The quality worth *replacing an existing file* for. Empty
+  (the default) means nothing is ever upgraded.
+
+With a target set, **Automatically look for better copies** runs a sweep every
+few hours over a small batch (`UPGRADE_BATCH_SIZE`, default 10):
+
+1. Library files below the target are found from the format and bitrate recorded
+   at import — no reopening thousands of files on every pass.
+2. Each is searched for **in the target format only**, so anything that comes
+   back is an improvement by construction and never has to be second-guessed.
+3. On import the new file replaces the old one, which is deleted along with its
+   source copy.
+4. A track nobody shares in that format is stamped as checked and left alone for
+   a month, instead of being re-searched every six hours forever.
+
+Lossless is treated as the ceiling: with FLAC as the target a lossless file is
+done, and with a lossy target a lossless file is **never** downgraded to reach
+it — a target is a floor to reach, not a format to force every file into.
+
+There's a **Look for upgrades now** button next to the setting for a one-off run.
+
+Files imported before this existed have their format and bitrate filled in by
+the sweep, a couple of hundred at a time.
+
 ## File tags
 
 Musicarr reads every title, artist and album from its own database, so it plays
@@ -328,6 +383,33 @@ still a single inode shared with slskd's download directory. That keeps the "a
 file is only ever stored once" property intact — tagging after the link would
 leave you with two full copies of every song.
 
+## MusicBrainz
+
+Deezer is Musicarr's catalog and stays that way — `deezer_id` is what every
+playlist, favorite and download row points at. What MusicBrainz adds is the
+**identity layer Deezer doesn't have**: stable MBIDs for the recording, release
+and artist, plus the original release date rather than the pressing Deezer
+happens to serve.
+
+That matters outside Musicarr. MBIDs are what **Picard, Jellyfin, Plex and Beets**
+key on: a library tagged with them is one those tools recognise outright instead
+of re-guessing what each file is.
+
+Enable it under **Settings → File metadata → Look imports up in MusicBrainz**.
+Each imported track is matched:
+
+1. **By ISRC** where Deezer provides one — an ISRC identifies one specific
+   recording, so this is a lookup, not a fuzzy match.
+2. **By a search** otherwise, accepted only on a high score *and* a length that
+   agrees within five seconds. A wrong MBID is worse than none, because it's the
+   identifier other tools will then trust.
+
+The MBIDs and date are stored on the track and written into the file when tag
+writing is on. MusicBrainz is donation-funded and caps anonymous clients at one
+request per second; Musicarr honours that by serializing every call through a
+rate limiter, so album imports take a little longer. Results are cached for a
+day, and an outage costs metadata, never an import.
+
 ## Metrics
 
 Musicarr exposes Prometheus metrics at **`GET /metrics`**, so the things that
@@ -358,6 +440,26 @@ the endpoint entirely.
 
 With kube-prometheus-stack, a `ServiceMonitor` on the `http` port with
 `path: /metrics` is all it takes.
+
+## Logs
+
+`LOG_LEVEL` (`error|warn|info|debug`) sets verbosity. `LOG_FORMAT=json` switches
+every record to one JSON object per line, which is what a pipeline (Loki,
+Elasticsearch, CloudWatch) needs to index fields instead of regex-scraping a
+sentence:
+
+```json
+{"ts":"2026-08-18T11:20:03.412Z","level":"info","scope":"download","requestId":"a3f19c02","msg":"#42 imported \"Artist - Song\""}
+```
+
+Every record produced while handling a request carries that request's
+**`requestId`**, so the twenty lines a failed album download writes across four
+modules can be pulled up as one story. The id is returned on the response as
+`X-Request-Id`, and an inbound `X-Request-Id` from your proxy is honoured (when
+it looks like an id — arbitrary text could forge log records). Background jobs
+get their own id, e.g. `upgrade-sweep`.
+
+The text format stays the default so `docker logs` on a laptop is still readable.
 
 ## Health checks
 

@@ -10,6 +10,8 @@ import { walkAudio, safeName, normTitle, titleMatches, slskdFilesOf, fileTrackNo
 import { confidence, durVerdict, pickMatch } from './match.js';
 import { writeTags, fetchCover } from './tags.js';
 import { inc } from '../metrics.js';
+import { formatOf, containerOf } from '../quality.js';
+import { enrichTrack } from '../musicbrainz.js';
 
 const log = logger('download');
 
@@ -58,6 +60,9 @@ export async function importDownload(dl) {
     const base = path.basename(f);
     let title = path.basename(f, path.extname(f));
     let trackNo = null, disc = null, duration = null, isrc = null;
+    // What the file actually is, recorded on the track so the upgrade sweep can
+    // judge the library without reopening every file (see quality.js).
+    let format = formatOf(f), bitrate = null;
     try {
       const mm = await parseFile(f, { duration: true });
       title = mm.common.title || title;
@@ -65,10 +70,12 @@ export async function importDownload(dl) {
       disc = mm.common.disk?.no ?? null;
       duration = mm.format?.duration ?? null;          // actual audio length, in seconds
       isrc = (Array.isArray(mm.common.isrc) ? mm.common.isrc[0] : mm.common.isrc) || null;
+      format = containerOf(mm.format, f);
+      bitrate = Number.isFinite(mm.format?.bitrate) ? Math.round(mm.format.bitrate / 1000) : null;
     } catch { /* fall back to filename */ }
     if (trackNo == null) trackNo = fileTrackNo(base);
     if (disc == null) disc = fileDiscNo(f);
-    fileInfos.push({ path: f, title, trackNo, disc, base, duration, isrc });
+    fileInfos.push({ path: f, title, trackNo, disc, base, duration, isrc, format, bitrate });
   }
 
   const wanted = plan?.wantedTracks || [];
@@ -90,6 +97,11 @@ export async function importDownload(dl) {
   // Link one downloaded file into the library for a wanted track.
   const linkInto = async (want, fi) => {
     fi.used = true;
+    // Captured before the row is rewritten: an upgrade has to clean up the file
+    // it replaces, and after the UPDATE there is nothing left pointing at it.
+    const previous = dl.is_upgrade
+      ? db.prepare('SELECT file_path, source_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id)
+      : null;
     const ext = path.extname(fi.path);
     const destDir = path.join(config.musicDir, safeName(want.artist), safeName(want.album || 'Singles'));
     fs.mkdirSync(destDir, { recursive: true });
@@ -108,11 +120,17 @@ export async function importDownload(dl) {
       dest = path.join(destDir, `${num}${safeName(want.title)}${ext}`);
       if (ownedByOther(dest)) dest = path.join(destDir, `${safeName(want.title)} (${want.deezer_id})${ext}`);
     }
+    // Ask MusicBrainz who this recording is before writing tags, so the MBIDs
+    // land in the file rather than only in the database. Returns null when
+    // enrichment is off or nothing matched, and never throws.
+    const mb = await enrichTrack(want) || {};
+
     // Stamp the requested metadata onto the file *before* linking, while it is
     // still a single inode — see tags.js. Best-effort: an untagged file is still
     // a perfectly playable file, so a failure here never fails the import.
     if (config.tagWriteEnabled) {
-      const tagged = await writeTags(fi.path, { ...want, track_total: wanted.length > 1 ? wanted.length : null },
+      const tagged = await writeTags(fi.path,
+        { ...want, ...mb, track_total: wanted.length > 1 ? wanted.length : null },
         { cover: await coverFor(want) });
       if (tagged) log.debug(`#${dl.id} tagged ${path.basename(fi.path)} as "${want.artist} - ${want.title}"`);
     }
@@ -135,17 +153,32 @@ export async function importDownload(dl) {
     // Record the exact source so deletion can reclaim it later even if the
     // downloaded filename differs from the library name (or the download row
     // is gone). in_library is only raised for downloads meant for the Library.
-    db.prepare('UPDATE tracks SET file_path = ?, source_path = ?, in_library = CASE WHEN ? THEN 1 ELSE in_library END WHERE deezer_id = ?')
-      .run(dest, fi.path, promote ? 1 : 0, want.deezer_id);
+    db.prepare(`UPDATE tracks SET file_path = ?, source_path = ?, audio_format = ?, bitrate = ?,
+                  upgrade_checked_at = NULL,
+                  in_library = CASE WHEN ? THEN 1 ELSE in_library END
+                WHERE deezer_id = ?`)
+      .run(dest, fi.path, fi.format || null, fi.bitrate ?? null, promote ? 1 : 0, want.deezer_id);
+    // An upgrade replaced a file that was already in the library. The new one is
+    // linked and recorded; the copy it superseded is now unreferenced, and a
+    // different format means a different filename, so it wouldn't be overwritten.
+    if (dl.is_upgrade) {
+      for (const old of [previous?.file_path, previous?.source_path]) {
+        if (old && old !== dest && old !== fi.path) {
+          try { fs.unlinkSync(old); log.info(`#${dl.id} upgrade removed superseded file ${path.basename(old)}`); }
+          catch { /* already gone, or never existed */ }
+        }
+      }
+    }
     log.info(`#${dl.id} imported "${want.artist} - ${want.title}" -> ${dest}`);
     imported++;
   };
 
   const unmatched = [];
   for (const want of wanted) {
-    // If we already have this track's file globally, just reuse it.
+    // If we already have this track's file globally, just reuse it — unless this
+    // download exists precisely to replace it with a better copy.
     const have = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?').get(want.deezer_id);
-    if (have?.file_path && fs.existsSync(have.file_path)) { imported++; continue; }
+    if (!dl.is_upgrade && have?.file_path && fs.existsSync(have.file_path)) { imported++; continue; }
 
     // Match a downloaded file to this wanted track by track number / title,
     // gated and ranked by actual duration.

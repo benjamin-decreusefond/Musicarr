@@ -28,6 +28,10 @@ process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'error';
 // Point the external metadata clients at hosts the fetch stub recognises.
 process.env.DEEZER_URL = 'https://deezer.test';
 process.env.LRCLIB_URL = 'https://lrclib.test';
+process.env.MUSICBRAINZ_URL = 'https://musicbrainz.test';
+// MusicBrainz allows one request per second; the tests still need to prove the
+// limiter serializes, so shorten the interval rather than remove it.
+process.env.MUSICBRAINZ_INTERVAL_MS = '40';
 
 fs.mkdirSync(musicDir, { recursive: true });
 fs.mkdirSync(downloadDir, { recursive: true });
