@@ -353,13 +353,23 @@ test('sweepUnimported retries unimported downloads and re-searches after an outa
 });
 
 /* -------------------------------------------------------------------- startPoller */
-test('startPoller schedules the poll, sweep and cleanup timers', () => {
+test('startPoller schedules the poll, sweep, cleanup and id-prune timers', () => {
   const t = stubTimers();
+  let pruneTick;
   try {
     startPoller();
-    assert.ok(t.calls.intervals.length >= 3);
-    assert.ok(t.calls.timeouts.length >= 2);
+    assert.ok(t.calls.intervals.length >= 4);
+    assert.ok(t.calls.timeouts.length >= 3);
+    pruneTick = t.calls.timeouts[t.calls.timeouts.length - 1];
   } finally { t.restore(); }
+
+  // The id prune runs on that timer: give it something to collect and check it
+  // does, so a scheduling mistake shows up here rather than as a table that
+  // quietly grows forever.
+  mbLocalId('rec-left-by-a-search', 'recording');
+  db.prepare(`UPDATE mb_ids SET created_at = datetime('now', '-3 days')`).run();
+  pruneTick();
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mb_ids').get().n, 0);
 });
 
 /* ------------------------------------------------ Album search flow + folders */

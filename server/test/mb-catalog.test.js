@@ -8,7 +8,7 @@ import { createUser, addTrack, wipe } from './helpers/seed.js';
 import { makeAuthedApp, listen, req, setUser } from './helpers/app.js';
 import {
   mbLocalId, mbidFor, coverUrlForRelease, trackFromRecording,
-  musicbrainzTrack, musicbrainzAlbum, resetMusicbrainz,
+  musicbrainzTrack, musicbrainzAlbum, resetMusicbrainz, pruneMbIds,
 } from '../musicbrainz.js';
 import { catalogTrack, catalogAlbum, catalogSource } from '../catalog.js';
 
@@ -279,4 +279,98 @@ test('a MusicBrainz release can be queued for download', async () => {
     // The label is built from MusicBrainz metadata, same as it would be from Deezer.
     assert.match(dl.label, /Werenoi – Pyramide/);
   } finally { await s2.close(); }
+});
+
+/* ------------------------------------------------------------ id pruning */
+// Searching allocates an id for every result it displays, so a read-only action
+// grows mb_ids forever. These cover both halves of the prune: it removes what
+// nothing points at, and it must never remove what something does.
+
+// Allocate an id and backdate it past the grace period, as if it had been left
+// behind by yesterday's search.
+function staleId(mbid, kind = 'recording') {
+  const id = mbLocalId(mbid, kind);
+  db.prepare(`UPDATE mb_ids SET created_at = datetime('now', '-3 days') WHERE mbid = ? AND kind = ?`).run(mbid, kind);
+  return id;
+}
+const mappingCount = () => db.prepare('SELECT COUNT(*) AS n FROM mb_ids').get().n;
+
+test('unreferenced mappings are pruned once they are past the grace period', () => {
+  staleId('rec-browsed-1');
+  staleId('rec-browsed-2');
+  staleId('rel-browsed', 'release');
+  assert.equal(mappingCount(), 3);
+
+  assert.equal(pruneMbIds(), 3);
+  assert.equal(mappingCount(), 0);
+});
+
+test('a mapping handed out moments ago survives, so a click still resolves', () => {
+  const fresh = mbLocalId('rec-just-searched', 'recording');
+  assert.equal(pruneMbIds(), 0);
+  // The id a browser is holding right now still resolves to its MBID.
+  assert.equal(mbidFor(fresh, 'recording'), 'rec-just-searched');
+});
+
+test('a pruned id is never handed out again', () => {
+  const first = staleId('rec-old');
+  pruneMbIds();
+  const second = mbLocalId('rec-new', 'recording');
+  // AUTOINCREMENT is what makes pruning safe: reusing the id would make an old
+  // playlist row silently resolve to a different recording.
+  assert.notEqual(second, first);
+});
+
+test('every table that can hold a synthetic id keeps its mapping alive', () => {
+  // One case per referencing column. `favorites`, `playlist_items` and
+  // `offline_keeps` are absent on purpose: they have a foreign key onto
+  // tracks.deezer_id, so they cannot exist without a track row, which is
+  // already the first case here.
+  const cases = {
+    'tracks.deezer_id': (id) => addTrack({ deezer_id: id }),
+    'tracks.album_id': (id) => addTrack({ deezer_id: 4242, album_id: id }),
+    'downloads.deezer_id': (id, uid) => db.prepare(
+      `INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine) VALUES (?, 'album', ?, 'L', 'searching', 'soulseek')`).run(uid, id),
+    'plays.track_id': (id, uid) => db.prepare('INSERT INTO plays (user_id, track_id) VALUES (?, ?)').run(uid, id),
+    'now_playing.track_id': (id, uid) => db.prepare('INSERT INTO now_playing (user_id, track_id) VALUES (?, ?)').run(uid, id),
+    'listen_sessions.track_id': (id, uid) => db.prepare(
+      'INSERT INTO listen_sessions (host_id, code, track_id) VALUES (?, ?, ?)').run(uid, `c${id}`, id),
+    'offline_collections.collection_id': (id, uid) => db.prepare(
+      `INSERT INTO offline_collections (user_id, kind, collection_id) VALUES (?, 'album', ?)`).run(uid, id),
+    'seen_artist_albums.album_id': (id) => db.prepare(
+      'INSERT INTO seen_artist_albums (artist_id, album_id) VALUES (?, ?)').run(1, id),
+  };
+
+  for (const [column, reference] of Object.entries(cases)) {
+    wipe();
+    db.prepare('DELETE FROM mb_ids').run();
+    const uid = createUser({ username: 'holder' }).id;
+    const kind = /album|collection/.test(column) ? 'release' : 'recording';
+    const id = staleId(`mbid-for-${column}`, kind);
+    reference(id, uid);
+    assert.equal(pruneMbIds(), 0, `${column} should have kept its mapping`);
+    assert.equal(mappingCount(), 1, `${column} mapping was pruned`);
+  }
+});
+
+test('a referenced mapping and an unreferenced one are told apart in one pass', () => {
+  const kept = staleId('rec-in-library');
+  const dropped = staleId('rec-only-browsed');
+  addTrack({ deezer_id: kept });
+
+  assert.equal(pruneMbIds(), 1);
+  assert.equal(mbidFor(kept, 'recording'), 'rec-in-library');
+  assert.equal(mbidFor(dropped, 'recording'), null);
+});
+
+test('the grace period is configurable, and pruning an empty table is a no-op', () => {
+  const id = mbLocalId('rec-two-hours-ago', 'recording');
+  db.prepare(`UPDATE mb_ids SET created_at = datetime('now', '-2 hours') WHERE mbid = 'rec-two-hours-ago'`).run();
+
+  // Two hours old is well inside the default one-day grace period...
+  assert.equal(pruneMbIds(), 0);
+  // ...but outside a one-hour one.
+  assert.equal(pruneMbIds({ graceDays: 1 / 24 }), 1);
+  assert.equal(mbidFor(id, 'recording'), null);
+  assert.equal(pruneMbIds(), 0);
 });

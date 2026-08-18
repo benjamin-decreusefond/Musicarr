@@ -430,6 +430,12 @@ collide, and ids are never reused even after a row is deleted.
 ranking badly, not that the release is missing, and mixing catalogs there would
 scatter non-Deezer rows through everyday searches.
 
+A search allocates an id for every result it *shows*, while at most one gets
+acted on, so a daily job drops the mappings nothing references — after a day's
+grace, so an id sitting in an open browser tab still resolves when you click it.
+Pruned ids are never handed out again, so nothing can later resolve to the wrong
+recording.
+
 What differs for a MusicBrainz release:
 
 - **Covers still work** — they come from the [Cover Art
