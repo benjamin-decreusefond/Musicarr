@@ -156,6 +156,7 @@ All of these are optional seeds for the first-run defaults; the ones marked
 | `UPGRADE_BATCH_SIZE` | `10` | How many upgrades one sweep may queue |
 | `MUSICBRAINZ_URL` | `https://musicbrainz.org` | MusicBrainz web service (point at a mirror if you run one) |
 | `MUSICBRAINZ_INTERVAL_MS` | `1000` | Minimum gap between MusicBrainz requests. Their terms say one per second |
+| `COVERART_URL` | `https://coverartarchive.org` | Cover Art Archive base, for MusicBrainz-sourced covers |
 
 ## Authentication method
 
@@ -409,6 +410,40 @@ writing is on. MusicBrainz is donation-funded and caps anonymous clients at one
 request per second; Musicarr honours that by serializing every call through a
 rate limiter, so album imports take a little longer. Results are cached for a
 day, and an outage costs metadata, never an import.
+
+## When Deezer doesn't have it
+
+Deezer's catalog has gaps — independent labels, recent releases, regional
+pressings. Turn on **Settings → File metadata → Search MusicBrainz when Deezer
+finds nothing** and a search that returns *no* Deezer result at all is looked up
+in MusicBrainz instead; those releases can then be downloaded like any other.
+
+This works because the download path never really needed Deezer. Soulseek is
+searched with an artist, a title and a duration, and matched against a
+tracklist — MusicBrainz has all of them. The one thing Deezer uniquely provided
+was the integer key every playlist, favorite and download row points at, so
+MusicBrainz rows are given a synthetic id above a reserved base and mapped to
+their MBID. Deezer ids are ten digits; the base is 10¹², so the two can never
+collide, and ids are never reused even after a row is deleted.
+
+**Only on a completely empty result.** A partial Deezer result means Deezer is
+ranking badly, not that the release is missing, and mixing catalogs there would
+scatter non-Deezer rows through everyday searches.
+
+What differs for a MusicBrainz release:
+
+- **Covers still work** — they come from the [Cover Art
+  Archive](https://coverartarchive.org), keyed by release. A release with no
+  artwork shows a blank cover.
+- **No 30-second preview.** Previews are Deezer's clips; MusicBrainz stores no
+  audio, so the button isn't shown (and the API says so plainly).
+- **No artist page.** MusicBrainz has no "top tracks" or "related artists", so
+  these tracks show the artist as plain text rather than a link.
+- **Not in Explore, Made for you, or the release watcher**, which are all built
+  on Deezer's recommendations.
+
+Everything else is identical: ranking, the quality profile, matching, import,
+tagging and the library.
 
 ## Metrics
 

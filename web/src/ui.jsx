@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api, fmtTime, usePlayer, useMe } from './store.jsx';
-import { INDEX_LETTERS, groupByLetter } from './util.js';
+import { INDEX_LETTERS, groupByLetter, hasPreview } from './util.js';
 import { useVirtualRows } from './virtual.js';
 import { useContextMenu } from './menu.jsx';
 import { useT } from './i18n.jsx';
@@ -105,6 +105,9 @@ export function PreviewButton({ track }) {
   const player = usePlayer();
   const t = useT();
   const id = track.deezer_id || track.id;
+  // Nothing to preview for a MusicBrainz-sourced track: no button rather than a
+  // button that always fails.
+  if (!hasPreview(track)) return null;
   const active = player.previewId === id;
   const loading = active && player.previewLoading;
   return (
@@ -251,7 +254,7 @@ export function useTrackMenu() {
       items.push({ label: t('ctx.playNext'), icon: 'next', onClick: () => player.playNext(track) });
       items.push({ label: t('ctx.addToQueue'), icon: 'queue', onClick: () => player.enqueue(track) });
     } else {
-      items.push({ label: t('ctx.preview'), icon: 'headphones', onClick: () => player.previewTrack(track) });
+      if (hasPreview(track)) items.push({ label: t('ctx.preview'), icon: 'headphones', onClick: () => player.previewTrack(track) });
       items.push({ label: t('ctx.download'), icon: 'download', onClick: () =>
         api.post('/api/download', { kind: 'track', deezer_id: id, track }).catch(err => alert(err.message)) });
     }

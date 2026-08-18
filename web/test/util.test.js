@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmtTime, sortName, indexLetter, groupByLetter, INDEX_LETTERS } from '../src/util.js';
+import { fmtTime, sortName, indexLetter, groupByLetter, INDEX_LETTERS, hasPreview, MB_ID_BASE } from '../src/util.js';
 
 test('fmtTime formats seconds as m:ss', () => {
   assert.equal(fmtTime(0), '0:00');
@@ -66,4 +66,16 @@ test('INDEX_LETTERS covers A–Z plus the # bucket', () => {
   assert.equal(INDEX_LETTERS[0], 'A');
   assert.equal(INDEX_LETTERS[25], 'Z');
   assert.equal(INDEX_LETTERS[26], '#');
+});
+
+test('hasPreview hides the 30s clip for MusicBrainz-sourced tracks', () => {
+  // Deezer tracks have previews.
+  assert.equal(hasPreview({ id: 3135556 }), true);
+  assert.equal(hasPreview({ deezer_id: 3135556, source: 'deezer' }), true);
+  // MusicBrainz has no audio at all — by source, and by id for the shapes that
+  // don't carry one.
+  assert.equal(hasPreview({ id: 3135556, source: 'musicbrainz' }), false);
+  assert.equal(hasPreview({ id: MB_ID_BASE + 12 }), false);
+  assert.equal(hasPreview({ deezer_id: MB_ID_BASE + 12 }), false);
+  assert.equal(hasPreview(null), false);
 });

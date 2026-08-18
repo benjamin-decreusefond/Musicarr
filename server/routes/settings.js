@@ -36,6 +36,7 @@ function currentSettings() {
     quality_target: config.qualityTarget,
     quality_upgrade_enabled: config.qualityUpgradeEnabled,
     musicbrainz_enabled: config.musicbrainzEnabled,
+    musicbrainz_fallback_enabled: config.musicbrainzFallbackEnabled,
     audio_formats: AUDIO_FORMATS,
   };
 }
@@ -135,6 +136,7 @@ api.put('/settings', requireAdmin, (req, res) => {
     if (has('tag_write_enabled')) setSetting('tag_write_enabled', b.tag_write_enabled ? '1' : '0');
     if (has('tag_art_enabled')) setSetting('tag_art_enabled', b.tag_art_enabled ? '1' : '0');
     if (has('musicbrainz_enabled')) setSetting('musicbrainz_enabled', b.musicbrainz_enabled ? '1' : '0');
+    if (has('musicbrainz_fallback_enabled')) setSetting('musicbrainz_fallback_enabled', b.musicbrainz_fallback_enabled ? '1' : '0');
   } catch (e) {
     return res.status(400).json({ error: String(e.message || e) });
   }

@@ -1,7 +1,12 @@
-import { db, upsertArtist, getMoodImages, setMoodImage } from '../db.js';
+import { db, config, upsertArtist, getMoodImages, setMoodImage } from '../db.js';
 import { deezerGet, deezerPlaylistTracks } from '../sources.js';
+import { searchMusicbrainz } from '../musicbrainz.js';
+import { catalogAlbum, catalogSource } from '../catalog.js';
 import { seedSeenAlbums } from '../releases.js';
 import { rateLimit } from '../ratelimit.js';
+import { logger } from '../log.js';
+
+const log = logger('browse');
 export function registerBrowse(api) {
   const searchLimit = rateLimit({ windowMs: 60_000, max: 60 });
 /* --------------------------------------------------------------- Search */
@@ -10,27 +15,50 @@ export function registerBrowse(api) {
 api.get('/search', searchLimit, async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.json({ artists: [], albums: [], tracks: [] });
+  const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
+  const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
+  // Whatever the source, the client needs to know what's already on disk.
+  const withAvailability = (r) => ({
+    artists: r.artists,
+    albums: r.albums.map(a => ({ ...a, available: !!haveAlbum.get(a.id) })),
+    tracks: r.tracks.map(t => ({ ...t, available: !!haveTrack.get(t.id)?.file_path })),
+  });
+
   try {
     const [artistsR, albumsR, tracksR] = await Promise.all([
       deezerGet(`search/artist?q=${encodeURIComponent(q)}&limit=8`),
       deezerGet(`search/album?q=${encodeURIComponent(q)}&limit=12`),
       deezerGet(`search/track?q=${encodeURIComponent(q)}&limit=25`),
     ]);
-    const haveAlbum = db.prepare('SELECT 1 FROM tracks WHERE album_id = ? AND file_path IS NOT NULL LIMIT 1');
-    const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
-    res.json({
+    const result = {
       artists: (artistsR.data || []).map(a => ({ id: a.id, name: a.name, picture: a.picture_medium, nb_fan: a.nb_fan })),
       albums: (albumsR.data || []).map(a => ({
         id: a.id, title: a.title, artist: a.artist?.name, artist_id: a.artist?.id,
-        cover: a.cover_medium, nb_tracks: a.nb_tracks,
-        available: !!haveAlbum.get(a.id),
+        cover: a.cover_medium, nb_tracks: a.nb_tracks, source: 'deezer',
       })),
       tracks: (tracksR.data || []).map(t => ({
         id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
         album: t.album?.title, album_id: t.album?.id, cover: t.album?.cover_medium,
-        duration: t.duration, available: !!haveTrack.get(t.id)?.file_path,
+        duration: t.duration, source: 'deezer',
       })),
-    });
+    };
+
+    // Fall back to MusicBrainz only when Deezer found *nothing at all*. On a
+    // partial result Deezer is simply ranking badly, and mixing catalogs there
+    // would scatter non-Deezer rows through everyday searches; on an empty one
+    // the release genuinely isn't in Deezer's catalog, which is the case this
+    // exists for. Best-effort: a MusicBrainz failure just leaves the empty
+    // Deezer result as it was.
+    const empty = !result.artists.length && !result.albums.length && !result.tracks.length;
+    if (empty && config.musicbrainzFallbackEnabled) {
+      try {
+        const mb = await searchMusicbrainz(q);
+        if (mb.albums.length || mb.tracks.length) return res.json(withAvailability(mb));
+      } catch (e) {
+        log.warn(`MusicBrainz search fallback failed for "${q}": ${e.message}`);
+      }
+    }
+    res.json(withAvailability(result));
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
@@ -115,15 +143,15 @@ api.get('/album/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid album id' });
   try {
-    const album = await deezerGet(`album/${id}`);
+    const album = await catalogAlbum(id);
     const haveTrack = db.prepare('SELECT file_path FROM tracks WHERE deezer_id = ?');
     res.json({
       id: album.id, title: album.title, artist: album.artist?.name, artist_id: album.artist?.id,
       cover: album.cover_big || album.cover_medium, release_date: album.release_date,
-      nb_tracks: album.nb_tracks,
+      nb_tracks: album.nb_tracks, source: catalogSource(id),
       tracks: (album.tracks?.data || []).map(t => ({
         id: t.id, title: t.title, artist: t.artist?.name, artist_id: t.artist?.id, contributors: (t.contributors || []).map(c => ({ id: c.id, name: c.name })),
-        duration: t.duration, track_position: t.track_position,
+        duration: t.duration, track_position: t.track_position, source: catalogSource(t.id),
         available: !!haveTrack.get(t.id)?.file_path,
       })),
     });

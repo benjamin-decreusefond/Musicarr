@@ -4,8 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, config, upsertTrack, trackRowFromDeezer } from '../db.js';
-import { deezerGet, slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel, scoreSlskdFiles, scoreSlskdFolders,
+import { slskdSearch, slskdEnqueue, slskdTransfers, slskdCancel, scoreSlskdFiles, scoreSlskdFolders,
   slskdReady, isTransientSlskdError } from '../sources.js';
+import { catalogTrack, catalogAlbum } from '../catalog.js';
 import { logger } from '../log.js';
 import { walkAudio, safeName, normTitle, searchVariants, slskdFilesOf, pruneEmptyDirs } from './util.js';
 import { setStatus, publishDownload } from './status.js';
@@ -169,7 +170,7 @@ async function enqueueWithRetry(dlId, username, files) {
 
 /* ------------------------------------------------------------ Track flow */
 async function trackViaSlskd(dl) {
-  const tr = await deezerGet(`track/${dl.deezer_id}`);
+  const tr = await catalogTrack(dl.deezer_id);
   const row = trackRowFromDeezer(tr);
   upsertTrack(row);
 
@@ -238,7 +239,7 @@ async function trackViaSlskd(dl) {
 
 /* ------------------------------------------------------------ Album flow */
 async function albumViaSlskd(dl) {
-  const album = await deezerGet(`album/${dl.deezer_id}`);
+  const album = await catalogAlbum(dl.deezer_id);
   const artist = album.artist?.name || '';
   const title = album.title || '';
   const wantedTracks = (album.tracks?.data || []).map(t => trackRowFromDeezer(t, album));

@@ -13,6 +13,7 @@ import {
   sweepUnimported, resumeOnBoot, startPoller, cancelDownloadTransfers, retryDownload,
 } from '../downloader.js';
 import { createUser, addTrack, wipe, db } from './helpers/seed.js';
+import { mbLocalId, resetMusicbrainz } from '../musicbrainz.js';
 
 let uid;
 const settle = (ms = 80) => new Promise(r => setTimeout(r, ms));
@@ -812,4 +813,47 @@ test('import: a normal download still short-circuits on a file already on disk',
   assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
   // Untouched: the reuse path never replaces what is already there.
   assert.equal(db.prepare('SELECT file_path FROM tracks WHERE deezer_id = 910').get().file_path, have);
+});
+
+/* ------------------------------------------------- MusicBrainz as a source */
+// The point of the fallback: a release Deezer has never heard of still downloads
+// and imports, because Soulseek only ever needed an artist, a title and a
+// duration — none of which are Deezer's to provide.
+test('a MusicBrainz album downloads and imports like any other', async () => {
+  resetMusicbrainz();
+  const release = {
+    id: 'rel-e2e', title: 'Pyramide', date: '2023-03-17',
+    'artist-credit': [{ name: 'Werenoi' }],
+    media: [{ position: 1, tracks: [
+      { id: 'tk1', position: 1, title: 'Intro', length: 2000, recording: { id: 'rec-e2e-1', title: 'Intro', length: 2000 } },
+      { id: 'tk2', position: 2, title: 'Guerilla', length: 3000, recording: { id: 'rec-e2e-2', title: 'Guerilla', length: 3000 } },
+    ] }],
+  };
+  const albumId = mbLocalId('rel-e2e', 'release');
+  const remote = ['Werenoi/Pyramide/01 Intro.flac', 'Werenoi/Pyramide/02 Guerilla.flac'];
+
+  fm.on('musicbrainz.test', () => release);
+  const info = db.prepare(`INSERT INTO downloads (user_id, kind, deezer_id, label, status, engine, slskd_user, slskd_file, progress)
+                           VALUES (?, 'album', ?, 'Werenoi – Pyramide', 'downloading', 'soulseek', 'peer', ?, 0)`)
+    .run(uid, albumId, JSON.stringify(remote));
+  const id = Number(info.lastInsertRowid);
+
+  // Rebuilds the import plan from MusicBrainz rather than Deezer.
+  resumeOnBoot();
+  await settle();
+  const dir = path.join(dlDir(), 'Pyramide'); fs.mkdirSync(dir, { recursive: true });
+  writeWav(path.join(dir, '01 Intro.flac'), 2);
+  writeWav(path.join(dir, '02 Guerilla.flac'), 3);
+  await completeAndTick(remote);
+
+  assert.equal(db.prepare('SELECT status FROM downloads WHERE id = ?').get(id).status, 'done');
+  const rows = db.prepare(`SELECT * FROM tracks WHERE source = 'musicbrainz' ORDER BY track_position`).all();
+  assert.deepEqual(rows.map(r => r.title), ['Intro', 'Guerilla']);
+  // Filed on disk under the MusicBrainz artist/album, and marked as such.
+  for (const r of rows) {
+    assert.ok(fs.existsSync(r.file_path), `${r.title} should be on disk`);
+    assert.match(r.file_path, /Werenoi\/Pyramide\//);
+    assert.equal(r.source, 'musicbrainz');
+    assert.ok(r.deezer_id >= 1e12);
+  }
 });

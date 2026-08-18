@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { db, config, upsertTrack, trackRowFromDeezer } from '../db.js';
-import { deezerGet } from '../sources.js';
+import { catalogTrack, catalogAlbum } from '../catalog.js';
 import { logger } from '../log.js';
 import { walkAudio, safeName, normTitle, titleMatches, slskdFilesOf, fileTrackNo, fileDiscNo } from './util.js';
 import { confidence, durVerdict, pickMatch } from './match.js';
@@ -260,10 +260,10 @@ export async function importDownload(dl) {
 export async function rebuildPlan(dl) {
   let wantedTracks, requiredId = null;
   if (dl.kind === 'album') {
-    const album = await deezerGet(`album/${dl.deezer_id}`);
+    const album = await catalogAlbum(dl.deezer_id);
     wantedTracks = (album.tracks?.data || []).map(t => trackRowFromDeezer(t, album));
   } else {
-    const tr = await deezerGet(`track/${dl.deezer_id}`);
+    const tr = await catalogTrack(dl.deezer_id);
     wantedTracks = [trackRowFromDeezer(tr)];
     requiredId = dl.deezer_id;
   }
