@@ -451,40 +451,47 @@ function Sidebar({ route, nav, me, onLogout }) {
   return (
     <aside className="sidebar">
       <div className="brand" onClick={() => nav({ view: 'home' })}><span className="brand-mark" /> Musicarr</div>
-      <nav className="nav-main">
-        <NavItem view="home" icon="home" label={t('nav.home')} />
-        <NavItem view="search" icon="search" label={t('nav.search')} />
-        <NavItem view="explore" icon="compass" label={t('nav.explore')} />
-        <NavItem view="mixes" icon="sparkles" label={t('nav.madeForYou')} />
-        <NavItem view="library" icon="library" label={t('nav.library')} />
-        <NavItem view="favorites" icon="heart" label={t('nav.liked')} />
-        <NavItem view="following" icon="user" label={t('nav.following')} />
-        <NavItem view="downloads" icon="download" label={t('nav.downloads')} />
-      </nav>
-      <div className="nav-divider" />
-      <nav className="nav-main">
-        <NavItem view="stats" icon="chart" label={t('nav.stats')} />
-        <NavItem view="equalizer" icon="sliders" label={t('nav.equalizer')} />
-        <NavItem view="profile" icon="user" label={t('nav.profile')} />
-        {!!me.is_admin && <NavItem view="admin" icon="user" label={t('nav.users')} />}
-        {!!me.is_admin && <NavItem view="health" icon="save" label="Health" />}
-        {!!me.is_admin && <NavItem view="settings" icon="settings" label={t('nav.settings')} />}
-      </nav>
-      <div className="pl-head">
-        <span>{t('nav.playlists')}</span>
-        <button className="icon-btn" onClick={createPlaylist} title={t('nav.newPlaylist')}><Icon name="plus" size={18} /></button>
-      </div>
-      <div className="pl-scroll">
-        {playlists.map(pl => (
-          <button key={pl.id} className={`pl-link ${route.view === 'playlist' && route.id === pl.id ? 'active' : ''}`}
-            onClick={() => nav({ view: 'playlist', id: pl.id })}>
-            <Cover src={pl.cover} size={40} />
-            <div className="pl-link-meta">
-              <div className="pl-link-name">{pl.name}</div>
-              <div className="pl-link-sub">{pl.shared ? `Shared by ${pl.owner_name}` : `${pl.count} tracks`}</div>
-            </div>
-          </button>
-        ))}
+      {/* Everything between the brand and the user row scrolls as one block.
+          Sections used to be flex children of the sidebar itself, so a short
+          window squashed them instead: the playlists (flex-basis 0) collapsed
+          to nothing and the user row was clipped, with no scrollbar to reach
+          either. */}
+      <div className="sidebar-scroll">
+        <nav className="nav-main">
+          <NavItem view="home" icon="home" label={t('nav.home')} />
+          <NavItem view="search" icon="search" label={t('nav.search')} />
+          <NavItem view="explore" icon="compass" label={t('nav.explore')} />
+          <NavItem view="mixes" icon="sparkles" label={t('nav.madeForYou')} />
+          <NavItem view="library" icon="library" label={t('nav.library')} />
+          <NavItem view="favorites" icon="heart" label={t('nav.liked')} />
+          <NavItem view="following" icon="user" label={t('nav.following')} />
+          <NavItem view="downloads" icon="download" label={t('nav.downloads')} />
+        </nav>
+        <div className="nav-divider" />
+        <nav className="nav-main">
+          <NavItem view="stats" icon="chart" label={t('nav.stats')} />
+          <NavItem view="equalizer" icon="sliders" label={t('nav.equalizer')} />
+          <NavItem view="profile" icon="user" label={t('nav.profile')} />
+          {!!me.is_admin && <NavItem view="admin" icon="user" label={t('nav.users')} />}
+          {!!me.is_admin && <NavItem view="health" icon="save" label="Health" />}
+          {!!me.is_admin && <NavItem view="settings" icon="settings" label={t('nav.settings')} />}
+        </nav>
+        <div className="pl-head">
+          <span>{t('nav.playlists')}</span>
+          <button className="icon-btn" onClick={createPlaylist} title={t('nav.newPlaylist')}><Icon name="plus" size={18} /></button>
+        </div>
+        <div className="pl-scroll">
+          {playlists.map(pl => (
+            <button key={pl.id} className={`pl-link ${route.view === 'playlist' && route.id === pl.id ? 'active' : ''}`}
+              onClick={() => nav({ view: 'playlist', id: pl.id })}>
+              <Cover src={pl.cover} size={40} />
+              <div className="pl-link-meta">
+                <div className="pl-link-name">{pl.name}</div>
+                <div className="pl-link-sub">{pl.shared ? `Shared by ${pl.owner_name}` : `${pl.count} tracks`}</div>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
       <div className="user-foot">
         <button className={`user-link ${route.view === 'profile' ? 'active' : ''}`} onClick={() => nav({ view: 'profile' })} title={t('nav.profile')}>
