@@ -781,6 +781,34 @@ export function PlayerProvider({ children }) {
     setEqPresets(prev => { const next = { ...prev }; delete next[name]; return next; });
   }, []);
 
+  // Sign-out (explicit, or a session that expired under us) must stop the
+  // music. The two <audio> elements are created imperatively and live outside
+  // React's tree, so nothing tore them down when the UI fell back to the login
+  // screen: playback carried on — audible, and still pulling /api/stream — over
+  // the login form. `hydratedRef` goes back to false so the now-signed-out
+  // client stops syncing preferences and can't overwrite the saved queue with
+  // the empty one; the next `musicarr:authed` re-hydrates from the server.
+  useEffect(() => {
+    const h = () => {
+      hydratedRef.current = false;
+      clearTimeout(saveTimerRef.current);
+      clearTimeout(queueSaveRef.current);
+      stopPreview();
+      stopRadio();
+      stopFade();
+      preloadRef.current = { id: null };
+      restoringRef.current = null;
+      for (const el of playersRef.current) {
+        el.pause();
+        el.removeAttribute('src');
+        el.load(); // aborts the in-flight range request, not just the playback
+      }
+      setQueue([]); setIndex(-1); setPlaying(false); setTime(0); setDuration(0);
+    };
+    window.addEventListener('musicarr:unauth', h);
+    return () => window.removeEventListener('musicarr:unauth', h);
+  }, [stopPreview, stopRadio, stopFade]);
+
   const value = { queue, index, current, playing, time, duration, volume, setVolume,
     playList, playTrack, playOrToggle, toggle, play, pause, next, prev, seek,
     enqueue, playNext, moveInQueue, removeFromQueue, playAt,

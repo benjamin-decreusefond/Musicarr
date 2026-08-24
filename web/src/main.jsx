@@ -727,6 +727,11 @@ function App() {
   const back = useCallback(() => { window.history.back(); }, []);
 
   const logout = async () => {
+    // Tear the signed-in client down first — same event an expired session
+    // raises — so the player stops and the event stream closes before we go
+    // anywhere. Dropping straight to the login screen used to leave the music
+    // playing on top of it.
+    window.dispatchEvent(new Event('musicarr:unauth'));
     // In proxy mode, hand off to the proxy's own sign-out endpoint when one is
     // configured; otherwise clear the native session.
     if (me?.logout_url) { window.location.href = me.logout_url; return; }
